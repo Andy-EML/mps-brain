@@ -31,7 +31,7 @@ cd packages/db && npx drizzle-kit generate --name <change>   # after editing sch
 npx tsx --env-file=.env scripts/phase0-spike.ts            # read-only API discovery
 ```
 
-Local Postgres: `docker compose -f docker-compose.dev.yml up -d`. Docker wasn't on PATH on the dev machine as of 2026-09-17, so check before assuming it is.
+Local Postgres: a native **PostgreSQL 17** Windows service (`postgresql-x64-17`, port 5432) with database and role `mps`. Credentials are in `.env` (`DATABASE_URL`, `PG_SUPERUSER_PASSWORD`). psql is at `C:\Program Files\PostgreSQL\17\bin\psql.exe` and isn't on PATH. Docker isn't installed, so `docker-compose.dev.yml` is only for machines that have it.
 
 ## Architecture
 
