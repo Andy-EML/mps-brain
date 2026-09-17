@@ -148,7 +148,7 @@ VANTAGE_USER=
 VANTAGE_PASS=
 VANTAGE_API_VERSION=1.22
 LINK_ERP_ID_FIELD=id
-LINK_CUSTOMER_ERP_FIELD=reference
+LINK_CUSTOMER_ERP_FIELD=none
 SNAPSHOT_CRON=0 6 * * *
 TZ_SCHEDULE=Europe/London
 ADMIN_USERNAME=admin
@@ -1207,7 +1207,7 @@ type IssueType = 'no_match_drms' | 'no_match_vantage' | 'serial_ambiguous' | 'er
 interface DrmsDeviceInput { drmsId: string; erpId: string | null; serialNorm: string | null; status: string | null; customerErpId: string | null; missing: boolean }
 interface VantageDeviceInput { vantageId: number; assetNumber: string | null; serialNorm: string | null; customerId: number | null; customerReference: string | null; deleted: boolean }
 interface ActiveLink { drmsId: string; vantageId: number; method: LinkMethod }
-interface LinkConfig { erpIdField: 'id' | 'assetNumber'; customerErpField: 'id' | 'reference' }
+interface LinkConfig { erpIdField: 'id' | 'assetNumber'; customerErpField: 'id' | 'reference' | 'none' }
 interface PlannedIssue { type: IssueType; drmsId: string | null; vantageId: number | null; details: Record<string, unknown> }
 interface LinkPlan { links: ActiveLink[]; issues: PlannedIssue[] }
 function computeLinks(drms: DrmsDeviceInput[], vantage: VantageDeviceInput[], existing: ActiveLink[], config: LinkConfig): LinkPlan
@@ -1220,9 +1220,9 @@ Rules, in order, for each DRMS device:
 2. The existing link is `manual`: keep it if the Vantage target exists and isn't deleted; else `link_broken` (`reason: vantage_deleted`).
 3. ERP key (`normaliseKey(erpId)`) matches exactly one active Vantage record on `config.erpIdField` → candidate `erp_id`. If exactly one serial match points at a different record → `erp_serial_disagree` (`details.serialVantageId`).
 4. Else exactly one active Vantage record has the same `serialNorm` → candidate `serial`. 2+ matches → `serial_ambiguous` (`details.vantageIds` sorted ascending).
-5. Else, if the status is Registered or PreRegistered → `no_match_drms`.
+5. Else (any linkable status, including Discovered — most of the fleet is Discovered) → `no_match_drms`.
 6. The device had an auto link, and its target is now deleted or gone → `link_broken` (`reason: vantage_deleted`).
-Then candidates are sorted manual → erp_id → serial, then by drmsId. The first to claim a Vantage record wins, and later claims get `duplicate_target` (`details.linkedDrmsId`). For each final link, if both customer keys are non-empty and differ (`customerErpField` `id` → `customerId`, `reference` → `customerReference`, compared with `normaliseKey`) → `customer_mismatch`. Every active Vantage record without a link → `no_match_vantage`.
+Then candidates are sorted manual → erp_id → serial, then by drmsId. The first to claim a Vantage record wins, and later claims get `duplicate_target` (`details.linkedDrmsId`). For each final link, unless `customerErpField` is `none`, if both customer keys are non-empty and differ (`customerErpField` `id` → `customerId`, `reference` → `customerReference`, compared with `normaliseKey`) → `customer_mismatch`. (`none` is the default: Phase 0 showed DRMS `CustomerErpId` is a DRMS-side `CUST######` code matching no Vantage field.) Every active Vantage record without a link → `no_match_vantage`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1313,7 +1313,7 @@ describe('computeLinks', () => {
     ]);
   });
 
-  it('raises no_match_drms for Registered and PreRegistered but not Discovered', () => {
+  it('raises no_match_drms for Registered, PreRegistered and Discovered', () => {
     const plan = computeLinks(
       [
         d({ drmsId: 'd1', status: 'Registered', serialNorm: 'X' }),
@@ -1324,7 +1324,7 @@ describe('computeLinks', () => {
       [],
       cfg,
     );
-    expect(ofType(plan, 'no_match_drms').map((i) => i.drmsId)).toEqual(['d1', 'd2']);
+    expect(ofType(plan, 'no_match_drms').map((i) => i.drmsId)).toEqual(['d1', 'd2', 'd3']);
   });
 
   it('never overwrites a manual link', () => {
@@ -1438,6 +1438,8 @@ describe('computeLinks', () => {
       { ...cfg, customerErpField: 'id' },
     );
     expect(ofType(byId, 'customer_mismatch')).toEqual([]);
+    const disabled = computeLinks(drms, vantage, [], { ...cfg, customerErpField: 'none' });
+    expect(ofType(disabled, 'customer_mismatch')).toEqual([]);
   });
 
   it('does not match deleted Vantage records or report them as unmatched', () => {
@@ -1528,7 +1530,8 @@ export interface ActiveLink {
 
 export interface LinkConfig {
   erpIdField: 'id' | 'assetNumber';
-  customerErpField: 'id' | 'reference';
+  /** 'none' disables customer_mismatch checks. */
+  customerErpField: 'id' | 'reference' | 'none';
 }
 
 export interface PlannedIssue {
@@ -1544,7 +1547,6 @@ export interface LinkPlan {
 }
 
 const LINKABLE_STATUSES = new Set(['REGISTERED', 'PREREGISTERED', 'DISCOVERED']);
-const EXPECT_MATCH_STATUSES = new Set(['REGISTERED', 'PREREGISTERED']);
 const METHOD_RANK: Record<LinkMethod, number> = { manual: 0, erp_id: 1, serial: 2 };
 
 function addTo<K, V>(map: Map<K, V[]>, key: K, value: V): void {
@@ -1631,7 +1633,7 @@ export function computeLinks(
         vantageId: null,
         details: { vantageIds: serialMatches.map((x) => x.vantageId).sort((a, b) => a - b) },
       });
-    } else if (EXPECT_MATCH_STATUSES.has(status)) {
+    } else {
       issues.push({
         type: 'no_match_drms',
         drmsId: device.drmsId,
@@ -1674,7 +1676,7 @@ export function computeLinks(
   }
 
   const drmsById = new Map(drms.map((x) => [x.drmsId, x]));
-  for (const link of links) {
+  for (const link of config.customerErpField === 'none' ? [] : links) {
     const device = drmsById.get(link.drmsId) as DrmsDeviceInput;
     const target = vantageById.get(link.vantageId) as VantageDeviceInput;
     const drmsCustomer = normaliseKey(device.customerErpId);
@@ -2133,8 +2135,9 @@ describe('DRMS client', () => {
     await expect(client(fakeFetch(() => new Response('boom', { status: 500 })).fn).listCustomers()).rejects.toBeInstanceOf(HttpError);
   });
 
-  it('returns null for empty LatestCounters and parses a sample', async () => {
+  it('returns null for empty or 404 LatestCounters and parses a sample', async () => {
     expect(await client(fakeFetch(() => new Response('', { status: 200 })).fn).latestCounters('a')).toBeNull();
+    expect(await client(fakeFetch(() => new Response('Not Found', { status: 404 })).fn).latestCounters('a')).toBeNull();
     const sample = {
       Id: 'a',
       CounterId: 'c1',
@@ -2372,11 +2375,18 @@ export function createDrmsClient(opts: DrmsClientOptions) {
       listPaged('Equipment', 'Equipment', drmsEquipmentSchema),
     listCustomers: (): Promise<DrmsCustomer[]> =>
       listPaged('Customer', 'Customer', drmsCustomerSchema),
+    /** null when DRMS has no counters: empty body, or 404 (Discovered devices return 404 — Phase 0). */
     async latestCounters(equipmentId: string): Promise<DrmsLatestCounters | null> {
-      const body = await requestJson(
-        'LatestCounters',
-        `Equipment/${encodeURIComponent(equipmentId)}/LatestCounters`,
-      );
+      let body: unknown;
+      try {
+        body = await requestJson(
+          'LatestCounters',
+          `Equipment/${encodeURIComponent(equipmentId)}/LatestCounters`,
+        );
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 404) return null;
+        throw err;
+      }
       return body === null ? null : parseItem('LatestCounters', drmsLatestCountersSchema, body);
     },
   };
@@ -2884,7 +2894,7 @@ describe('loadEnv', () => {
     expect(env).toMatchObject({
       VANTAGE_API_VERSION: '1.22',
       LINK_ERP_ID_FIELD: 'id',
-      LINK_CUSTOMER_ERP_FIELD: 'reference',
+      LINK_CUSTOMER_ERP_FIELD: 'none',
       SNAPSHOT_CRON: '0 6 * * *',
       TZ_SCHEDULE: 'Europe/London',
       ADMIN_USERNAME: 'admin',
@@ -2981,7 +2991,7 @@ const envSchema = z.object({
   VANTAGE_PASS: z.string().min(1),
   VANTAGE_API_VERSION: z.string().min(1).default('1.22'),
   LINK_ERP_ID_FIELD: z.enum(['id', 'assetNumber']).default('id'),
-  LINK_CUSTOMER_ERP_FIELD: z.enum(['id', 'reference']).default('reference'),
+  LINK_CUSTOMER_ERP_FIELD: z.enum(['id', 'reference', 'none']).default('none'),
   SNAPSHOT_CRON: z.string().min(1).default('0 6 * * *'),
   TZ_SCHEDULE: z.string().min(1).default('Europe/London'),
   ADMIN_USERNAME: z.string().min(1).default('admin'),
@@ -3937,9 +3947,9 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
   - `runDrmsSnapshot(deps: { db: Db; drms: Pick<DrmsClient, 'latestCounters'>; now?: () => Date; concurrency?: number }): Promise<JobResult>`
 
 Behaviour:
-- Devices to fetch: `upper(status) = 'REGISTERED'`, `missingSince is null`, and (`lastSnapshotFetchAt is null` or `< startOfUtcDay(now)`), ordered by `drmsId`.
+- Devices to fetch: `upper(status) in ('REGISTERED', 'DISCOVERED')` (Discovered is most of the fleet; PreRegistered has no CSRC connection yet), `missingSince is null`, and (`lastSnapshotFetchAt is null` or `< startOfUtcDay(now)`), ordered by `drmsId`.
 - For each device, in a pool (default concurrency 5):
-  - Call `latestCounters`. `null` → `stats.empty++`.
+  - Call `latestCounters`. `null` (no counters yet, e.g. a Discovered device's 404) → `stats.empty++`.
   - Otherwise `saveSnapshot`: inserted → `stats.inserted++`, else `stats.unchanged++`.
   - Then set `lastSnapshotFetchAt = now()`.
 - `RateLimitError` or `AuthError` → remember it and stop picking new devices. Any other error → `ErrorCollector.add(drmsId, err)`, and don't update `lastSnapshotFetchAt`, so a rerun retries that device.
@@ -3996,21 +4006,22 @@ describe('runDrmsSnapshot', () => {
       { drmsId: 'd2', status: 'registered' },
       { drmsId: 'd3', status: 'PreRegistered' },
       { drmsId: 'd4', missingSince: new Date() },
+      { drmsId: 'd5', status: 'Discovered' },
     ]);
   });
   afterEach(() => t.close());
 
   const day = (iso: string) => () => new Date(iso);
 
-  it('stores snapshots, values and counter names for registered present devices', async () => {
+  it('stores snapshots, values and counter names for registered and discovered present devices', async () => {
     const asked: string[] = [];
     const drms = { latestCounters: async (id: string) => (asked.push(id), counters(`${id}-c1`)) };
     const result = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T06:00:00Z'), concurrency: 1 });
 
-    expect(asked).toEqual(['d1', 'd2']);
-    expect(result).toMatchObject({ status: 'success', stats: { devices: 2, inserted: 2, unchanged: 0, errors: 0 } });
-    expect(await t.db.select().from(counterSnapshots)).toHaveLength(2);
-    expect(await t.db.select().from(counterValues)).toHaveLength(6);
+    expect(asked).toEqual(['d1', 'd2', 'd5']);
+    expect(result).toMatchObject({ status: 'success', stats: { devices: 3, inserted: 3, unchanged: 0, errors: 0 } });
+    expect(await t.db.select().from(counterSnapshots)).toHaveLength(3);
+    expect(await t.db.select().from(counterValues)).toHaveLength(9);
     const names = await t.db.select().from(counterNames);
     expect(names.map((n) => n.name).sort()).toEqual(['A3COPIERCOLOR', 'A4 SEF Full', 'BlackTonerLevel']);
     const [snap] = await t.db.select().from(counterSnapshots).where(eq(counterSnapshots.drmsEquipmentId, 'd1'));
@@ -4025,8 +4036,8 @@ describe('runDrmsSnapshot', () => {
     expect(sameDay.stats.devices).toBe(0);
 
     const nextDay = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-18T06:00:00Z'), concurrency: 1 });
-    expect(nextDay.stats).toMatchObject({ devices: 2, inserted: 0, unchanged: 2 });
-    expect(await t.db.select().from(counterSnapshots)).toHaveLength(2);
+    expect(nextDay.stats).toMatchObject({ devices: 3, inserted: 0, unchanged: 3 });
+    expect(await t.db.select().from(counterSnapshots)).toHaveLength(3);
   });
 
   it('keeps a user-set counter category when the name is seen again', async () => {
@@ -4052,7 +4063,7 @@ describe('runDrmsSnapshot', () => {
     expect(calls).toBe(1);
     expect(result.status).toBe('partial');
     expect(result.errorSample).toContain('stopped: RateLimitError');
-    expect(result.stats.skippedAfterStop).toBe(1);
+    expect(result.stats.skippedAfterStop).toBe(2);
     const rows = await t.db.select().from(drmsEquipment).where(eq(drmsEquipment.drmsId, 'd2'));
     expect(rows[0]?.lastSnapshotFetchAt).toBeNull();
   });
@@ -4065,7 +4076,7 @@ describe('runDrmsSnapshot', () => {
       },
     };
     const result = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T06:00:00Z'), concurrency: 1 });
-    expect(result).toMatchObject({ status: 'partial', stats: { errors: 1, inserted: 1 } });
+    expect(result).toMatchObject({ status: 'partial', stats: { errors: 1, inserted: 2 } });
     expect(result.errorSample).toContain('d1: Error: bad payload');
 
     const retry = await runDrmsSnapshot({ db: t.db, drms: { latestCounters: async (id: string) => counters(`${id}-c1`) }, now: day('2026-09-17T07:00:00Z'), concurrency: 1 });
@@ -4181,7 +4192,7 @@ export async function runDrmsSnapshot(deps: DrmsSnapshotDeps): Promise<JobResult
     .from(drmsEquipment)
     .where(
       and(
-        sql`upper(${drmsEquipment.status}) = 'REGISTERED'`,
+        sql`upper(${drmsEquipment.status}) in ('REGISTERED', 'DISCOVERED')`,
         isNull(drmsEquipment.missingSince),
         or(isNull(drmsEquipment.lastSnapshotFetchAt), lt(drmsEquipment.lastSnapshotFetchAt, dayStart)),
       ),
