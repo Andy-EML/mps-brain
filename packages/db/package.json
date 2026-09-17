@@ -1,0 +1,25 @@
+{
+  "name": "@mps/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrate": "./src/migrate.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.2.1",
+    "drizzle-orm": "^0.44.7",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.16",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.10"
+  }
+}
