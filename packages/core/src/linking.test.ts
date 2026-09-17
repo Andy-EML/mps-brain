@@ -181,6 +181,32 @@ describe('computeLinks', () => {
     ]);
   });
 
+  it('ignores an ERP id that is just a copy of the serial, but still matches by serial', () => {
+    const plan = computeLinks(
+      [d({ drmsId: 'd1', erpId: ' 12345 ', serialNorm: '12345' })],
+      [v({ vantageId: 12345, serialNorm: 'OTHER' }), v({ vantageId: 99, serialNorm: '12345' })],
+      [],
+      cfg,
+    );
+    expect(plan.links).toEqual([{ drmsId: 'd1', vantageId: 99, method: 'serial' }]);
+    expect(ofType(plan, 'erp_serial_disagree')).toEqual([]);
+  });
+
+  it('gives a contested serial to a Registered device over a Discovered one', () => {
+    const plan = computeLinks(
+      [
+        d({ drmsId: 'a-discovered', serialNorm: 'S1', status: 'Discovered' }),
+        d({ drmsId: 'b-preregistered', serialNorm: 'S1', status: 'PreRegistered' }),
+        d({ drmsId: 'c-registered', serialNorm: 'S1', status: 'Registered' }),
+      ],
+      [v({ vantageId: 10, serialNorm: 'S1' })],
+      [],
+      cfg,
+    );
+    expect(plan.links).toEqual([{ drmsId: 'c-registered', vantageId: 10, method: 'serial' }]);
+    expect(ofType(plan, 'duplicate_target').map((i) => i.drmsId)).toEqual(['b-preregistered', 'a-discovered']);
+  });
+
   it('flags customer mismatch by reference, by id, and not when a side is empty', () => {
     const drms = [
       d({ drmsId: 'd1', erpId: '10', customerErpId: 'cust1' }),

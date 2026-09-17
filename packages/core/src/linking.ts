@@ -54,6 +54,11 @@ export interface LinkPlan {
 
 const LINKABLE_STATUSES = new Set(['REGISTERED', 'PREREGISTERED', 'DISCOVERED']);
 const METHOD_RANK: Record<LinkMethod, number> = { manual: 0, erp_id: 1, serial: 2 };
+const STATUS_RANK: Record<string, number> = { REGISTERED: 0, PREREGISTERED: 1, DISCOVERED: 2 };
+
+interface Candidate extends ActiveLink {
+  statusRank: number;
+}
 
 function addTo<K, V>(map: Map<K, V[]>, key: K, value: V): void {
   const list = map.get(key);
@@ -78,11 +83,12 @@ export function computeLinks(
     if (x.serialNorm) addTo(bySerial, x.serialNorm, x);
   }
   const existingByDrms = new Map(existing.map((l) => [l.drmsId, l]));
-  const candidates: ActiveLink[] = [];
+  const candidates: Candidate[] = [];
 
   for (const device of drms) {
     const current = existingByDrms.get(device.drmsId);
     const status = (device.status ?? '').toUpperCase();
+    const statusRank = STATUS_RANK[status] ?? Number.MAX_SAFE_INTEGER;
 
     if (device.missing || !LINKABLE_STATUSES.has(status)) {
       if (current) {
@@ -98,7 +104,7 @@ export function computeLinks(
 
     if (current?.method === 'manual') {
       const target = vantageById.get(current.vantageId);
-      if (target && !target.deleted) candidates.push(current);
+      if (target && !target.deleted) candidates.push({ ...current, statusRank });
       else
         issues.push({
           type: 'link_broken',
@@ -109,14 +115,16 @@ export function computeLinks(
       continue;
     }
 
-    const erpKey = normaliseKey(device.erpId);
+    // DRMS often copies the serial into ErpId; such a value is not a real ERP key.
+    const rawErpKey = normaliseKey(device.erpId);
+    const erpKey = rawErpKey !== null && rawErpKey === device.serialNorm ? null : rawErpKey;
     const erpMatches = erpKey ? (byErpKey.get(erpKey) ?? []) : [];
     const serialMatches = device.serialNorm ? (bySerial.get(device.serialNorm) ?? []) : [];
     // Ambiguous ERP key (duplicate AssetNumbers) falls through to serial matching.
     const erpMatch = erpMatches.length === 1 ? erpMatches[0] : undefined;
 
     if (erpMatch) {
-      candidates.push({ drmsId: device.drmsId, vantageId: erpMatch.vantageId, method: 'erp_id' });
+      candidates.push({ drmsId: device.drmsId, vantageId: erpMatch.vantageId, method: 'erp_id', statusRank });
       const serialMatch = serialMatches.length === 1 ? serialMatches[0] : undefined;
       if (serialMatch && serialMatch.vantageId !== erpMatch.vantageId) {
         issues.push({
@@ -131,6 +139,7 @@ export function computeLinks(
         drmsId: device.drmsId,
         vantageId: (serialMatches[0] as VantageDeviceInput).vantageId,
         method: 'serial',
+        statusRank,
       });
     } else if (serialMatches.length > 1) {
       issues.push({
@@ -162,7 +171,10 @@ export function computeLinks(
   }
 
   candidates.sort(
-    (a, b) => METHOD_RANK[a.method] - METHOD_RANK[b.method] || a.drmsId.localeCompare(b.drmsId),
+    (a, b) =>
+      METHOD_RANK[a.method] - METHOD_RANK[b.method] ||
+      a.statusRank - b.statusRank ||
+      a.drmsId.localeCompare(b.drmsId),
   );
   const holderByVantage = new Map<number, string>();
   const links: ActiveLink[] = [];
