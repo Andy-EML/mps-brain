@@ -21,13 +21,30 @@ cd /c/dev/mps-brain
 - Plan: `docs/superpowers/plans/2026-09-17-foundation-part1-backend.md`
 - Spec: `docs/superpowers/specs/2026-09-17-mps-foundation-design.md`. Read the Phase 0 findings, follow-up and "Added requirements" sections.
 - SDD ledger (rulings, deferred minors): `.superpowers/sdd/2026-09-17-foundation-part1-backend/progress.md` (gitignored)
-- `npm test` 91 tests green, typecheck and lint clean.
-- Final whole-branch review (Opus) was **still running at handoff**. Its verdict is recorded at the end of the ledger. If it isn't there, re-run the final review before merging.
+- `npm test` 100 tests green, typecheck and lint clean.
+- Final whole-branch review (Opus): **ready to merge with fixes**. The findings and the fix scope are in `.superpowers/sdd/2026-09-17-foundation-part1-backend/final-review-findings.md`:
+  - F1: `link_broken` issues resolve themselves on the next run
+  - F2: a full Vantage refresh has no guard, and `$skip` paging can skip rows
+  - F3: the incremental filter is too narrow
+  - F4: pg-boss's 15-min job expiry
+  - F5: `counter_names` deadlock
+  - F6: missing test for Discovered devices with no counters
+  - M1–M5: minors
+  **All fixed and re-reviewed clean** (11 commits `c7b26de..54a9b75`, tests now 100/100, typecheck and lint clean). **Next: finish the branch (merge `feat/foundation-backend` into `main`), with the user's OK.**
+- Still to do (not in the fix wave):
+  - **Live Vantage check:** do `ModifiedDate`/`CreatedDate`/`DeletedDate` change on create and soft delete, and are dates UTC or UK local? This affects the incremental pull.
+  - **Part 2 deploy notes from the review:**
+    - worker `replicas: 1` (the DRMS limiter and cooldown are in memory; `failStaleRuns` fails all running rows)
+    - only the worker runs migrations
+    - `stop_grace_period: 45s`
+    - the image must include `packages/*/src`, `packages/db/drizzle` and `tsx`
+    - consider persisting the 429 cooldown
+  - **Snapshot retention/storage growth:** plan it (about 15 GB/yr at 3,000 Registered devices).
 - Smoke run against local Postgres, QA DRMS and live Vantage: all 4 jobs succeeded. Results: 836 DRMS devices, 1,826 Vantage equipment, 830 active links (791 serial / 39 ERP ID), 1,001 open link issues (996 are Vantage kit not in DRMS), 35 snapshots, 83 counter names.
 - The worker is **not running** (stopped after the smoke run). Start it with `npm run dev -w @mps/worker`. Send a job manually with `apps/worker/scripts/send-job.ts`.
 
 **Next build steps:**
-1. Act on the final review findings, then finish the branch (merge to main).
+1. Finish the branch: merge to main (final review fixes are done).
 2. Write the **Part 2 plan** (web + deploy). Scope:
    - Next.js UI in the style of the mockups (`mockups of dashboard/`: Fleet overview + Device detail first)
    - Login (local accounts; admin already seeded from `.env`)
