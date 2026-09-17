@@ -13,6 +13,8 @@ Built as 5 sub-projects. Each one gets a spec in `docs/superpowers/specs/` and a
 4. Site stock tracking
 5. Notifications
 
+**Resuming work? Read `docs/HANDOFF.md` first.** It has the latest state, next steps and the DRMS registration batch process.
+
 Read the current spec and plan before changing anything. Plans use `- [ ]` checkboxes, so tick them off as tasks land.
 
 API reference docs (not in this repo): `F:\dev\API Docs Etc` (Vantage docs, DRMS3 spec PDF, the dealer's DRMS docx). Its `CLAUDE.md` explains how to extract the PDF and docx text. **Never read or copy `API Keys.txt`, or the JWT inside the docx.**

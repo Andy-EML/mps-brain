@@ -208,6 +208,7 @@ Targeted, read-only follow-up (`scripts/phase0-probe2.ts`) resolving the four co
 - Totals confirmed by user and verified on 4 sampled devices (sums exact):
   - `Full Color:Total` [10] = `Copy:Full Color` [1] + `Printer:Full Color` [2] + `Scanner/FAX:Print(Full Color)` [3]
   - `Black:Total` [11] = `Copy:Black` [4] + `Printer:Black` [5] + `Scanner/FAX:Print(Black)` [6]
+  - **Cross-checked by user against CSRC for A93E021244196 (St Hilary's C3350i): Black 8,319 / Colour 6,424 / Scan 436 — matches.**
   - Bracket numbers are the user's CSRC counter numbers, **not** the DRMS `ItemNumber` field (which repeats across counters). Use counter `Name`.
   - Use the totals directly. Optionally flag a device whose total ≠ sum of parts. 2-colour/mono-colour counters (`Copy:2C Color`, `Printer:2C Color`, `Copy:Mono Color`) are **not** in either total (small counts seen).
 - Meter sync maps **per device**: `GET Equipment(id)?$expand=Meters($expand=Type,Column)`, then for each meter take the DRMS counter whose `Name` equals `Column.Name`. Ignore all other DRMS counters (about 70 paper-size/mode counters). Not every device has all 3 meters (e.g. no Scan meter on some).
