@@ -37,4 +37,20 @@ describe('MethodLimiter', () => {
     clock.t = 600_001;
     await expect(limiter.acquire('LatestCounters')).resolves.toBeUndefined();
   });
+
+  it('rejects if the cooldown trips while a concurrent caller is sleeping for its pacing slot', async () => {
+    const state: { limiter?: MethodLimiter } = {};
+    let t = 0;
+    const clock: Clock = {
+      now: () => t,
+      // Simulate a sibling call getting a 429 (and tripping the cooldown) during our sleep.
+      sleep: async (ms: number) => {
+        state.limiter?.tripCooldown('LatestCounters');
+        t += ms;
+      },
+    };
+    state.limiter = new MethodLimiter(1000, 600_000, clock);
+    await state.limiter.acquire('LatestCounters'); // first call: no pacing sleep needed
+    await expect(state.limiter.acquire('LatestCounters')).rejects.toBeInstanceOf(RateLimitError);
+  });
 });

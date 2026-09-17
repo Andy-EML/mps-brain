@@ -22,14 +22,20 @@ export class MethodLimiter {
   ) {}
 
   async acquire(method: string): Promise<void> {
-    const until = this.cooldownUntil.get(method);
-    if (until !== undefined && this.clock.now() < until) {
-      throw new RateLimitError(`DRMS ${method} is cooling down after a 429`, new Date(until));
-    }
+    this.checkCooldown(method);
     const now = this.clock.now();
     const slot = Math.max(now, this.nextSlot.get(method) ?? 0);
     this.nextSlot.set(method, slot + 60_000 / this.perMinute);
     if (slot > now) await this.clock.sleep(slot - now);
+    // A sibling call may have tripped the cooldown while we were asleep.
+    this.checkCooldown(method);
+  }
+
+  private checkCooldown(method: string): void {
+    const until = this.cooldownUntil.get(method);
+    if (until !== undefined && this.clock.now() < until) {
+      throw new RateLimitError(`DRMS ${method} is cooling down after a 429`, new Date(until));
+    }
   }
 
   tripCooldown(method: string): Date {
