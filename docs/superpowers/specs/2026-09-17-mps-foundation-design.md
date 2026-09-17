@@ -185,3 +185,17 @@ Targeted, read-only follow-up (`scripts/phase0-probe2.ts`) resolving the four co
 - Customer-code mapping = **no confirmed Vantage field for `CustomerErpId`** (checked `Customer.Id`, `.Reference`, `.ExternalAccountNumber` — all 0/5); fall back to `CustomerName` matching.
 - `$metadata` access = **works with `api-version` as a request header, not a query param** (contrary to the existing CLAUDE.md guidance for that one endpoint — worth a doc correction).
 - Discovered-device counters = **`LatestCounters` returns 404 for `Discovered` devices; only `Registered` devices have counter data available.**
+
+## Added requirements (2026-09-17, from user)
+
+### Offline alert on the dashboard (Foundation Part 2)
+- The dashboard shows an alert when a device that **was previously reporting** has not reported for **more than 24 hours**.
+- Signal: DRMS `LastCounterReceivedTime` (fallback: `LastCounterBackboneReceivedTime`) on `drms_equipment`. Only `Registered` devices have it. `Discovered` devices have no heartbeat field (only `LastAlarmReceivedTime`, which is event-driven and missing on about a third of them).
+- "Previously active" means the device has had a non-null `LastCounterReceivedTime` at least once. Devices that never reported don't alert. They show in a separate "never reported" list.
+- Freshness: `drms-pull` currently runs once a day. For a 24-hour alert it must run more often (e.g. hourly: one `GET Equipment` call per page, well under the rate limits). Add an hourly schedule for `drms-pull` in Part 2.
+- Caveat: DRMS collects counters once a night, so a device that misses one collection shows as roughly 24 to 48 hours stale. The alert threshold is configurable (`OFFLINE_ALERT_HOURS`, default 24). Alerts are cleared automatically when the device reports again, and can be acknowledged in the UI.
+- Store state so alerts aren't recomputed noisily: `device_alerts` (drms_equipment_id, type `offline`, first_detected_at, last_seen_report_at, acknowledged_by/at, cleared_at).
+
+### Registration batches
+- Devices flagged as a customer mismatch are usually machines moved to a new location or customer. They are still active, so they're registered with the customer DRMS holds and listed for KM.
+- Devices that haven't checked in for a while are skipped.
