@@ -43,7 +43,7 @@ describe('buildHandlers', () => {
     await handlers['link-run']({});
     await handlers['drms-snapshot']({});
     expect(queued()).toBe(2);
-    const runs = await t.db.select().from(syncRuns);
+    const runs = await t.db.select().from(syncRuns).orderBy(syncRuns.id);
     expect(runs.map((r) => [r.job, r.status])).toEqual([
       ['drms-pull', 'success'],
       ['vantage-pull', 'success'],
