@@ -5,6 +5,7 @@ import { QUEUES, createBoss, type QueueName } from '@mps/queue';
 import { createVantageClient } from '@mps/vantage';
 import { loadEnv } from './env';
 import { buildHandlers, type JobData } from './handlers';
+import { QUEUE_OPTIONS } from './queue-options';
 import { failStaleRuns } from './sync-runs';
 
 async function main(): Promise<void> {
@@ -31,8 +32,10 @@ async function main(): Promise<void> {
   boss.on('error', (err) => console.error('[pg-boss]', err));
   await boss.start();
 
-  for (const name of Object.values(QUEUES)) {
-    await boss.createQueue(name, { name, policy: 'stately', retryLimit: 0 });
+  for (const options of Object.values(QUEUE_OPTIONS)) {
+    await boss.createQueue(options.name, options);
+    // createQueue is a no-op for queues that already exist, so apply the options explicitly.
+    await boss.updateQueue(options.name, options);
   }
   const tz = env.TZ_SCHEDULE;
   await boss.schedule(QUEUES.vantagePull, '0 2 * * *', {}, { tz });
