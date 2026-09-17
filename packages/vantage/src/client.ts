@@ -40,7 +40,7 @@ export function createVantageClient(opts: VantageClientOptions) {
   const doFetch = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
   const base = opts.baseUrl.replace(/\/+$/, '');
-  const defaultPageSize = opts.pageSize ?? 500;
+  const pageSize = opts.pageSize ?? 500;
   const maxPages = opts.maxPages ?? MAX_PAGES;
   let token: string | null = null;
   let expiresAt = 0;
@@ -100,19 +100,16 @@ export function createVantageClient(opts: VantageClientOptions) {
     const filters = [...(o.filter ?? [])];
     if (!o.includeDeleted) filters.unshift('deleteddate eq null');
     const out: VantageRecord[] = [];
-    let top = defaultPageSize;
+    let lastId: number | null = null;
     let pagesFetched = 0;
     for (;;) {
       if (pagesFetched >= maxPages) {
         throw new ParseError(`Vantage ${entity} paging exceeded ${maxPages} pages`, 200);
       }
-      const params: Record<string, string | number> = {
-        $top: top,
-        $skip: out.length,
-        $orderby: 'Id',
-        $count: 'true',
-      };
-      if (filters.length > 0) params.$filter = filters.map((f) => `(${f})`).join(' and ');
+      // Keyset paging: stable under concurrent inserts/deletes, unlike $skip.
+      const pageFilters = lastId === null ? filters : [...filters, `Id gt ${lastId}`];
+      const params: Record<string, string | number> = { $top: pageSize, $orderby: 'Id' };
+      if (pageFilters.length > 0) params.$filter = pageFilters.map((f) => `(${f})`).join(' and ');
       if (o.expand) params.$expand = o.expand;
       const body = await get(entity, params);
       pagesFetched++;
@@ -120,13 +117,9 @@ export function createVantageClient(opts: VantageClientOptions) {
       if (!Array.isArray(items)) throw new ParseError(`Vantage ${entity} response has no value array`, 200);
       if (items.length === 0) return out;
       out.push(...(items as VantageRecord[]));
-      const total = Array.isArray(body) ? null : getNumber(body, '@odata.count');
-      if (total !== null) {
-        if (out.length >= total) return out;
-        if (items.length < top) top = items.length;
-        continue;
-      }
-      if (items.length < top) return out;
+      if (items.length < pageSize) return out;
+      lastId = getNumber(items[items.length - 1], 'Id');
+      if (lastId === null) throw new ParseError(`Vantage ${entity} record without Id; cannot page`, 200);
     }
   }
 

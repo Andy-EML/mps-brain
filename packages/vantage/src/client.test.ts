@@ -68,30 +68,32 @@ describe('Vantage client', () => {
     expect(calls[2]!.url.searchParams.get('$filter')).toBeNull();
   });
 
-  it('pages with $skip until a short page when there is no count', async () => {
-    const pages: Record<string, unknown[]> = { '0': [{ Id: 1 }, { Id: 2 }], '2': [{ Id: 3 }] };
-    const { client, calls } = make(({ url }) =>
-      url.pathname.startsWith('/application')
-        ? session('t', '2026-09-17T10:30:00Z')
-        : json(pages[url.searchParams.get('$skip') ?? ''] ?? []),
-    );
+  it('pages by key with $orderby=Id and Id gt lastId until a short page', async () => {
+    const all = [1, 2, 3].map((Id) => ({ Id }));
+    const { client, calls } = make(({ url }) => {
+      if (url.pathname.startsWith('/application')) return session('t', '2026-09-17T10:30:00Z');
+      const after = /\(Id gt (\d+)\)/.exec(url.searchParams.get('$filter') ?? '')?.[1];
+      const rest = all.filter((r) => r.Id > Number(after ?? 0));
+      return json({ value: rest.slice(0, Number(url.searchParams.get('$top'))) });
+    });
     expect((await client.listCustomers()).map((r) => r.Id)).toEqual([1, 2, 3]);
-    expect(calls.slice(1).map((c) => c.url.searchParams.get('$skip'))).toEqual(['0', '2']);
+    const gets = calls.slice(1);
+    expect(gets).toHaveLength(2);
+    expect(gets.map((c) => c.url.searchParams.get('$orderby'))).toEqual(['Id', 'Id']);
+    expect(gets.map((c) => c.url.searchParams.get('$top'))).toEqual(['2', '2']);
+    expect(gets.some((c) => c.url.searchParams.has('$skip') || c.url.searchParams.has('$count'))).toBe(false);
+    expect(gets[0]!.url.searchParams.get('$filter')).toBe('(deleteddate eq null)');
+    expect(gets[1]!.url.searchParams.get('$filter')).toBe('(deleteddate eq null) and (Id gt 2)');
   });
 
-  it('adapts to a server-side cap using @odata.count', async () => {
-    const all = [1, 2, 3, 4, 5].map((Id) => ({ Id }));
-    const { client, calls } = make(
-      ({ url }) => {
-        if (url.pathname.startsWith('/application')) return session('t', '2026-09-17T10:30:00Z');
-        const skip = Number(url.searchParams.get('$skip'));
-        return json({ '@odata.count': 5, value: all.slice(skip, skip + 2) });
-      },
-      () => T0,
-      10,
+  it('stops on an empty page after a full one', async () => {
+    const pages = [[{ Id: 1 }, { Id: 2 }], []];
+    let n = 0;
+    const { client, calls } = make(({ url }) =>
+      url.pathname.startsWith('/application') ? session('t', '2026-09-17T10:30:00Z') : json(pages[n++] ?? []),
     );
-    expect((await client.listCustomers()).map((r) => r.Id)).toEqual([1, 2, 3, 4, 5]);
-    expect(calls.slice(1).map((c) => c.url.searchParams.get('$top'))).toEqual(['10', '2', '2']);
+    expect((await client.listCustomers({ includeDeleted: true })).map((r) => r.Id)).toEqual([1, 2]);
+    expect(calls.slice(1).map((c) => c.url.searchParams.get('$filter'))).toEqual([null, '(Id gt 2)']);
   });
 
   it('reissues when the token is near expiry', async () => {
@@ -137,7 +139,7 @@ describe('Vantage client', () => {
     const f = fakeFetch(({ url }) =>
       url.pathname.startsWith('/application')
         ? session('t', '2026-09-17T10:30:00Z')
-        : json({ '@odata.count': 1_000_000, value: [{ Id: 1 }, { Id: 2 }] }),
+        : json({ value: [{ Id: 1 }, { Id: 2 }] }),
     );
     const client = createVantageClient({
       baseUrl: 'https://api.vantage.test/',
