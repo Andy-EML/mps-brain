@@ -1,3 +1,4 @@
+import type { DrmsEquipment } from '@mps/drms';
 import type { ListOptions, VantageRecord } from '@mps/vantage';
 
 export function fakeVantage(customers: VantageRecord[], equipment: VantageRecord[]) {
@@ -14,5 +15,18 @@ export function fakeVantage(customers: VantageRecord[], equipment: VantageRecord
         return equipment;
       },
     },
+  };
+}
+
+export function drmsDevice(id: string, extra: Partial<DrmsEquipment> = {}): DrmsEquipment {
+  return {
+    Id: id,
+    ErpId: null,
+    SerialNumber: `ser-${id}`,
+    ModelName: 'bizhub C300i',
+    Status: 'Registered',
+    CustomerErpId: 'C1',
+    CustomerName: 'Cust 1',
+    ...extra,
   };
 }
