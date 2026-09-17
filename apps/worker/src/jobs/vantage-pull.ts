@@ -11,11 +11,22 @@ import {
 import { excluded, vantageCustomers, vantageEquipment, type Db } from '@mps/db';
 import { QUEUES } from '@mps/queue';
 import type { VantageClient, VantageRecord } from '@mps/vantage';
-import { and, isNull, lt } from 'drizzle-orm';
+import { and, count, isNull, lt } from 'drizzle-orm';
 import { lastSuccessfulStart, type JobResult } from '../sync-runs';
 
 const OVERLAP_MS = 10 * 60_000;
 const CHUNK = 500;
+/** A full pull must return at least this share of currently active rows before vanished rows are marked deleted. */
+const MIN_FULL_PULL_RATIO = 0.8;
+
+function tooFewRows(fetched: number, active: number): boolean {
+  return active > 0 && (fetched === 0 || fetched < active * MIN_FULL_PULL_RATIO);
+}
+
+async function countActive(db: Db, table: typeof vantageCustomers | typeof vantageEquipment): Promise<number> {
+  const [row] = await db.select({ n: count() }).from(table).where(isNull(table.deletedDate));
+  return row?.n ?? 0;
+}
 
 function requireId(raw: VantageRecord, what: string): number {
   const id = getNumber(raw, 'Id');
@@ -78,6 +89,10 @@ export async function runVantagePull(deps: VantagePullDeps, opts: { full: boolea
   const customers = (await vantage.listCustomers(listOpts)).map((r) => mapVantageCustomer(r, startedAt));
   const equipment = (await vantage.listEquipment(listOpts)).map((r) => mapVantageEquipment(r, startedAt));
 
+  // Active row counts before this pull's upserts, for the full-pull deletion guard.
+  const activeCustomers = full ? await countActive(db, vantageCustomers) : 0;
+  const activeEquipment = full ? await countActive(db, vantageEquipment) : 0;
+
   for (const rows of chunk(customers, CHUNK)) {
     await db
       .insert(vantageCustomers)
@@ -93,25 +108,35 @@ export async function runVantagePull(deps: VantagePullDeps, opts: { full: boolea
 
   let customersMarkedDeleted = 0;
   let equipmentMarkedDeleted = 0;
+  const skipped: string[] = [];
   if (full) {
-    customersMarkedDeleted = (
-      await db
-        .update(vantageCustomers)
-        .set({ deletedDate: startedAt })
-        .where(and(isNull(vantageCustomers.deletedDate), lt(vantageCustomers.syncedAt, startedAt)))
-        .returning({ id: vantageCustomers.vantageId })
-    ).length;
-    equipmentMarkedDeleted = (
-      await db
-        .update(vantageEquipment)
-        .set({ deletedDate: startedAt })
-        .where(and(isNull(vantageEquipment.deletedDate), lt(vantageEquipment.syncedAt, startedAt)))
-        .returning({ id: vantageEquipment.vantageId })
-    ).length;
+    if (tooFewRows(customers.length, activeCustomers)) {
+      skipped.push(`customers: fetched ${customers.length} of ${activeCustomers} active`);
+    } else {
+      customersMarkedDeleted = (
+        await db
+          .update(vantageCustomers)
+          .set({ deletedDate: startedAt })
+          .where(and(isNull(vantageCustomers.deletedDate), lt(vantageCustomers.syncedAt, startedAt)))
+          .returning({ id: vantageCustomers.vantageId })
+      ).length;
+    }
+    if (tooFewRows(equipment.length, activeEquipment)) {
+      skipped.push(`equipment: fetched ${equipment.length} of ${activeEquipment} active`);
+    } else {
+      equipmentMarkedDeleted = (
+        await db
+          .update(vantageEquipment)
+          .set({ deletedDate: startedAt })
+          .where(and(isNull(vantageEquipment.deletedDate), lt(vantageEquipment.syncedAt, startedAt)))
+          .returning({ id: vantageEquipment.vantageId })
+      ).length;
+    }
   }
 
   return {
-    status: 'success',
+    status: skipped.length > 0 ? 'partial' : 'success',
+    ...(skipped.length > 0 && { errorSample: `full pull deletions skipped (too few rows): ${skipped.join('; ')}` }),
     stats: {
       customers: customers.length,
       equipment: equipment.length,

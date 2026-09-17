@@ -66,10 +66,15 @@ describe('runVantagePull', () => {
   });
 
   it('updates existing rows and marks vanished rows deleted on a full pull', async () => {
-    const first = fakeVantage([customer(1), customer(2)], [equipment(10), equipment(11)]);
+    // 5 active rows each; the second pull returns 4 of 5 (80%), which is enough to trust deletions.
+    const first = fakeVantage([1, 2, 3, 4, 5].map((id) => customer(id)), [10, 11, 12, 13, 14].map((id) => equipment(id)));
     await runVantagePull({ db: t.db, vantage: first.client, now: () => new Date('2026-09-16T02:00:00Z') }, { full: true });
-    const second = fakeVantage([customer(1, { Name: 'Renamed' })], [equipment(10, { SerialNumber: 'NEW' })]);
+    const second = fakeVantage(
+      [customer(1, { Name: 'Renamed' }), customer(3), customer(4), customer(5)],
+      [equipment(10, { SerialNumber: 'NEW' }), equipment(12), equipment(13), equipment(14)],
+    );
     const result = await runVantagePull({ db: t.db, vantage: second.client, now: () => new Date('2026-09-17T02:00:00Z') }, { full: true });
+    expect(result.status).toBe('success');
     expect(result.stats).toMatchObject({ customersMarkedDeleted: 1, equipmentMarkedDeleted: 1 });
     const [c1] = await t.db.select().from(vantageCustomers).where(eq(vantageCustomers.vantageId, 1));
     expect(c1?.name).toBe('Renamed');
@@ -77,5 +82,21 @@ describe('runVantagePull', () => {
     expect(e10).toMatchObject({ serialNorm: 'NEW', deletedDate: null });
     const [e11] = await t.db.select().from(vantageEquipment).where(eq(vantageEquipment.vantageId, 11));
     expect(e11?.deletedDate?.toISOString()).toBe('2026-09-17T02:00:00.000Z');
+  });
+
+  it('does not mark deletions when a full pull returns too few rows', async () => {
+    const ids = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+    const first = fakeVantage([customer(1), customer(2)], ids.map((id) => equipment(id)));
+    await runVantagePull({ db: t.db, vantage: first.client, now: () => new Date('2026-09-16T02:00:00Z') }, { full: true });
+
+    const second = fakeVantage([], [equipment(10, { SerialNumber: 'NEW' })]);
+    const result = await runVantagePull({ db: t.db, vantage: second.client, now: () => new Date('2026-09-17T02:00:00Z') }, { full: true });
+    expect(result).toMatchObject({ status: 'partial', stats: { customersMarkedDeleted: 0, equipmentMarkedDeleted: 0 } });
+    expect(result.errorSample).toContain('customers');
+    expect(result.errorSample).toContain('equipment');
+    const rows = await t.db.select().from(vantageEquipment);
+    expect(rows.filter((r) => r.deletedDate !== null)).toEqual([]);
+    expect(rows.find((r) => r.vantageId === 10)?.serialNorm).toBe('NEW');
+    expect((await t.db.select().from(vantageCustomers)).filter((r) => r.deletedDate !== null)).toEqual([]);
   });
 });
