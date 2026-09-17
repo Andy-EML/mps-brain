@@ -86,4 +86,15 @@ describe('runLinkRun', () => {
     expect(closed).toMatchObject({ unlinkedReason: 'auto' });
     expect((await openIssues()).map((i) => i.type).sort()).toEqual(['link_broken', 'no_match_vantage']);
   });
+
+  it('keeps link_broken open across later runs until an operator resolves it', async () => {
+    await seedVantage(t.db, [{ vantageId: 10, serial: 'A1' }]);
+    await seedDrms(t.db, [{ drmsId: 'd1', serial: 'A1' }]);
+    await runLinkRun({ db: t.db, config });
+    await t.db.update(drmsEquipment).set({ missingSince: new Date() });
+
+    for (let i = 0; i < 3; i++) await runLinkRun({ db: t.db, config });
+    const broken = (await openIssues()).filter((i) => i.type === 'link_broken');
+    expect(broken).toMatchObject([{ issueKey: 'link_broken|d1|10', status: 'open' }]);
+  });
 });

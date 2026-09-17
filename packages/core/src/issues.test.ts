@@ -31,6 +31,15 @@ describe('reconcileIssues', () => {
     expect(changes.toReopen).toEqual([{ id: 3, issue: issue('no_match_drms', 'd3', null) }]);
     expect(changes.toResolve).toEqual([4]);
   });
+
+  it('never auto-resolves link_broken issues', () => {
+    const stored: StoredIssue[] = [
+      { id: 1, key: 'link_broken|d1|10', status: 'open' },
+      { id: 2, key: 'no_match_drms|d2|', status: 'open' },
+    ];
+    const changes = reconcileIssues(stored, []);
+    expect(changes.toResolve).toEqual([2]);
+  });
 });
 
 describe('deriveCustomerLinks', () => {

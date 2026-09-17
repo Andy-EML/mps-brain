@@ -6,6 +6,9 @@ import {
   type VantageDeviceInput,
 } from './linking';
 
+/** Issue keys start with `${type}|` (see issueKey). */
+const NO_AUTO_RESOLVE_PREFIX = 'link_broken|';
+
 export interface StoredIssue {
   id: number;
   key: string;
@@ -34,7 +37,11 @@ export function reconcileIssues(stored: StoredIssue[], planned: PlannedIssue[]):
     else changes.toTouch.push(s.id);
   }
   for (const s of stored) {
-    if (s.status === 'open' && !plannedByKey.has(s.key)) changes.toResolve.push(s.id);
+    // link_broken is only planned on the run that closes the link, so it must stay open
+    // until an operator resolves it; every other type auto-resolves when no longer planned.
+    if (s.status === 'open' && !plannedByKey.has(s.key) && !s.key.startsWith(NO_AUTO_RESOLVE_PREFIX)) {
+      changes.toResolve.push(s.id);
+    }
   }
   return changes;
 }
