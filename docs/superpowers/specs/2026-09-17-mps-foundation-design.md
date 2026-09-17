@@ -199,3 +199,22 @@ Targeted, read-only follow-up (`scripts/phase0-probe2.ts`) resolving the four co
 ### Registration batches
 - Devices flagged as a customer mismatch are usually machines moved to a new location or customer. They are still active, so they're registered with the customer DRMS holds and listed for KM.
 - Devices that haven't checked in for a while are skipped.
+
+### Meter mapping (found 2026-09-17, needed by sub-project 2)
+- Vantage RMB equipment uses `CollectionSchemaId = 3` ("Konica/Olivetti CS Remote"). Each Vantage `Meter` has `Type` (Black=1, Colour=2, Scan=3) and `Column` (a `MeterCollectionSchemaColumn`). **The column names are exactly the DRMS `LatestCounters` counter names**:
+  - Black ← `Black:Total`
+  - Colour ← `Full Color:Total`
+  - Scan ← `Scanner/FAX:Scan`
+- Totals confirmed by user and verified on 4 sampled devices (sums exact):
+  - `Full Color:Total` [10] = `Copy:Full Color` [1] + `Printer:Full Color` [2] + `Scanner/FAX:Print(Full Color)` [3]
+  - `Black:Total` [11] = `Copy:Black` [4] + `Printer:Black` [5] + `Scanner/FAX:Print(Black)` [6]
+  - Bracket numbers are the user's CSRC counter numbers, **not** the DRMS `ItemNumber` field (which repeats across counters). Use counter `Name`.
+  - Use the totals directly. Optionally flag a device whose total ≠ sum of parts. 2-colour/mono-colour counters (`Copy:2C Color`, `Printer:2C Color`, `Copy:Mono Color`) are **not** in either total (small counts seen).
+- Meter sync maps **per device**: `GET Equipment(id)?$expand=Meters($expand=Type,Column)`, then for each meter take the DRMS counter whose `Name` equals `Column.Name`. Ignore all other DRMS counters (about 70 paper-size/mode counters). Not every device has all 3 meters (e.g. no Scan meter on some).
+- Other Vantage meter types exist (coverage-band colour types, `Black A3` id 12). They aren't mapped to DRMS columns on the sampled devices, so treat them as out of scope unless a device's meter points at a schema-3 column.
+- In the UI, the `counter_names` category editor can pre-mark these 3 as `meter` and the 4 `*TonerLevel` as `supply`.
+
+### Scope notes from user (2026-09-17)
+- Jams and error events (e.g. J-31) are **not needed** on the dashboard.
+- Drum/imaging-unit status is nice-to-have, not critical. DRMS `LatestCounters` has **no** drum, imaging-unit or waste-box counters (only C/M/Y/K toner levels and page counters). The only possible source is DRMS alarms. KM Q7 asks about waste toner.
+- Mockups (`mockups of dashboard/`): Fleet overview, Device detail, Toner orders. Part 2 copies the visual style and builds Fleet overview + Device detail from real data. Ordering and auto-reorder UI belong to sub-project 3. Uptime, IP, engineer, "Run diagnostic" and "Book an engineer" have no data source yet.
