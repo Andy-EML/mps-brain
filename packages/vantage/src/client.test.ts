@@ -60,7 +60,7 @@ describe('Vantage client', () => {
     await client.listEquipment({ since: new Date('2026-09-01T00:00:00Z') });
     const get = calls[1]!;
     expect(get.url.search).toContain(
-      '$filter=(deleteddate%20eq%20null)%20and%20(modifieddate%20gt%202026-09-01T00%3A00%3A00.000Z)',
+      '$filter=(deleteddate%20eq%20null)%20and%20(modifieddate%20gt%202026-09-01T00%3A00%3A00.000Z%20or%20createddate%20gt%202026-09-01T00%3A00%3A00.000Z%20or%20deleteddate%20gt%202026-09-01T00%3A00%3A00.000Z)',
     );
     expect(get.url.searchParams.get('$expand')).toBe('Item,Customer');
 

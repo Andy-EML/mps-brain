@@ -14,7 +14,7 @@ import type { VantageClient, VantageRecord } from '@mps/vantage';
 import { and, count, isNull, lt } from 'drizzle-orm';
 import { lastSuccessfulStart, type JobResult } from '../sync-runs';
 
-const OVERLAP_MS = 10 * 60_000;
+const OVERLAP_MS = 2 * 60 * 60_000;
 const CHUNK = 500;
 /** A full pull must return at least this share of currently active rows before vanished rows are marked deleted. */
 const MIN_FULL_PULL_RATIO = 0.8;

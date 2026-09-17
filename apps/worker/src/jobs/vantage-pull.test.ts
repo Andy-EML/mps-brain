@@ -55,12 +55,12 @@ describe('runVantagePull', () => {
     expect(await t.db.select().from(vantageEquipment)).toHaveLength(2);
   });
 
-  it('does an incremental pull including deleted rows since last success minus 10 minutes', async () => {
+  it('does an incremental pull including deleted rows since last success minus 2 hours', async () => {
     await t.db.insert(syncRuns).values({ job: 'vantage-pull', status: 'success', startedAt: new Date('2026-09-16T02:00:00Z') });
     const v = fakeVantage([], [equipment(10, { DeletedDate: '2026-09-16T12:00:00Z' })]);
     const result = await runVantagePull({ db: t.db, vantage: v.client, now: () => new Date('2026-09-17T02:00:00Z') }, { full: false });
     expect(result.stats.full).toBe(0);
-    expect(v.calls[1]?.opts).toEqual({ since: new Date('2026-09-16T01:50:00Z'), includeDeleted: true });
+    expect(v.calls[1]?.opts).toEqual({ since: new Date('2026-09-16T00:00:00Z'), includeDeleted: true });
     const [row] = await t.db.select().from(vantageEquipment);
     expect(row?.deletedDate?.toISOString()).toBe('2026-09-16T12:00:00.000Z');
   });

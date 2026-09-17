@@ -123,8 +123,11 @@ export function createVantageClient(opts: VantageClientOptions) {
     }
   }
 
-  const listFilters = (o: ListOptions) =>
-    o.since ? [`modifieddate gt ${o.since.toISOString()}`] : [];
+  const listFilters = (o: ListOptions) => {
+    if (!o.since) return [];
+    const since = o.since.toISOString();
+    return [`modifieddate gt ${since} or createddate gt ${since} or deleteddate gt ${since}`];
+  };
 
   return {
     odataList,
