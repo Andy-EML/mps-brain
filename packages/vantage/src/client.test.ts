@@ -1,4 +1,4 @@
-import { AuthError } from '@mps/core';
+import { AuthError, ParseError } from '@mps/core';
 import { describe, expect, it } from 'vitest';
 import { createVantageClient } from './client';
 
@@ -131,5 +131,26 @@ describe('Vantage client', () => {
   it('throws AuthError when login fails', async () => {
     const { client } = make(() => json({ error: { message: 'bad' } }, 400));
     await expect(client.listCustomers()).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it('caps paging to avoid an unbounded loop against a misbehaving server', async () => {
+    const f = fakeFetch(({ url }) =>
+      url.pathname.startsWith('/application')
+        ? session('t', '2026-09-17T10:30:00Z')
+        : json({ '@odata.count': 1_000_000, value: [{ Id: 1 }, { Id: 2 }] }),
+    );
+    const client = createVantageClient({
+      baseUrl: 'https://api.vantage.test/',
+      username: 'u',
+      password: 'p',
+      apiVersion: '1.22',
+      fetch: f.fn,
+      now: () => T0,
+      pageSize: 2,
+      maxPages: 3,
+    });
+    await expect(client.listCustomers()).rejects.toBeInstanceOf(ParseError);
+    const getCalls = f.calls.filter((c) => !c.url.pathname.startsWith('/application'));
+    expect(getCalls).toHaveLength(3);
   });
 });

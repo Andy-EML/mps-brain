@@ -8,6 +8,7 @@ export interface VantageClientOptions {
   fetch?: typeof fetch;
   now?: () => number;
   pageSize?: number;
+  maxPages?: number;
 }
 
 export interface ListOptions {
@@ -18,6 +19,7 @@ export interface ListOptions {
 export type VantageRecord = Record<string, unknown>;
 
 const REISSUE_WINDOW_MS = 5 * 60_000;
+const MAX_PAGES = 10_000;
 
 function buildQuery(params: Record<string, string | number>): string {
   return Object.entries(params)
@@ -39,6 +41,7 @@ export function createVantageClient(opts: VantageClientOptions) {
   const now = opts.now ?? Date.now;
   const base = opts.baseUrl.replace(/\/+$/, '');
   const defaultPageSize = opts.pageSize ?? 500;
+  const maxPages = opts.maxPages ?? MAX_PAGES;
   let token: string | null = null;
   let expiresAt = 0;
 
@@ -98,7 +101,11 @@ export function createVantageClient(opts: VantageClientOptions) {
     if (!o.includeDeleted) filters.unshift('deleteddate eq null');
     const out: VantageRecord[] = [];
     let top = defaultPageSize;
+    let pagesFetched = 0;
     for (;;) {
+      if (pagesFetched >= maxPages) {
+        throw new ParseError(`Vantage ${entity} paging exceeded ${maxPages} pages`, 200);
+      }
       const params: Record<string, string | number> = {
         $top: top,
         $skip: out.length,
@@ -108,6 +115,7 @@ export function createVantageClient(opts: VantageClientOptions) {
       if (filters.length > 0) params.$filter = filters.map((f) => `(${f})`).join(' and ');
       if (o.expand) params.$expand = o.expand;
       const body = await get(entity, params);
+      pagesFetched++;
       const items = Array.isArray(body) ? body : getField(body, 'value');
       if (!Array.isArray(items)) throw new ParseError(`Vantage ${entity} response has no value array`, 200);
       if (items.length === 0) return out;
