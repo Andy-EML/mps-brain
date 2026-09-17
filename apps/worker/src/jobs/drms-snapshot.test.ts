@@ -123,4 +123,16 @@ describe('runDrmsSnapshot', () => {
     const retry = await runDrmsSnapshot({ db: t.db, drms: { latestCounters: async (id: string) => counters(`${id}-c1`) }, now: day('2026-09-17T07:00:00Z'), concurrency: 1 });
     expect(retry.stats).toMatchObject({ devices: 1, inserted: 1 });
   });
+
+  it('counts a device with no counters as empty, stores nothing, and skips it on a same-day rerun', async () => {
+    const drms = { latestCounters: async (id: string) => (id === 'd5' ? null : counters(`${id}-c1`)) };
+    const result = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T06:00:00Z'), concurrency: 1 });
+    expect(result).toMatchObject({ status: 'success', stats: { devices: 3, inserted: 2, empty: 1 } });
+    expect(await t.db.select().from(counterSnapshots).where(eq(counterSnapshots.drmsEquipmentId, 'd5'))).toEqual([]);
+    const [d5] = await t.db.select().from(drmsEquipment).where(eq(drmsEquipment.drmsId, 'd5'));
+    expect(d5?.lastSnapshotFetchAt?.toISOString()).toBe('2026-09-17T06:00:00.000Z');
+
+    const sameDay = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T09:00:00Z'), concurrency: 1 });
+    expect(sameDay.stats.devices).toBe(0);
+  });
 });
