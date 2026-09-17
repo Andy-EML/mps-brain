@@ -41,6 +41,7 @@ describe('DRMS client', () => {
       '/api/v8/Equipment?pageNo=2',
     ]);
     expect((calls[0]?.init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+    expect(calls.every((c) => c.init?.signal instanceof AbortSignal)).toBe(true);
   });
 
   it('stops when a page repeats already-seen ids', async () => {

@@ -9,6 +9,8 @@ export interface VantageClientOptions {
   now?: () => number;
   pageSize?: number;
   maxPages?: number;
+  /** Per-request timeout; default 60 s. */
+  timeoutMs?: number;
 }
 
 export interface ListOptions {
@@ -42,6 +44,7 @@ export function createVantageClient(opts: VantageClientOptions) {
   const base = opts.baseUrl.replace(/\/+$/, '');
   const pageSize = opts.pageSize ?? 500;
   const maxPages = opts.maxPages ?? MAX_PAGES;
+  const timeoutMs = opts.timeoutMs ?? 60_000;
   let token: string | null = null;
   let expiresAt = 0;
 
@@ -53,6 +56,7 @@ export function createVantageClient(opts: VantageClientOptions) {
     const res = await doFetch(`${base}/application/${kind}`, {
       method: 'POST',
       headers: { authorization, 'api-version': opts.apiVersion, Accept: 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
     if (!res.ok) throw new AuthError(`Vantage ${kind} failed (${res.status})`, res.status, text.slice(0, 500));
@@ -79,6 +83,7 @@ export function createVantageClient(opts: VantageClientOptions) {
     const send = () =>
       doFetch(`${base}/${path}?${buildQuery(params)}`, {
         headers: { authorization: `Bearer ${token}`, 'api-version': opts.apiVersion, Accept: 'application/json' },
+        signal: AbortSignal.timeout(timeoutMs),
       });
     await ensureToken();
     let res = await send();

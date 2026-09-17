@@ -19,12 +19,15 @@ export interface DrmsClientOptions {
   token: string;
   fetch?: typeof fetch;
   limiter?: MethodLimiter;
+  /** Per-request timeout; default 60 s. */
+  timeoutMs?: number;
 }
 
 export function createDrmsClient(opts: DrmsClientOptions) {
   const doFetch = opts.fetch ?? fetch;
   const limiter = opts.limiter ?? new MethodLimiter(1000, 10 * 60_000);
   const base = opts.baseUrl.replace(/\/+$/, '');
+  const timeoutMs = opts.timeoutMs ?? 60_000;
 
   async function requestText(
     method: string,
@@ -36,6 +39,7 @@ export function createDrmsClient(opts: DrmsClientOptions) {
     for (const [k, v] of Object.entries(query)) url.searchParams.set(k, String(v));
     const res = await doFetch(url, {
       headers: { Authorization: `Bearer ${opts.token}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 429) {
       const until = limiter.tripCooldown(method);

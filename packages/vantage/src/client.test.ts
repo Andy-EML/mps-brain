@@ -2,15 +2,17 @@ import { AuthError, ParseError } from '@mps/core';
 import { describe, expect, it } from 'vitest';
 import { createVantageClient } from './client';
 
-type Handler = (req: { url: URL; method: string; headers: Record<string, string> }) => Response;
+type Req = { url: URL; method: string; headers: Record<string, string>; signal?: AbortSignal | null };
+type Handler = (req: Req) => Response;
 
 function fakeFetch(handler: Handler) {
-  const calls: { url: URL; method: string; headers: Record<string, string> }[] = [];
+  const calls: Req[] = [];
   const fn = (async (input: string | URL | Request, init?: RequestInit) => {
     const req = {
       url: new URL(String(input)),
       method: init?.method ?? 'GET',
       headers: (init?.headers ?? {}) as Record<string, string>,
+      signal: init?.signal,
     };
     calls.push(req);
     return handler(req);
@@ -51,6 +53,7 @@ describe('Vantage client', () => {
     expect(get?.url.pathname).toBe('/customer');
     expect(get?.headers.authorization).toBe('Bearer t1');
     expect(get?.headers['api-version']).toBe('1.22');
+    expect(calls.every((c) => c.signal instanceof AbortSignal)).toBe(true);
   });
 
   it('builds filters with the deleted guard and since, encoded with %20', async () => {
