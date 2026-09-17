@@ -1,7 +1,7 @@
 import type { LinkConfig } from '@mps/core';
-import { customerLinks, deviceLinks, drmsEquipment, linkIssues } from '@mps/db';
+import { customerLinks, deviceLinks, drmsEquipment, linkIssues, vantageEquipment } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
-import { eq, isNull } from 'drizzle-orm';
+import { eq, isNotNull, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { seedDrms, seedVantage } from '../test-helpers';
 import { runLinkRun } from './link-run';
@@ -83,8 +83,31 @@ describe('runLinkRun', () => {
     const result = await runLinkRun({ db: t.db, config });
     expect(result.stats).toMatchObject({ linksClosed: 1, activeLinks: 0 });
     const [closed] = await t.db.select().from(deviceLinks);
-    expect(closed).toMatchObject({ unlinkedReason: 'auto' });
+    expect(closed).toMatchObject({ unlinkedReason: 'drms_missing' });
     expect((await openIssues()).map((i) => i.type).sort()).toEqual(['link_broken', 'no_match_vantage']);
+  });
+
+  it('records vantage_deleted and relinked as close reasons', async () => {
+    await seedVantage(t.db, [
+      { vantageId: 10, serial: 'A1' },
+      { vantageId: 20, serial: 'B2' },
+    ]);
+    await seedDrms(t.db, [
+      { drmsId: 'd1', serial: 'A1' },
+      { drmsId: 'd2', serial: 'B2' },
+    ]);
+    await runLinkRun({ db: t.db, config });
+    await t.db.update(vantageEquipment).set({ deletedDate: new Date() }).where(eq(vantageEquipment.vantageId, 10));
+    await t.db.update(vantageEquipment).set({ serialNorm: 'OLD' }).where(eq(vantageEquipment.vantageId, 20));
+    await seedVantage(t.db, [{ vantageId: 21, serial: 'B2' }]);
+
+    const result = await runLinkRun({ db: t.db, config });
+    expect(result.stats).toMatchObject({ linksClosed: 2 });
+    const closed = await t.db.select().from(deviceLinks).where(isNotNull(deviceLinks.unlinkedAt));
+    expect(closed.map((l) => [l.drmsEquipmentId, l.unlinkedReason]).sort()).toEqual([
+      ['d1', 'vantage_deleted'],
+      ['d2', 'relinked'],
+    ]);
   });
 
   it('keeps link_broken open across later runs until an operator resolves it', async () => {

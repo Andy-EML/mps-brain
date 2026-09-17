@@ -66,8 +66,22 @@ export async function runLinkRun(deps: LinkRunDeps): Promise<JobResult> {
     const plan = computeLinks(drms, vantage, existing, config);
     const { toCreate, toClose } = diffLinks(existing, plan.links);
 
-    for (const ids of chunk(toClose.map((l) => l.id), CHUNK)) {
-      await tx.update(deviceLinks).set({ unlinkedAt: now, unlinkedReason: 'auto' }).where(inArray(deviceLinks.id, ids));
+    // A close caused by a planned link_broken issue records its reason; any other close is a relink.
+    const brokenReason = new Map<string, string>();
+    for (const i of plan.issues) {
+      if (i.type === 'link_broken' && i.drmsId !== null) brokenReason.set(i.drmsId, String(i.details.reason));
+    }
+    const closeIdsByReason = new Map<string, number[]>();
+    for (const l of toClose) {
+      const reason = brokenReason.get(l.drmsId) ?? 'relinked';
+      const ids = closeIdsByReason.get(reason);
+      if (ids) ids.push(l.id);
+      else closeIdsByReason.set(reason, [l.id]);
+    }
+    for (const [reason, closeIds] of closeIdsByReason) {
+      for (const ids of chunk(closeIds, CHUNK)) {
+        await tx.update(deviceLinks).set({ unlinkedAt: now, unlinkedReason: reason }).where(inArray(deviceLinks.id, ids));
+      }
     }
     for (const rows of chunk(toCreate, CHUNK)) {
       await tx.insert(deviceLinks).values(
