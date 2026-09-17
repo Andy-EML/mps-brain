@@ -44,6 +44,16 @@ export function flattenCounters(c: DrmsLatestCounters): FlatCounter[] {
   return out;
 }
 
+/**
+ * First counter per name, sorted by name. Concurrent snapshot transactions upsert overlapping
+ * counter_names rows; a consistent order makes them take row locks in the same order (no deadlock).
+ */
+export function uniqueCounterNames(values: FlatCounter[]): FlatCounter[] {
+  const firstByName = new Map<string, FlatCounter>();
+  for (const v of values) if (!firstByName.has(v.name)) firstByName.set(v.name, v);
+  return [...firstByName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
 export async function saveSnapshot(db: Db, drmsId: string, c: DrmsLatestCounters, fetchedAt: Date): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [snap] = await tx
@@ -64,9 +74,7 @@ export async function saveSnapshot(db: Db, drmsId: string, c: DrmsLatestCounters
       await tx.insert(counterValues).values(rows.map((v) => ({ ...v, snapshotId: snap.id })));
     }
 
-    const firstByName = new Map<string, FlatCounter>();
-    for (const v of values) if (!firstByName.has(v.name)) firstByName.set(v.name, v);
-    for (const rows of chunk([...firstByName.values()], CHUNK)) {
+    for (const rows of chunk(uniqueCounterNames(values), CHUNK)) {
       await tx
         .insert(counterNames)
         .values(rows.map((v) => ({ name: v.name, firstSeen: fetchedAt, sampleValue: v.value, updatedAt: fetchedAt })))

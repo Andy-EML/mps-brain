@@ -5,7 +5,7 @@ import type { DrmsLatestCounters } from '@mps/drms';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { seedDrms } from '../test-helpers';
-import { flattenCounters, runDrmsSnapshot } from './drms-snapshot';
+import { flattenCounters, runDrmsSnapshot, uniqueCounterNames } from './drms-snapshot';
 
 const counters = (counterId: string, black = 58): DrmsLatestCounters => ({
   Id: 'x',
@@ -28,6 +28,13 @@ describe('flattenCounters', () => {
       { itemNumber: '3', name: 'A4 SEF Full', value: null, colorMode: 'FullColor', mode: 'CopyMode' },
     ]);
     expect(flattenCounters({ CounterId: 'c', Counters: null, ModeSizeCounters: null })).toEqual([]);
+  });
+});
+
+describe('uniqueCounterNames', () => {
+  it('keeps the first counter per name and sorts by name for a consistent lock order', () => {
+    const c = (name: string, value: number) => ({ itemNumber: null, name, value, colorMode: null, mode: null });
+    expect(uniqueCounterNames([c('b', 1), c('a', 2), c('b', 3), c('C', 4)])).toEqual([c('C', 4), c('a', 2), c('b', 1)]);
   });
 });
 
