@@ -223,6 +223,34 @@ export const deviceAlerts = pgTable(
   ],
 );
 
+export const deviceAlarms = pgTable(
+  'device_alarms',
+  {
+    // DRMS `AlarmId` (a Guid) is a natural dedupe key — reruns of an overlapping window just no-op.
+    alarmId: text('alarm_id').primaryKey(),
+    drmsEquipmentId: text('drms_equipment_id')
+      .notNull()
+      .references(() => drmsEquipment.drmsId),
+    receivedTime: ts('received_time').notNull(),
+    fcCode: text('fc_code'),
+    scCode: text('sc_code'),
+    description: text('description'),
+    status: text('status'),
+    totalCount: bigint('total_count', { mode: 'number' }),
+    totalColorCount: bigint('total_color_count', { mode: 'number' }),
+    raw: jsonb('raw').notNull(),
+    fetchedAt: ts('fetched_at').notNull().defaultNow(),
+    // Derived on insert by classifyAlarm() (@mps/core) from fcCode/description, so the UI can
+    // filter without re-parsing descriptions.
+    category: text('category'),
+  },
+  (t) => [
+    index('device_alarms_device_received_idx').on(t.drmsEquipmentId, t.receivedTime),
+    index('device_alarms_category_received_idx').on(t.category, t.receivedTime),
+    index('device_alarms_status_idx').on(t.status),
+  ],
+);
+
 export const syncRuns = pgTable(
   'sync_runs',
   {

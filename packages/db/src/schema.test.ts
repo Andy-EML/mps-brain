@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getAppState, setAppState } from './app-state';
-import { counterSnapshots, deviceAlerts, deviceLinks, drmsEquipment, linkIssues, vantageEquipment } from './schema';
+import {
+  counterSnapshots,
+  deviceAlarms,
+  deviceAlerts,
+  deviceLinks,
+  drmsEquipment,
+  linkIssues,
+  vantageEquipment,
+} from './schema';
 import { createTestDb, type TestDb } from './testing';
 
 describe('schema', () => {
@@ -52,6 +60,21 @@ describe('schema', () => {
     await expect(
       t.db.insert(deviceAlerts).values({ drmsEquipmentId: 'd1', type: 'offline', firstDetectedAt: new Date() }),
     ).rejects.toThrow();
+  });
+
+  it('dedupes alarms by alarmId (natural DRMS key)', async () => {
+    const row = {
+      alarmId: 'guid-1',
+      drmsEquipmentId: 'd1',
+      receivedTime: new Date('2026-09-17T02:00:00Z'),
+      fcCode: 'TN-00',
+      category: 'toner',
+      raw: {},
+    };
+    await t.db.insert(deviceAlarms).values(row);
+    const again = await t.db.insert(deviceAlarms).values(row).onConflictDoNothing().returning();
+    expect(again).toHaveLength(0);
+    expect(await t.db.select().from(deviceAlarms)).toHaveLength(1);
   });
 
   it('stores and overwrites app state', async () => {
