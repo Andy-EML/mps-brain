@@ -7,3 +7,6 @@ coverage/
 !.env.example
 fixtures/raw/
 *.log
+
+# SDD working files: ledger, task briefs, review packages, scratch scripts
+.superpowers/
