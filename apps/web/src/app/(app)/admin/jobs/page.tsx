@@ -1,6 +1,6 @@
-import { getAppStateValue, listSyncRuns } from '@mps/db/queries';
+import { getAppStateValue, listQueueSchedules, listSyncRuns } from '@mps/db/queries';
 import { AdminNav } from '@/components/admin-nav';
-import { JOB_CARDS, tokenExpiry } from '@/components/admin-jobs';
+import { JOB_CARDS, scheduleLabel, tokenExpiry } from '@/components/admin-jobs';
 import { JobRunTable } from '@/components/job-run-table';
 import { JobTriggerButton } from '@/components/job-trigger-button';
 import { PageHeader } from '@/components/page-header';
@@ -19,11 +19,13 @@ export default async function AdminJobsPage() {
   await requireAdmin();
 
   const db = getDb();
-  const [runs, expiryValue] = await Promise.all([
+  const [runs, expiryValue, crons] = await Promise.all([
     listSyncRuns(db, LIMIT),
     // Only ever the *expiry date*. The token itself lives in the worker's environment and has no
     // business in a page, a log or a URL.
     getAppStateValue<string>(db, 'drms_token_expiry'),
+    // What the worker registered, so this page can never advertise a time the job no longer runs.
+    listQueueSchedules(db),
   ]);
 
   const now = new Date();
@@ -77,7 +79,7 @@ export default async function AdminJobsPage() {
                 />
               </div>
               <p className="mt-2 text-[13px] text-muted-foreground">{card.description}</p>
-              <p className="mt-auto pt-2 text-xs text-muted-foreground">Normally: {card.schedule}</p>
+              <p className="mt-auto pt-2 text-xs text-muted-foreground">Normally: {scheduleLabel(card, crons)}</p>
             </div>
           ))}
         </div>
