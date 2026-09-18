@@ -71,6 +71,37 @@ describe('Vantage client', () => {
     expect(calls[2]!.url.searchParams.get('$filter')).toBeNull();
   });
 
+  it('lists sales orders with the lines/item/type expand and the deleted guard', async () => {
+    const { client, calls } = make(({ url }) =>
+      url.pathname.startsWith('/application')
+        ? session('t', '2026-09-17T10:30:00Z')
+        : json({ value: [{ Id: 7, Reference: 'SO2609-0214', Lines: [{ Id: 1 }] }] }),
+    );
+    const orders = await client.listSalesOrders();
+    expect(orders).toEqual([{ Id: 7, Reference: 'SO2609-0214', Lines: [{ Id: 1 }] }]);
+    const get = calls[1]!;
+    expect(get.url.pathname).toBe('/SalesOrder');
+    expect(get.url.searchParams.get('$expand')).toBe(
+      'Lines($expand=Item($select=Id,PartNumber,Description)),Type($select=Id,Name)',
+    );
+    expect(get.url.searchParams.get('$filter')).toBe('(deleteddate eq null)');
+  });
+
+  it('adds the incremental filter and an orderdate floor for sales orders', async () => {
+    const { client, calls } = make(({ url }) =>
+      url.pathname.startsWith('/application') ? session('t', '2026-09-17T10:30:00Z') : json([]),
+    );
+    await client.listSalesOrders({ since: new Date('2026-09-01T00:00:00Z'), includeDeleted: true });
+    expect(calls[1]!.url.searchParams.get('$filter')).toBe(
+      '(modifieddate gt 2026-09-01T00:00:00.000Z or createddate gt 2026-09-01T00:00:00.000Z or deleteddate gt 2026-09-01T00:00:00.000Z)',
+    );
+
+    await client.listSalesOrders({ orderDateFrom: new Date('2024-09-18T00:00:00Z') });
+    expect(calls[2]!.url.searchParams.get('$filter')).toBe(
+      '(deleteddate eq null) and (orderdate ge 2024-09-18T00:00:00.000Z)',
+    );
+  });
+
   it('pages by key with $orderby=Id and Id gt lastId until a short page', async () => {
     const all = [1, 2, 3].map((Id) => ({ Id }));
     const { client, calls } = make(({ url }) => {

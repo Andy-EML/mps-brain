@@ -18,6 +18,20 @@ export interface ListOptions {
   includeDeleted?: boolean;
 }
 
+export interface SalesOrderListOptions extends ListOptions {
+  /**
+   * Floor on `OrderDate`. The first run has no `since` to work from, and without this it would drag
+   * in a decade of order history.
+   */
+  orderDateFrom?: Date;
+}
+
+/**
+ * Lines with their item, plus the order type, in one call. `Type.Name` is either `Consumable order`
+ * or `Equipment deal`, and the item select keeps the payload to the three fields the UI shows.
+ */
+const SALES_ORDER_EXPAND = 'Lines($expand=Item($select=Id,PartNumber,Description)),Type($select=Id,Name)';
+
 export type VantageRecord = Record<string, unknown>;
 
 const REISSUE_WINDOW_MS = 5 * 60_000;
@@ -143,6 +157,16 @@ export function createVantageClient(opts: VantageClientOptions) {
         filter: listFilters(o),
         includeDeleted: o.includeDeleted,
         expand: 'Item,Customer',
+      }),
+    /** Read-only: this project never creates or edits a Vantage sales order here. */
+    listSalesOrders: (o: SalesOrderListOptions = {}) =>
+      odataList('SalesOrder', {
+        filter: [
+          ...listFilters(o),
+          ...(o.orderDateFrom ? [`orderdate ge ${o.orderDateFrom.toISOString()}`] : []),
+        ],
+        includeDeleted: o.includeDeleted,
+        expand: SALES_ORDER_EXPAND,
       }),
   };
 }
