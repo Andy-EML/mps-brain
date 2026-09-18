@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Search, X } from 'lucide-react';
 import { cn } from 'cn';
+import { hrefWith } from '../lib/href';
 
 export interface SearchInputProps {
   /** Where the form submits. The overview's box sends you to the devices list. */
@@ -14,6 +15,14 @@ export interface SearchInputProps {
    */
   hiddenParams?: Record<string, string | undefined>;
   className?: string;
+}
+
+/**
+ * The "Clear search" link's target: `action` with `hiddenParams` carried over (e.g. the active
+ * filter tab), so clearing the search box doesn't also drop back to the "All" tab.
+ */
+export function clearSearchHref(action: string, hiddenParams?: SearchInputProps['hiddenParams']): string {
+  return hrefWith(action, hiddenParams ?? {});
 }
 
 /**
@@ -38,7 +47,7 @@ export function SearchInput({ action, defaultValue, placeholder = 'Search device
       />
       {defaultValue ? (
         <Link
-          href={action}
+          href={clearSearchHref(action, hiddenParams)}
           aria-label="Clear search"
           title="Clear search"
           className="absolute top-1/2 right-2.5 flex size-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
