@@ -5,8 +5,10 @@ import {
   getDevice,
   listAlerts,
   listDeviceAlarms,
+  listDeviceOrders,
   METER_NAMES,
   type AlertRow,
+  type DeviceOrders,
 } from '@mps/db/queries';
 import { acknowledgeAlertAction } from '@/app/(app)/alerts/actions';
 import { AlarmGroups } from '@/components/alarm-groups';
@@ -14,6 +16,7 @@ import { Breadcrumb } from '@/components/breadcrumb';
 import { CounterTable } from '@/components/counter-table';
 import { DetailCard, DetailRow } from '@/components/detail-card';
 import { counterHistoryRows, groupAlarms, rawString } from '@/components/device-detail';
+import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
 import { deviceStatusLabel, TONER_CHANNELS } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
@@ -34,6 +37,14 @@ const HISTORY_ROWS = 30;
 const HISTORY_DAYS = 365;
 /** Alarms are cheap and a device rarely has many; 200 is far above the busiest device we hold (9). */
 const ALARM_LIMIT = 200;
+/** Orders shown in the table, per the brief. The per-colour headline looks further back itself. */
+const ORDER_LIMIT = 10;
+
+/** An unlinked device has no Vantage equipment id, so it can have no orders. */
+const NO_ORDERS: DeviceOrders = {
+  orders: [],
+  lastByColour: { black: null, cyan: null, magenta: null, yellow: null, waste: null },
+};
 
 const LINK_METHOD: Record<string, string> = {
   erp_id: 'ERP id match',
@@ -129,10 +140,15 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const detail = await getDevice(db, id);
   if (!detail) notFound();
 
-  const [history, alarms, alerts] = await Promise.all([
+  const vantageEquipmentId = detail.link.vantageEquipmentId;
+  const [history, alarms, alerts, orders] = await Promise.all([
     getCounterHistory(db, id, [METER_NAMES.black, METER_NAMES.colour, METER_NAMES.scan], HISTORY_DAYS),
     listDeviceAlarms(db, id, { limit: ALARM_LIMIT }),
     listAlerts(db, { drmsId: id }),
+    // Orders hang off the Vantage equipment, so an unlinked device simply has none.
+    vantageEquipmentId == null
+      ? Promise.resolve(NO_ORDERS)
+      : listDeviceOrders(db, vantageEquipmentId, { limit: ORDER_LIMIT }),
   ]);
 
   const { device, record, link } = detail;
@@ -244,6 +260,29 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
                   : 'No alarms received for this device.'}
               </p>
             )}
+          </Card>
+
+          <Card
+            title="Consumable orders"
+            meta={
+              vantageEquipmentId == null
+                ? 'Not linked to Vantage'
+                : orders.orders.length > 0
+                  ? `Last ${formatNumber(orders.orders.length)} ${pluralise(orders.orders.length, 'order')}`
+                  : null
+            }
+            bare
+          >
+            <OrderHistory
+              orders={orders.orders}
+              lastByColour={orders.lastByColour}
+              emptyMessage={
+                vantageEquipmentId == null
+                  ? 'Orders are held against Vantage equipment — link this device to see what has been sent.'
+                  : undefined
+              }
+              className="border-t border-line"
+            />
           </Card>
 
           <Card

@@ -10,6 +10,7 @@ describe('QUEUE_OPTIONS', () => {
       [QUEUES.drmsPull]: { name: 'drms-pull', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       [QUEUES.linkRun]: { name: 'link-run', policy: 'stately', retryLimit: 0, expireInSeconds: 1800 },
       [QUEUES.drmsAlarms]: { name: 'drms-alarms', policy: 'stately', retryLimit: 0, expireInSeconds: 1800 },
+      [QUEUES.vantageOrders]: { name: 'vantage-orders', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
     });
   });
 });

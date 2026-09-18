@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DeviceAlarmRow } from '@mps/db/queries';
-import { alarmCode, alarmStatusLabel, counterHistoryRows, groupAlarms, rawString } from './device-detail';
+import { alarmCode, alarmStatusLabel, counterHistoryRows, groupAlarms, orderStatus, rawString } from './device-detail';
 
 const at = (iso: string) => new Date(iso);
 
@@ -169,5 +169,23 @@ describe('counterHistoryRows', () => {
     const rows = counterHistoryRows({ 'Black:Total': [{ at: at('2026-09-17T10:00:00Z'), value: 8319 }] });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.deltas.black).toBeNull();
+  });
+});
+
+describe('orderStatus', () => {
+  it('reads Open while completedDate is null', () => {
+    expect(orderStatus({ completedDate: null, isOnHold: false })).toEqual({ text: 'Open', tone: 'warn' });
+    expect(orderStatus({ completedDate: null, isOnHold: null })).toEqual({ text: 'Open', tone: 'warn' });
+  });
+
+  it('reads Completed once Vantage sets completedDate, even if the hold flag lingers', () => {
+    expect(orderStatus({ completedDate: at('2026-09-10T00:00:00Z'), isOnHold: true })).toEqual({
+      text: 'Completed',
+      tone: 'ok',
+    });
+  });
+
+  it('reads On hold for an uncompleted order that is held', () => {
+    expect(orderStatus({ completedDate: null, isOnHold: true })).toEqual({ text: 'On hold', tone: 'muted' });
   });
 });

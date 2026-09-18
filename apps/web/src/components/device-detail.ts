@@ -1,4 +1,5 @@
 import { METER_NAMES, type CounterPoint, type DeviceAlarmRow } from '@mps/db/queries';
+import type { Tone } from './toner';
 
 /**
  * Pure display helpers for the device detail page. No JSX and nothing from React, so they can be
@@ -178,4 +179,21 @@ export function counterHistoryRows(
   });
 
   return rows.reverse().slice(0, limit);
+}
+
+/* ---------------------------------------------------------- sales orders */
+
+/**
+ * The status badge for a sales order. Vantage has no status field: `completedDate` is the
+ * open/closed flag and `isOnHold` is separate. A completed order is reported as completed even if
+ * the hold flag was left set, because "On hold" on something already delivered reads as a warning
+ * that is not there.
+ */
+export function orderStatus(order: { completedDate: Date | null; isOnHold: boolean | null }): {
+  text: string;
+  tone: Tone;
+} {
+  if (order.completedDate !== null) return { text: 'Completed', tone: 'ok' };
+  if (order.isOnHold === true) return { text: 'On hold', tone: 'muted' };
+  return { text: 'Open', tone: 'warn' };
 }

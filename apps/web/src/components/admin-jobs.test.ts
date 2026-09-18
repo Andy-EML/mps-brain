@@ -110,13 +110,14 @@ describe('statLines', () => {
 });
 
 describe('JOB_CARDS', () => {
-  it('covers all five queues and flags the ones that call an external API', () => {
+  it('covers all six queues and flags the ones that call an external API', () => {
     expect(JOB_CARDS.map((c) => c.queue)).toEqual([
       'vantage-pull',
       'drms-pull',
       'link-run',
       'drms-snapshot',
       'drms-alarms',
+      'vantage-orders',
     ]);
     // link-run is the only job that stays inside Postgres, so it is the only one that runs
     // without a confirmation.
