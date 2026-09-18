@@ -149,7 +149,7 @@ describe('issue actions', () => {
 
       expect(await activeLinks()).toEqual([]);
       const [closed] = await links();
-      expect(closed).toMatchObject({ unlinkedReason: 'wrong_customer' });
+      expect(closed).toMatchObject({ unlinkedReason: 'wrong_customer', unlinkedBy: userId });
       expect(closed?.unlinkedAt?.getTime()).toBe(NOW.getTime());
       expect((await t.db.select().from(linkIssues))[0]).toMatchObject({ status: 'open', resolvedAt: null });
     });
@@ -171,7 +171,7 @@ describe('issue actions', () => {
       const all = await links();
       expect(all[0]).toMatchObject({ unlinkedReason: 'relinked' });
       expect(all[0]?.unlinkedAt?.getTime()).toBe(new Date('2026-01-01T00:00:00Z').getTime());
-      expect(all[1]).toMatchObject({ unlinkedReason: 'manual_unlink' });
+      expect(all[1]).toMatchObject({ unlinkedReason: 'manual_unlink', unlinkedBy: userId });
       expect(all[1]?.unlinkedAt?.getTime()).toBe(NOW.getTime());
     });
 

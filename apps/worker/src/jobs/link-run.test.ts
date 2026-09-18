@@ -84,7 +84,9 @@ describe('runLinkRun', () => {
     const result = await runLinkRun({ db: t.db, config });
     expect(result.stats).toMatchObject({ linksClosed: 1, activeLinks: 0 });
     const [closed] = await t.db.select().from(deviceLinks);
-    expect(closed).toMatchObject({ unlinkedReason: 'drms_missing' });
+    // The link-run job closes links itself (not via `unlinkDevice`), so there is no operator to
+    // record — `unlinked_by` stays null, unlike a manual unlink from the issues queue.
+    expect(closed).toMatchObject({ unlinkedReason: 'drms_missing', unlinkedBy: null });
     expect((await openIssues()).map((i) => i.type).sort()).toEqual(['link_broken', 'no_match_vantage']);
   });
 

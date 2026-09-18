@@ -116,6 +116,8 @@ export const deviceLinks = pgTable(
     linkedAt: ts('linked_at').notNull().defaultNow(),
     unlinkedAt: ts('unlinked_at'),
     unlinkedReason: text('unlinked_reason'),
+    /** The operator who unlinked it by hand, from `unlinkDevice`; null for the linker's automatic closes. */
+    unlinkedBy: integer('unlinked_by').references(() => users.id),
   },
   (t) => [
     uniqueIndex('device_links_active_drms_uq').on(t.drmsEquipmentId).where(sql`unlinked_at is null`),

@@ -89,11 +89,7 @@ export async function manualLink(db: Db, args: ManualLinkArgs): Promise<void> {
 
 export interface UnlinkDeviceArgs {
   drmsId: string;
-  /**
-   * The signed-in operator. `device_links` has no `unlinked_by` column, so this is not persisted
-   * today; it stays in the signature because the action is user-initiated and the column is the
-   * obvious next migration.
-   */
+  /** The signed-in operator. Recorded as `unlinked_by`. */
   userId: number;
   /** Stored in `unlinked_reason`; defaults to `manual_unlink`. */
   reason?: string;
@@ -104,12 +100,16 @@ export interface UnlinkDeviceArgs {
  * Closes a device's active link. Issues are left exactly as they are — unlinking is how an
  * operator says "this link is wrong", which is a reason to keep the queue entry, not to clear it.
  * The next `link-run` decides whether the device links again or raises a fresh issue.
+ *
+ * `unlinked_by` records who did it. The linker's own automatic closes (a missing device, a deleted
+ * Vantage record, a relink) go straight through `deviceLinks` rather than this function, so they
+ * leave it null — there is no operator to name.
  */
 export async function unlinkDevice(db: Db, args: UnlinkDeviceArgs): Promise<void> {
   const now = args.now ?? new Date();
   await db
     .update(deviceLinks)
-    .set({ unlinkedAt: now, unlinkedReason: args.reason ?? UNLINK_REASON })
+    .set({ unlinkedAt: now, unlinkedReason: args.reason ?? UNLINK_REASON, unlinkedBy: args.userId })
     .where(and(eq(deviceLinks.drmsEquipmentId, args.drmsId), isNull(deviceLinks.unlinkedAt)));
 }
 

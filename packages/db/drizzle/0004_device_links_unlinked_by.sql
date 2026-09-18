@@ -1,0 +1,2 @@
+ALTER TABLE "device_links" ADD COLUMN "unlinked_by" integer;--> statement-breakpoint
+ALTER TABLE "device_links" ADD CONSTRAINT "device_links_unlinked_by_users_id_fk" FOREIGN KEY ("unlinked_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
