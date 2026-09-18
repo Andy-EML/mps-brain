@@ -1,6 +1,6 @@
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, max, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { deviceAlarms, deviceLinks, drmsEquipment, linkIssues, syncRuns } from '../schema';
+import { deviceAlarms, deviceLinks, drmsEquipment, linkIssues, syncRuns, vantageEquipment } from '../schema';
 import { counterPivotSubquery, offlineCutoff } from './shared';
 
 export interface FleetSummary {
@@ -15,6 +15,11 @@ export interface FleetSummary {
   lastSyncAt: Date | null;
 }
 
+/** A device DRMS still expects to hear from: not soft-deleted and not marked missing. */
+function monitoredCondition() {
+  return and(isNull(drmsEquipment.missingSince), sql`upper(${drmsEquipment.status}) <> 'DELETED'`);
+}
+
 /**
  * @param opts.offlineHours Threshold for the `offline` count (default 24; see CLAUDE.md's
  * OFFLINE_ALERT_HOURS). Optional so `getFleetSummary(db)` still matches the documented signature.
@@ -25,10 +30,7 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
 
   const [[devicesRow], [monitoredRow], [linkedRow], [tonerRow], [offlineRow], [issuesRow], [syncRow]] = await Promise.all([
     db.select({ n: count() }).from(drmsEquipment),
-    db
-      .select({ n: count() })
-      .from(drmsEquipment)
-      .where(and(isNull(drmsEquipment.missingSince), sql`upper(${drmsEquipment.status}) <> 'DELETED'`)),
+    db.select({ n: count() }).from(drmsEquipment).where(monitoredCondition()),
     db.select({ n: count() }).from(deviceLinks).where(isNull(deviceLinks.unlinkedAt)),
     db
       .select({
@@ -62,6 +64,87 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
     openIssues: issuesRow?.n ?? 0,
     lastSyncAt: syncRow?.finishedAt ?? null,
   };
+}
+
+export interface TonerHealth {
+  healthy: number;
+  low: number;
+  critical: number;
+  cartridges: number;
+  devices: number;
+}
+
+/**
+ * The "Fleet toner health" tally, computed per cartridge (not per device) from the latest snapshot
+ * per device, in SQL — the same 5%/20% thresholds as `tonerState` in `apps/web/src/components/toner.ts`.
+ * `devices` is how many distinct devices contributed at least one of those cartridges, for the
+ * card's "across N devices" sub-line.
+ */
+export async function getTonerHealth(db: Db): Promise<TonerHealth> {
+  const pivot = counterPivotSubquery(db);
+
+  const [row] = await db
+    .select({
+      critical: sql<number>`
+        count(*) filter (where ${pivot.black} < 5) +
+        count(*) filter (where ${pivot.cyan} < 5) +
+        count(*) filter (where ${pivot.magenta} < 5) +
+        count(*) filter (where ${pivot.yellow} < 5)
+      `,
+      low: sql<number>`
+        count(*) filter (where ${pivot.black} >= 5 and ${pivot.black} < 20) +
+        count(*) filter (where ${pivot.cyan} >= 5 and ${pivot.cyan} < 20) +
+        count(*) filter (where ${pivot.magenta} >= 5 and ${pivot.magenta} < 20) +
+        count(*) filter (where ${pivot.yellow} >= 5 and ${pivot.yellow} < 20)
+      `,
+      healthy: sql<number>`
+        count(*) filter (where ${pivot.black} >= 20) +
+        count(*) filter (where ${pivot.cyan} >= 20) +
+        count(*) filter (where ${pivot.magenta} >= 20) +
+        count(*) filter (where ${pivot.yellow} >= 20)
+      `,
+      cartridges: sql<number>`
+        count(*) filter (where ${pivot.black} is not null) +
+        count(*) filter (where ${pivot.cyan} is not null) +
+        count(*) filter (where ${pivot.magenta} is not null) +
+        count(*) filter (where ${pivot.yellow} is not null)
+      `,
+      devices: sql<number>`
+        count(*) filter (
+          where ${pivot.black} is not null or ${pivot.cyan} is not null
+             or ${pivot.magenta} is not null or ${pivot.yellow} is not null
+        )
+      `,
+    })
+    .from(pivot);
+
+  return {
+    healthy: Number(row?.healthy ?? 0),
+    low: Number(row?.low ?? 0),
+    critical: Number(row?.critical ?? 0),
+    cartridges: Number(row?.cartridges ?? 0),
+    devices: Number(row?.devices ?? 0),
+  };
+}
+
+/**
+ * The number of distinct customers behind the fleet, for the overview subtitle. Matches every
+ * device (not just monitored/linked ones), preferring the linked Vantage customer name and
+ * falling back to the DRMS-reported name for a device with no link — the same
+ * `vantageCustomerName ?? customerName` the old JS-side tally used over `listDevices`' rows, kept
+ * as-is here (in SQL) so the number on screen doesn't move. `count(distinct …)` already ignores
+ * nulls, so a device with neither name contributes nothing.
+ */
+export async function getCustomerCount(db: Db): Promise<number> {
+  const [row] = await db
+    .select({
+      n: sql<number>`count(distinct coalesce(${vantageEquipment.customerName}, ${drmsEquipment.customerName}))`,
+    })
+    .from(drmsEquipment)
+    .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
+    .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId));
+
+  return Number(row?.n ?? 0);
 }
 
 const CONSUMABLE_WARNING_CATEGORIES = ['waste', 'parts'] as const;

@@ -1,10 +1,10 @@
 import Link from 'next/link';
-import { getConsumableWarnings, getFleetSummary, listDevices, listIssues, type DeviceRow } from '@mps/db/queries';
+import { getConsumableWarnings, getCustomerCount, getFleetSummary, getIssueCounts, getTonerHealth, listDevices } from '@mps/db/queries';
 import { DeviceTable } from '@/components/device-table';
 import { PageHeader } from '@/components/page-header';
 import { SearchInput } from '@/components/search-input';
 import { StatCard } from '@/components/stat-card';
-import { attentionRank, issueTypeLabel, tonerHealth, tonerLevels, topIssueType } from '@/components/toner';
+import { issueTypeLabel, topIssueType } from '@/components/toner';
 import { TonerLegend } from '@/components/toner-bar';
 import { TonerHealthCard } from '@/components/toner-health-card';
 import { requireUser } from '@/lib/auth';
@@ -15,42 +15,23 @@ export const metadata = { title: 'Fleet overview · MPS Dashboard' };
 
 /** Rows shown on the overview before you have to go to /devices. */
 const PREVIEW_ROWS = 8;
-/**
- * The fleet-wide cartridge tally and the customer count are derived from the device rows, because
- * `@mps/db/queries` has no per-cartridge aggregate. The cap keeps that honest if the fleet grows:
- * past it the health bar would understate, so it is set well above the ~836 devices we hold.
- */
-const SCAN_LIMIT = 5000;
-
-function sortKey(row: DeviceRow): [number, string] {
-  return [attentionRank(row), (row.name ?? row.serial ?? row.drmsId).toLowerCase()];
-}
 
 export default async function FleetOverviewPage() {
   await requireUser();
   const db = getDb();
   const now = new Date();
 
-  const [summary, devices, issues, warnings] = await Promise.all([
+  const [summary, health, customers, issueCounts, preview, warnings] = await Promise.all([
     getFleetSummary(db),
-    listDevices(db, { limit: SCAN_LIMIT }),
-    listIssues(db, { status: 'open', limit: 1 }),
+    getTonerHealth(db),
+    getCustomerCount(db),
+    getIssueCounts(db, { status: 'open' }),
+    listDevices(db, { limit: PREVIEW_ROWS, sort: 'urgent' }),
     getConsumableWarnings(db),
   ]);
 
-  const health = tonerHealth(devices.rows);
-  const devicesWithCounters = devices.rows.filter((r) => tonerLevels(r).some((v) => v != null)).length;
-  const customers = new Set(devices.rows.map((r) => r.vantageCustomerName ?? r.customerName).filter(Boolean)).size;
   const warningDevices = new Set(warnings.map((w) => w.drmsId)).size;
-  const topIssue = topIssueType(issues.countsByType);
-
-  const preview = [...devices.rows]
-    .sort((a, b) => {
-      const [rankA, nameA] = sortKey(a);
-      const [rankB, nameB] = sortKey(b);
-      return rankA - rankB || nameA.localeCompare(nameB);
-    })
-    .slice(0, PREVIEW_ROWS);
+  const topIssue = topIssueType(issueCounts);
 
   const subtitle = `${formatNumber(summary.devices)} ${pluralise(summary.devices, 'device')} · ${formatNumber(
     customers,
@@ -100,11 +81,11 @@ export default async function FleetOverviewPage() {
 
       <TonerHealthCard
         className="mt-4"
-        ok={health.ok}
+        ok={health.healthy}
         low={health.low}
         critical={health.critical}
-        total={health.total}
-        devicesWithCounters={devicesWithCounters}
+        total={health.cartridges}
+        devicesWithCounters={health.devices}
       />
 
       <section className="mt-4 rounded-xl border border-line bg-card">
@@ -112,11 +93,11 @@ export default async function FleetOverviewPage() {
           <h2 className="text-[15px] font-medium">Devices</h2>
           <TonerLegend />
         </div>
-        <DeviceTable rows={preview} now={now} emptyMessage="No devices have been synced yet." />
+        <DeviceTable rows={preview.rows} now={now} emptyMessage="No devices have been synced yet." />
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3.5">
           <p className="text-sm text-muted-foreground">
-            Showing {formatNumber(preview.length)} of {formatNumber(devices.total)}{' '}
-            {pluralise(devices.total, 'device')}, most urgent first
+            Showing {formatNumber(preview.rows.length)} of {formatNumber(summary.devices)}{' '}
+            {pluralise(summary.devices, 'device')}, most urgent first
           </p>
           <Link href="/devices" className="text-sm font-medium text-brand hover:underline">
             View all devices

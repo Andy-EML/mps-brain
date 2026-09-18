@@ -1,4 +1,4 @@
-import { and, asc, count, eq, ilike, isNotNull, isNull, lt, or } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
 import { counterPivotSubquery, offlineCutoff, toNumberOrNull } from './shared';
@@ -22,6 +22,14 @@ export interface DeviceRow {
 export interface DeviceListOptions {
   search?: string;
   filter?: 'all' | 'needs-toner' | 'offline' | 'unlinked';
+  /**
+   * `'urgent'` orders critical toner first, then low toner, then offline, then unlinked, then
+   * everything else — the fleet overview's "most urgent first" preview. Ties break on device name
+   * (falling back to serial, then drms id), case-insensitively. Mirrors `attentionRank` in
+   * `apps/web/src/components/toner.ts`, but computed in SQL so it works over the whole table, not
+   * just a capped scan. Default (omitted) keeps the existing `drmsId` order.
+   */
+  sort?: 'urgent';
   limit?: number;
   offset?: number;
 }
@@ -123,6 +131,23 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
   }
   const where = conds.length > 0 ? and(...conds) : undefined;
 
+  // Mirrors `attentionRank` in apps/web/src/components/toner.ts: critical toner first, then low,
+  // then offline, then unlinked, then "some data" ahead of "no counters at all". Each WHEN is
+  // exclusive of the ones before it (e.g. the low branch only matches once critical has already
+  // failed), so the priority order falls straight out of CASE's first-match semantics.
+  const urgencyRank = sql<number>`
+    case
+      when ${pivot.black} < 5 or ${pivot.cyan} < 5 or ${pivot.magenta} < 5 or ${pivot.yellow} < 5 then 0
+      when ${pivot.black} < 20 or ${pivot.cyan} < 20 or ${pivot.magenta} < 20 or ${pivot.yellow} < 20 then 1
+      when ${drmsEquipment.lastCounterReceivedTime} is not null and ${drmsEquipment.lastCounterReceivedTime} < ${cutoff} then 2
+      when ${deviceLinks.vantageEquipmentId} is null then 3
+      when ${pivot.black} is null and ${pivot.cyan} is null and ${pivot.magenta} is null and ${pivot.yellow} is null then 5
+      else 4
+    end
+  `;
+  const urgencyTieBreak = sql`lower(coalesce(${drmsEquipment.productName}, ${drmsEquipment.serial}, ${drmsEquipment.drmsId}))`;
+  const orderBy = o.sort === 'urgent' ? [urgencyRank, urgencyTieBreak] : [asc(drmsEquipment.drmsId)];
+
   const rowsQuery = db
     .select(deviceRowFields(pivot))
     .from(drmsEquipment)
@@ -130,7 +155,7 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
     .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
     .leftJoin(pivot, eq(pivot.drmsId, drmsEquipment.drmsId))
     .where(where)
-    .orderBy(asc(drmsEquipment.drmsId))
+    .orderBy(...orderBy)
     .limit(limit)
     .offset(offset);
 

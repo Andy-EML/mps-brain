@@ -1,13 +1,23 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { counterNames, counterSnapshots, counterValues, deviceAlarms, deviceAlerts, deviceLinks, drmsEquipment, linkIssues } from '../schema';
+import {
+  counterNames,
+  counterSnapshots,
+  counterValues,
+  deviceAlarms,
+  deviceAlerts,
+  deviceLinks,
+  drmsEquipment,
+  linkIssues,
+  vantageEquipment,
+} from '../schema';
 import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '../testing';
 import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './admin';
 import { countAlerts, listAlerts } from './alerts';
 import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms } from './device';
 import { listDevices } from './devices';
-import { getConsumableWarnings, getFleetSummary } from './fleet';
-import { listIssues, searchVantageEquipment } from './issues';
+import { getConsumableWarnings, getCustomerCount, getFleetSummary, getTonerHealth } from './fleet';
+import { getIssueCounts, listIssues, searchVantageEquipment } from './issues';
 
 // Frozen "now" for the whole suite: seedDemoFixture's hoursAgo()/daysAgo() helpers and the query
 // layer's own Date.now() calls (offlineCutoff, etc.) both read this, so every timestamp
@@ -76,6 +86,64 @@ describe('queries', () => {
     });
   });
 
+  describe('getTonerHealth', () => {
+    it('tallies cartridges (not devices) by threshold from the latest snapshot, in SQL', async () => {
+      // Only D1 has any counter snapshot: black=3 (critical), cyan=15 (low), magenta=60 (ok),
+      // yellow=70 (ok). D2/D3 have no snapshot at all, so they contribute nothing.
+      const health = await getTonerHealth(t.db);
+      expect(health).toEqual({ healthy: 2, low: 1, critical: 1, cartridges: 4, devices: 1 });
+    });
+
+    it('counts a device once even when several of its channels are low/critical', async () => {
+      await t.db.insert(drmsEquipment).values({
+        drmsId: 'LOW1',
+        serial: 'SNLOW0001',
+        status: 'Registered',
+        customerName: 'Low Toner Co',
+        raw: {},
+      });
+      const [snap] = await t.db
+        .insert(counterSnapshots)
+        .values({ drmsEquipmentId: 'LOW1', counterId: 'low-c1', receivedTime: new Date(), raw: {} })
+        .returning({ id: counterSnapshots.id });
+      await t.db.insert(counterValues).values([
+        { snapshotId: snap!.id, name: 'BlackTonerLevel', value: 2 },
+        { snapshotId: snap!.id, name: 'CyanTonerLevel', value: 4 },
+      ]);
+
+      const health = await getTonerHealth(t.db);
+      // D1's 4 cartridges + LOW1's 2 (both critical) = 6 cartridges across 2 devices.
+      expect(health).toEqual({ healthy: 2, low: 1, critical: 3, cartridges: 6, devices: 2 });
+    });
+  });
+
+  describe('getCustomerCount', () => {
+    it('counts every device, preferring the linked Vantage customer name and falling back to the DRMS one when unlinked', async () => {
+      // D1 -> "Acme Ltd (Vantage)", D2 -> "Beta Co (Vantage)", D3 is unlinked -> falls back to its
+      // DRMS customerName "Gamma Inc" — matching the old page's `vantageCustomerName ?? customerName`.
+      expect(await getCustomerCount(t.db)).toBe(3);
+    });
+
+    it('counts a shared customer name once', async () => {
+      await t.db
+        .update(vantageEquipment)
+        .set({ customerName: 'Acme Ltd (Vantage)' })
+        .where(eq(vantageEquipment.vantageId, f.vantage.linkedToOffline));
+      // D1 and D2 now share a name; D3's DRMS fallback is still distinct.
+      expect(await getCustomerCount(t.db)).toBe(2);
+    });
+
+    it('a linked device with no Vantage customer name falls back to its DRMS name too', async () => {
+      await t.db
+        .update(vantageEquipment)
+        .set({ customerName: null })
+        .where(eq(vantageEquipment.vantageId, f.vantage.linkedToOnline));
+      // D1 now surfaces its DRMS customerName ("Acme Ltd") instead of contributing nothing.
+      const count = await getCustomerCount(t.db);
+      expect(count).toBe(3);
+    });
+  });
+
   describe('listDevices', () => {
     it('returns toner and meter values on the right device', async () => {
       const { rows } = await listDevices(t.db);
@@ -115,6 +183,47 @@ describe('queries', () => {
       const { rows, total } = await listDevices(t.db, { limit: 1 });
       expect(rows).toHaveLength(1);
       expect(total).toBe(3);
+    });
+
+    it('sort: "urgent" orders critical toner, then low, then offline, then unlinked, in SQL', async () => {
+      // A healthy, linked, online device whose id sorts alphabetically before every fixture id, so
+      // the default (drmsId) order and the urgent order disagree — proving the ordering really
+      // happens in SQL rather than by accident matching insertion order.
+      await t.db.insert(drmsEquipment).values({
+        drmsId: 'A0-HEALTHY',
+        serial: 'SNHEALTHY1',
+        status: 'Registered',
+        customerName: 'Healthy Co',
+        lastCounterReceivedTime: new Date(),
+        raw: {},
+      });
+      const [snap] = await t.db
+        .insert(counterSnapshots)
+        .values({ drmsEquipmentId: 'A0-HEALTHY', counterId: 'healthy-c1', receivedTime: new Date(), raw: {} })
+        .returning({ id: counterSnapshots.id });
+      await t.db.insert(counterValues).values([
+        { snapshotId: snap!.id, name: 'BlackTonerLevel', value: 80 },
+        { snapshotId: snap!.id, name: 'CyanTonerLevel', value: 80 },
+        { snapshotId: snap!.id, name: 'MagentaTonerLevel', value: 80 },
+        { snapshotId: snap!.id, name: 'YellowTonerLevel', value: 80 },
+      ]);
+      await t.db.insert(vantageEquipment).values({
+        vantageId: 1003,
+        serial: 'SNHEALTHY1',
+        serialNorm: 'snhealthy1',
+        customerName: 'Healthy Co (Vantage)',
+        raw: {},
+      });
+      await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'A0-HEALTHY', vantageEquipmentId: 1003, method: 'serial' });
+
+      // D1 has critical toner (black=3%); D2 is offline with no counters; D3 has no counters and no
+      // link; A0-HEALTHY is fine on every count, so it ranks last despite sorting first by id.
+      const { rows } = await listDevices(t.db, { sort: 'urgent' });
+      expect(rows.map((r) => r.drmsId)).toEqual([f.drms.online, f.drms.offline, f.drms.unlinked, 'A0-HEALTHY']);
+
+      // Without the option, the existing drmsId ordering is unaffected.
+      const unsorted = await listDevices(t.db);
+      expect(unsorted.rows.map((r) => r.drmsId)).toEqual(['A0-HEALTHY', f.drms.online, f.drms.offline, f.drms.unlinked]);
     });
   });
 
@@ -231,6 +340,19 @@ describe('queries', () => {
       const found = await searchVantageEquipment(t.db, 'SN0000001');
       expect(found).toHaveLength(1);
       expect(found[0]).toMatchObject({ vantageId: f.vantage.linkedToOnline, linkedToDrmsId: f.drms.online });
+    });
+  });
+
+  describe('getIssueCounts', () => {
+    it('matches listIssues’ countsByType without fetching any issue rows', async () => {
+      expect(await getIssueCounts(t.db, { status: 'open' })).toEqual({
+        unlinked_drms: 1,
+        conflicting_customer: 1,
+      });
+    });
+
+    it('honours the status filter, same as listIssues', async () => {
+      expect(await getIssueCounts(t.db, { status: 'resolved' })).toEqual({});
     });
   });
 

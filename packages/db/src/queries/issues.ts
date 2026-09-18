@@ -94,6 +94,30 @@ export async function listIssues(
   return { rows, total: totalRow?.n ?? 0, countsByType };
 }
 
+export interface GetIssueCountsOptions {
+  status?: string;
+}
+
+/**
+ * `listIssues`' `countsByType`, without paging or joining any issue rows — for the overview stat
+ * card, which only needs the tally, not the list. Kept in lockstep with the `typeCountsQuery` in
+ * `listIssues`: same status handling (a bad `status` string just matches nothing, per that
+ * function's note), same "no excludeTypes" behaviour.
+ */
+export async function getIssueCounts(db: Db, o: GetIssueCountsOptions = {}): Promise<Record<string, number>> {
+  const statusCond = o.status ? eq(linkIssues.status, o.status as 'open' | 'resolved' | 'ignored') : undefined;
+
+  const typeCounts = await db
+    .select({ type: linkIssues.type, n: count() })
+    .from(linkIssues)
+    .where(statusCond)
+    .groupBy(linkIssues.type);
+
+  const countsByType: Record<string, number> = {};
+  for (const t of typeCounts) countsByType[t.type] = t.n;
+  return countsByType;
+}
+
 export interface VantageMatch {
   vantageId: number;
   serial: string | null;
