@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./migrate": "./src/migrate.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./queries": "./src/queries/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

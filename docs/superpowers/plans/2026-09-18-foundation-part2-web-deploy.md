@@ -24,7 +24,7 @@
 - Tests: Vitest, PGlite for anything touching the DB. Test query helpers, domain logic and server actions. No DOM/browser tests in this plan.
 - Colours (from the mockups): accent `#0F6B5C`, page background `#F7F8F8`, card `#FFFFFF`, border `#E7E9E9`, text `#1A1D1D`, muted `#6B7280`; toner: cyan `#29ABE2`, magenta `#E5177B`, yellow `#F5C400`, black `#111111`, waste `#9AA0A6`; status: ok `#16A34A`, warn `#D97706`, critical `#DC2626`.
 - Thresholds for display: toner **critical < 5%**, **low < 20%** (the spec's per-customer thresholds arrive in sub-project 3).
-- Don't build ordering, auto-reorder, jams/error events, drums/imaging units, uptime or "book an engineer" — no data or not wanted.
+- Don't build ordering, auto-reorder, uptime or "book an engineer" — no data or not wanted. Jams and service-code events are pulled and stored (Task 3A) but hidden from the UI by default. Drums, imaging units, waste bottles and filters appear only as PartsLife/waste **alarms**, never as percentages — DRMS has no counters for them.
 
 ## File Map
 
