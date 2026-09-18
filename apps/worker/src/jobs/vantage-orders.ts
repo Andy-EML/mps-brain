@@ -127,12 +127,16 @@ export async function runVantageOrders(deps: VantageOrdersDeps): Promise<JobResu
     throw err;
   }
 
-  const orders = fetched.map((raw) => ({
-    header: mapSalesOrder(raw, startedAt),
-    lines: (Array.isArray(getField(raw, 'Lines')) ? (getField(raw, 'Lines') as VantageRecord[]) : []).map((l) =>
-      mapSalesOrderLine(l, getNumber(raw, 'Id') as number, startedAt),
-    ),
-  }));
+  const orders = fetched.map((raw) => {
+    const header = mapSalesOrder(raw, startedAt);
+    const rawLines = getField(raw, 'Lines');
+    return {
+      header,
+      lines: (Array.isArray(rawLines) ? (rawLines as VantageRecord[]) : []).map((l) =>
+        mapSalesOrderLine(l, header.vantageId, startedAt),
+      ),
+    };
+  });
 
   let lineCount = 0;
   for (const batch of chunk(orders, CHUNK)) {
