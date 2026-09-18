@@ -1,6 +1,14 @@
 import type { DeviceRow } from '@mps/db/queries';
 import { describe, expect, it } from 'vitest';
-import { attentionRank, deviceStatusLabel, tonerHealth, tonerState, topIssueType } from './toner';
+import {
+  attentionRank,
+  deviceNameAddsInfo,
+  deviceStatusLabel,
+  hasRecentAlarm,
+  tonerHealth,
+  tonerState,
+  topIssueType,
+} from './toner';
 
 const NOW = new Date('2026-09-18T12:00:00Z');
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -18,6 +26,7 @@ function row(over: Partial<DeviceRow> = {}): DeviceRow {
     linkMethod: 'serial',
     lastCounterAt: hoursAgo(2),
     offline: false,
+    lastAlarmAt: null,
     toner: { black: 50, cyan: 50, magenta: 50, yellow: 50 },
     meters: { black: null, colour: null, scan: null },
     ...over,
@@ -50,7 +59,7 @@ describe('tonerState', () => {
 });
 
 describe('deviceStatusLabel', () => {
-  it('reports an unlinked device first, even when it is offline and out of toner', () => {
+  it('reports an unlinked device first, even with no meter reading and no toner', () => {
     const label = deviceStatusLabel(
       row({ vantageEquipmentId: null, offline: true, toner: { black: 1, cyan: null, magenta: null, yellow: null } }),
       NOW,
@@ -58,22 +67,40 @@ describe('deviceStatusLabel', () => {
     expect(label).toEqual({ text: 'Not linked', tone: 'muted' });
   });
 
-  it('reports offline ahead of a critical toner level, with the hours since the last counter', () => {
+  it('reports the missing meter reading ahead of a critical toner level, with the hours since the last counter', () => {
     const label = deviceStatusLabel(
       row({ offline: true, lastCounterAt: hoursAgo(6), toner: { black: 1, cyan: 50, magenta: 50, yellow: 50 } }),
       NOW,
     );
-    expect(label).toEqual({ text: 'Offline · 6h', tone: 'critical' });
+    expect(label).toEqual({ text: 'No meter reading · 6h', tone: 'critical' });
   });
 
-  it('switches the offline age to whole days past 48 hours', () => {
+  it('switches the age to whole days past 48 hours', () => {
     const label = deviceStatusLabel(row({ offline: true, lastCounterAt: hoursAgo(72) }), NOW);
-    expect(label).toEqual({ text: 'Offline · 3d', tone: 'critical' });
+    expect(label).toEqual({ text: 'No meter reading · 3d', tone: 'critical' });
   });
 
-  it('falls back to a bare "Offline" when the device has never reported', () => {
+  it('falls back to a bare "No meter reading" when the device has never reported', () => {
     const label = deviceStatusLabel(row({ offline: true, lastCounterAt: null }), NOW);
-    expect(label).toEqual({ text: 'Offline', tone: 'critical' });
+    expect(label).toEqual({ text: 'No meter reading', tone: 'critical' });
+  });
+
+  it('softens to amber when an alarm proves the device is still reaching CSRC', () => {
+    const label = deviceStatusLabel(row({ offline: true, lastCounterAt: hoursAgo(31), lastAlarmAt: hoursAgo(1) }), NOW);
+    expect(label).toEqual({ text: 'No meter reading · reaching CSRC', tone: 'warn' });
+  });
+
+  it('stays red when the last alarm is older than the threshold too', () => {
+    const label = deviceStatusLabel(row({ offline: true, lastCounterAt: hoursAgo(31), lastAlarmAt: hoursAgo(30) }), NOW);
+    expect(label).toEqual({ text: 'No meter reading · 31h', tone: 'critical' });
+  });
+
+  it('ignores an alarm dated in the future rather than calling the device healthy', () => {
+    const label = deviceStatusLabel(
+      row({ offline: true, lastCounterAt: hoursAgo(31), lastAlarmAt: new Date(NOW.getTime() + 3_600_000) }),
+      NOW,
+    );
+    expect(label).toEqual({ text: 'No meter reading · 31h', tone: 'critical' });
   });
 
   it('reports critical toner ahead of low toner', () => {
@@ -98,6 +125,21 @@ describe('deviceStatusLabel', () => {
 
   it('reports online when everything is healthy', () => {
     expect(deviceStatusLabel(row(), NOW)).toEqual({ text: 'Online', tone: 'ok' });
+  });
+});
+
+describe('hasRecentAlarm', () => {
+  it('is false without an alarm', () => {
+    expect(hasRecentAlarm(row({ lastAlarmAt: null }), NOW)).toBe(false);
+  });
+
+  it('is true inside the 24h window and false outside it', () => {
+    expect(hasRecentAlarm(row({ lastAlarmAt: hoursAgo(23) }), NOW)).toBe(true);
+    expect(hasRecentAlarm(row({ lastAlarmAt: hoursAgo(25) }), NOW)).toBe(false);
+  });
+
+  it('is false for a timestamp in the future, which can only be bad data', () => {
+    expect(hasRecentAlarm(row({ lastAlarmAt: new Date(NOW.getTime() + 60_000) }), NOW)).toBe(false);
   });
 });
 
@@ -153,5 +195,43 @@ describe('topIssueType', () => {
   it('is null when nothing is open', () => {
     expect(topIssueType({})).toBeNull();
     expect(topIssueType({ link_broken: 0 })).toBeNull();
+  });
+});
+
+describe('deviceNameAddsInfo', () => {
+  it('is false when there is no name to show', () => {
+    expect(deviceNameAddsInfo(null, 'bizhub C3351i')).toBe(false);
+    expect(deviceNameAddsInfo('   ', 'bizhub C3351i')).toBe(false);
+  });
+
+  it('is true when there is a name but no model to compare it against', () => {
+    expect(deviceNameAddsInfo('Reception', null)).toBe(true);
+  });
+
+  it('is false when the name is just the model with a version suffix', () => {
+    expect(deviceNameAddsInfo('ineo+458_Ver42', 'ineo+458')).toBe(false);
+    expect(deviceNameAddsInfo('ineo+458Ver2', 'ineo+458')).toBe(false);
+  });
+
+  it('is false when the name and the model are the same thing punctuated differently', () => {
+    expect(deviceNameAddsInfo('bizhub C3351i', 'bizhub-C3351i')).toBe(false);
+    expect(deviceNameAddsInfo('BIZHUB C3351I', 'bizhub C3351i')).toBe(false);
+  });
+
+  it('is false when the name is only part of the model', () => {
+    expect(deviceNameAddsInfo('C3351i', 'bizhub C3351i')).toBe(false);
+  });
+
+  it('is true when the name carries a site the model does not', () => {
+    expect(deviceNameAddsInfo('Little Heath School (Maths) C3351i', 'bizhub C3351i')).toBe(true);
+    expect(deviceNameAddsInfo('Reception', 'bizhub C458')).toBe(true);
+  });
+
+  it('keeps a site name that wraps the whole model, which plain containment would have hidden', () => {
+    expect(deviceNameAddsInfo('A-Plan (Southampton) MF3303', 'MF3303')).toBe(true);
+  });
+
+  it('only drops a trailing version suffix, not a version in the middle of a name', () => {
+    expect(deviceNameAddsInfo('Ver42 Studio ineo+458', 'ineo+458')).toBe(true);
   });
 });

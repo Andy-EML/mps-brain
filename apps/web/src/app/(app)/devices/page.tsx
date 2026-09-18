@@ -15,10 +15,12 @@ export const metadata = { title: 'Devices · MPS Dashboard' };
 
 const PAGE_SIZE = 50;
 
+// The `offline` value is the stored/URL one and stays put so existing links keep working; what it
+// really selects is "DRMS collected no meter reading in 24h", which is what the label says.
 const FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'needs-toner', label: 'Needs toner' },
-  { value: 'offline', label: 'Offline' },
+  { value: 'offline', label: 'No meter reading' },
   { value: 'unlinked', label: 'Not linked' },
 ] as const satisfies readonly (FilterTab & { value: NonNullable<DeviceListOptions['filter']> })[];
 
@@ -27,7 +29,7 @@ type Filter = (typeof FILTERS)[number]['value'];
 const EMPTY: Record<Filter, string> = {
   all: 'No devices have been synced yet.',
   'needs-toner': 'No device is under 20% on any cartridge.',
-  offline: 'Every device that has reported before reported in the last 24 hours.',
+  offline: 'DRMS has collected a meter reading in the last 24 hours for every device that has ever reported one.',
   unlinked: 'Every DRMS device is linked to Vantage equipment.',
 };
 

@@ -1,5 +1,14 @@
 import Link from 'next/link';
-import { getConsumableWarnings, getCustomerCount, getFleetSummary, getIssueCounts, getTonerHealth, listDevices } from '@mps/db/queries';
+import {
+  getCollectionStatus,
+  getConsumableWarnings,
+  getCustomerCount,
+  getFleetSummary,
+  getIssueCounts,
+  getTonerHealth,
+  listDevices,
+} from '@mps/db/queries';
+import { CollectionOutageBanner } from '@/components/collection-outage-banner';
 import { DeviceTable } from '@/components/device-table';
 import { PageHeader } from '@/components/page-header';
 import { SearchInput } from '@/components/search-input';
@@ -21,13 +30,14 @@ export default async function FleetOverviewPage() {
   const db = getDb();
   const now = new Date();
 
-  const [summary, health, customers, issueCounts, preview, warnings] = await Promise.all([
+  const [summary, health, customers, issueCounts, preview, warnings, collection] = await Promise.all([
     getFleetSummary(db),
     getTonerHealth(db),
     getCustomerCount(db),
     getIssueCounts(db, { status: 'open' }),
     listDevices(db, { limit: PREVIEW_ROWS, sort: 'urgent' }),
     getConsumableWarnings(db),
+    getCollectionStatus(db),
   ]);
 
   const warningDevices = new Set(warnings.map((w) => w.drmsId)).size;
@@ -47,6 +57,8 @@ export default async function FleetOverviewPage() {
         actions={<SearchInput action="/devices" className="w-[280px]" />}
       />
 
+      <CollectionOutageBanner status={collection} />
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Total devices"
@@ -59,11 +71,14 @@ export default async function FleetOverviewPage() {
           tone={summary.needsToner > 0 ? 'warn' : 'muted'}
           sub={`${formatNumber(summary.criticalToner)} critical · ${formatNumber(summary.lowToner)} low`}
         />
+        {/* Not "Offline": the number only says DRMS collected no counter set. During a fleet-wide
+            collection outage it would be every reporting device at once, which is a statement
+            about DRMS, not about the devices — so the card refuses to quote a device count. */}
         <StatCard
-          label="Offline"
-          value={formatNumber(summary.offline)}
-          tone={summary.offline > 0 ? 'critical' : 'muted'}
-          sub="not reported in 24h"
+          label="No meter reading"
+          value={collection.outage ? '—' : formatNumber(summary.offline)}
+          tone={collection.outage ? 'warn' : summary.offline > 0 ? 'critical' : 'muted'}
+          sub={collection.outage ? 'collection stopped' : 'in the last 24h'}
         />
         <StatCard
           label="Consumable warnings"

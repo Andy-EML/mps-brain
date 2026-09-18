@@ -29,25 +29,83 @@ export function tonerLevels(row: DeviceRow): (number | null)[] {
   return TONER_CHANNELS.map((c) => row.toner[c.key]);
 }
 
-/** `6h` for the first two days, then whole days — "Offline · 4128h" helps nobody. */
-function offlineAge(lastCounterAt: Date | null, now: Date): string | null {
+/**
+ * Split on anything that isn't a letter or a digit, lower-case, and drop a trailing firmware
+ * version from each token (`_Ver42` → its own token and then empty; `458Ver2` → `458`). DRMS
+ * product names and model names differ mostly in punctuation and that suffix, so this turns
+ * "ineo+458_Ver42" and "ineo+458" into the same token list.
+ */
+function modelTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((t) => t.replace(/ver\d+$/, ''))
+    .filter((t) => t !== '');
+}
+
+/**
+ * Whether the DRMS product name is worth showing next to the Model column.
+ *
+ * Many devices are named after their own model — "ineo+458_Ver42" beside a Model column reading
+ * "ineo+458" — which prints the same thing twice in one row. Others carry the site, which is the
+ * most useful thing on the row: "Little Heath School (Maths) C3351i", "A-Plan (Southampton)
+ * MF3303".
+ *
+ * The test is therefore "does anything survive once the model's own words are taken out", not
+ * plain substring containment. Containment would also hide "A-Plan (Southampton) MF3303" whenever
+ * the model is literally `MF3303`, and that name is exactly the kind we want to keep. A name that
+ * is only a shortened model ("C3351i" under "bizhub C3351i") still leaves nothing behind, so it is
+ * dropped as intended.
+ */
+export function deviceNameAddsInfo(name: string | null | undefined, model: string | null | undefined): boolean {
+  const nameTokens = name ? modelTokens(name) : [];
+  if (nameTokens.length === 0) return false;
+
+  const fromModel = new Set(model ? modelTokens(model) : []);
+  if (fromModel.size === 0) return true;
+
+  return nameTokens.some((t) => !fromModel.has(t));
+}
+
+/** `6h` for the first two days, then whole days — "No meter reading · 4128h" helps nobody. */
+function readingAge(lastCounterAt: Date | null, now: Date): string | null {
   if (lastCounterAt == null) return null;
   const hours = Math.floor((now.getTime() - lastCounterAt.getTime()) / 3_600_000);
   if (!Number.isFinite(hours) || hours < 0) return null;
   return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
 }
 
+/** How fresh an alarm has to be to count as proof that the device is reaching CSRC. */
+export const RECENT_ALARM_HOURS = 24;
+
+/**
+ * Whether DRMS has had an alarm from this device recently. The alarm feed refreshes every ~27 min
+ * against the meter collection's roughly once a day, so an alarm inside the window is an
+ * independent signal of life: the device is talking to CSRC even though no counter set arrived. A
+ * timestamp in the future is bad data, not good news, so it does not count.
+ */
+export function hasRecentAlarm(row: DeviceRow, now: Date = new Date()): boolean {
+  if (row.lastAlarmAt == null) return false;
+  const ms = now.getTime() - row.lastAlarmAt.getTime();
+  return Number.isFinite(ms) && ms >= 0 && ms < RECENT_ALARM_HOURS * 3_600_000;
+}
+
 /**
  * The status line under the model in the device table. The order matters: the worst problem a
  * human can act on wins, and "not linked" comes first because an unlinked device's toner and
  * counters can't be billed or ordered against anything yet.
+ *
+ * Deliberately not "Offline": all `row.offline` knows is that DRMS collected no counter set, which
+ * says nothing about reachability. A recent alarm settles that question the other way, so it drops
+ * the line to amber and says so instead of claiming the device is down.
  */
 export function deviceStatusLabel(row: DeviceRow, now: Date = new Date()): { text: string; tone: Tone } {
   if (row.vantageEquipmentId == null) return { text: 'Not linked', tone: 'muted' };
 
   if (row.offline) {
-    const age = offlineAge(row.lastCounterAt, now);
-    return { text: age ? `Offline · ${age}` : 'Offline', tone: 'critical' };
+    if (hasRecentAlarm(row, now)) return { text: 'No meter reading · reaching CSRC', tone: 'warn' };
+    const age = readingAge(row.lastCounterAt, now);
+    return { text: age ? `No meter reading · ${age}` : 'No meter reading', tone: 'critical' };
   }
 
   const levels = tonerLevels(row);
@@ -77,7 +135,7 @@ export function tonerHealth(rows: DeviceRow[]): { ok: number; low: number; criti
  * Rank for the overview's "needs attention first" ordering; lower sorts higher up the table.
  * Deliberately not the same order as `deviceStatusLabel`: that answers "what is wrong with this
  * device", while the overview table is a toner table, so a cartridge about to run out outranks a
- * device that has merely gone quiet — the offline count has a stat card of its own.
+ * device whose meter reading is merely missing — that has a stat card of its own.
  */
 export function attentionRank(row: DeviceRow): number {
   const states = tonerLevels(row).map(tonerState);

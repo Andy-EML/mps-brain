@@ -10,6 +10,7 @@ import {
   type AlertRow,
   type DeviceOrders,
 } from '@mps/db/queries';
+import { cn } from 'cn';
 import { acknowledgeAlertAction } from '@/app/(app)/alerts/actions';
 import { AlarmGroups } from '@/components/alarm-groups';
 import { Breadcrumb } from '@/components/breadcrumb';
@@ -18,7 +19,7 @@ import { DetailCard, DetailRow } from '@/components/detail-card';
 import { counterHistoryRows, groupAlarms, rawString } from '@/components/device-detail';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
-import { deviceStatusLabel, TONER_CHANNELS } from '@/components/toner';
+import { deviceStatusLabel, hasRecentAlarm, TONER_CHANNELS } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
 import { requireUser } from '@/lib/auth';
@@ -56,13 +57,32 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** The "Not reported since …" banner, with Task 8's acknowledge action wired into it. */
-function OfflineBanner({ alert }: { alert: AlertRow }) {
+/**
+ * The "No meter reading since …" banner, with Task 8's acknowledge action wired into it.
+ *
+ * Says what we actually know — DRMS collected no counter set — rather than "offline". When an
+ * alarm has arrived inside the last 24 h it says so too: the alarm feed refreshes every ~27 min,
+ * so that is proof the device is reaching CSRC and only the meter reading is missing.
+ */
+function NoMeterReadingBanner({ alert, reachingCsrc, lastAlarmAt, now }: {
+  alert: AlertRow;
+  reachingCsrc: boolean;
+  lastAlarmAt: Date | null;
+  now: Date;
+}) {
   const since = alert.lastSeenReportAt ?? alert.firstDetectedAt;
+  // Only the box and the headline take the tone; putting it on the container would tint the
+  // Acknowledge button too, which inherits its colour.
+  const box = reachingCsrc ? 'border-warn/30 bg-warn/5' : 'border-critical/25 bg-critical/5';
   return (
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-critical/25 bg-critical/5 px-5 py-4">
+    <div className={cn('mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-5 py-4', box)}>
       <div className="min-w-0">
-        <p className="text-[15px] font-medium text-critical">Not reported since {formatDateTime(since)}</p>
+        <p className={cn('text-[15px] font-medium', reachingCsrc ? 'text-warn' : 'text-critical')}>
+          No meter reading since {formatDateTime(since)}
+          {reachingCsrc && lastAlarmAt
+            ? `, but an alarm arrived ${formatRelative(lastAlarmAt, now)}, so the device is reaching CSRC`
+            : null}
+        </p>
         <p className="mt-0.5 text-[13px] text-muted-foreground">
           Open since {formatDateTime(alert.firstDetectedAt)}
           {alert.acknowledgedAt
@@ -156,7 +176,9 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const status = deviceStatusLabel(device, now);
   const historyRows = counterHistoryRows(history, HISTORY_ROWS);
   const { groups, hiddenCount } = groupAlarms(alarms, showAllAlarms);
-  const offlineAlert = alerts.find((a) => a.type === 'offline');
+  // Stored type name; it means "no meter reading collected", not "unreachable".
+  const noReadingAlert = alerts.find((a) => a.type === 'offline');
+  const reachingCsrc = hasRecentAlarm(device, now);
 
   const name = device.name ?? device.serial ?? device.drmsId;
   const customer = link.customerName ?? device.customerName ?? 'Unknown customer';
@@ -184,7 +206,14 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
         items={[{ label: 'Fleet overview', href: '/' }, { label: customer }, { label: name }]}
       />
 
-      {offlineAlert ? <OfflineBanner alert={offlineAlert} /> : null}
+      {noReadingAlert ? (
+        <NoMeterReadingBanner
+          alert={noReadingAlert}
+          reachingCsrc={reachingCsrc}
+          lastAlarmAt={device.lastAlarmAt}
+          now={now}
+        />
+      ) : null}
 
       <PageHeader title={name} badge={<ToneBadge tone={status.tone}>{status.text}</ToneBadge>} subtitle={subtitle} />
 
@@ -361,6 +390,11 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
             </DetailRow>
             <DetailRow label="Last counter">
               {device.lastCounterAt ? formatDateTime(device.lastCounterAt) : null}
+            </DetailRow>
+            {/* The second signal of life: the alarm feed refreshes every ~27 min, so this moves
+                even on a day when no meter reading was collected. */}
+            <DetailRow label="Last alarm">
+              {device.lastAlarmAt ? formatRelative(device.lastAlarmAt, now) : null}
             </DetailRow>
           </DetailCard>
 

@@ -146,7 +146,8 @@ export const JOB_CARDS: readonly JobCard[] = [
   {
     queue: QUEUES.drmsPull,
     title: 'DRMS pull',
-    description: 'Refreshes the DRMS device list and re-evaluates offline alerts, then queues a link run.',
+    description:
+      'Refreshes the DRMS device list and re-evaluates no-meter-reading alerts, then queues a link run.',
     schedule: 'Daily at 02:15',
     external: true,
   },

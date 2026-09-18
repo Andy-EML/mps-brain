@@ -1,5 +1,6 @@
-import { countAlerts, listAlerts, type AlertStatus } from '@mps/db/queries';
+import { countAlerts, getCollectionStatus, listAlerts, type AlertStatus } from '@mps/db/queries';
 import { AlertTable } from '@/components/alert-table';
+import { CollectionOutageBanner } from '@/components/collection-outage-banner';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
 import { requireUser } from '@/lib/auth';
@@ -29,7 +30,7 @@ function first(value: string | string[] | undefined): string | undefined {
 
 /** An empty tab should read as an answer, not as a failure. */
 const EMPTY: Record<AlertStatus, string> = {
-  open: 'No open alerts — every device that has reported counters before has reported recently.',
+  open: 'No open alerts — every device that has reported a meter reading before has reported recently.',
   acknowledged: 'No alerts have been acknowledged.',
   cleared: 'No alerts have cleared yet. An alert clears by itself when the device reports again.',
 };
@@ -44,7 +45,11 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
   const status: AlertStatus = TABS.some((t) => t.value === requested) ? (requested as AlertStatus) : DEFAULT_STATUS;
 
   const db = getDb();
-  const [rows, counts] = await Promise.all([listAlerts(db, { status, limit: LIMIT }), countAlerts(db)]);
+  const [rows, counts, collection] = await Promise.all([
+    listAlerts(db, { status, limit: LIMIT }),
+    countAlerts(db),
+    getCollectionStatus(db),
+  ]);
 
   const tabs: FilterTab[] = TABS.map((tab) => ({
     value: tab.value,
@@ -56,9 +61,10 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
     ),
   }));
 
-  // Counted as alerts, not as devices: the fleet page's "offline" figure is a live reading of
-  // `last_counter_received_time`, whereas an alert is a row the worker opened and has not cleared.
-  // The two are usually the same number, but saying "N devices" here would claim they always are.
+  // Counted as alerts, not as devices: the fleet page's "no meter reading" figure is a live
+  // reading of `last_counter_received_time`, whereas an alert is a row the worker opened and has
+  // not cleared. The two are usually the same number, but saying "N devices" here would claim
+  // they always are — and during a collection outage the worker opens nothing at all.
   const unresolved = counts.open + counts.acknowledged;
   const subtitle = `${formatNumber(unresolved)} ${pluralise(unresolved, 'alert')} not yet cleared · ${formatNumber(
     counts.acknowledged,
@@ -66,6 +72,10 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
 
   return (
     <>
+      {/* Above the tabs on purpose: during an outage the Open tab is expected to stay empty, and
+          that only makes sense once you have read why. */}
+      <CollectionOutageBanner status={collection} />
+
       <PageHeader
         title="Alerts"
         subtitle={subtitle}
@@ -82,8 +92,10 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
       />
 
       <p className="mb-5 max-w-3xl rounded-xl border border-line bg-card px-5 py-4 text-sm text-muted-foreground">
-        A device alerts when it has reported counters before but hasn’t for more than 24 hours. DRMS collects counters
-        once a day, so a device that misses one collection can show as 24–48 hours stale.
+        A device alerts when DRMS has collected a meter reading for it before but none in the last 24 hours. That means
+        “no meter reading”, not “offline” — DRMS collects counters about once a day, so a device that misses one
+        collection shows as 24–48 hours stale. When every reporting device goes quiet at once, no alerts are opened:
+        that is a collection outage, not a fleet of broken devices.
       </p>
 
       <section className="rounded-xl border border-line bg-card">

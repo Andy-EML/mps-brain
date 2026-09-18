@@ -21,11 +21,13 @@ const ACTION =
   'inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[13px] whitespace-nowrap transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none';
 
 /**
- * `offline` is the only type the worker opens today. Anything else (a service code, say) still has
- * to render as something a person can read, so unknown types fall through to the raw type.
+ * `offline` is the only type the worker opens today, and it is a misnomer kept for the stored
+ * value: it means DRMS collected no meter reading, not that the device is unreachable. Anything
+ * else (a service code, say) still has to render as something a person can read, so unknown types
+ * fall through to the raw type.
  */
 function alertTitle(type: string): string {
-  return type === 'offline' ? 'Not reporting' : type;
+  return type === 'offline' ? 'No meter reading' : type;
 }
 
 function alertTone(row: AlertRow): Tone {
@@ -86,17 +88,17 @@ export function AlertTable({ rows, now = new Date(), emptyMessage = 'No alerts i
 
                 <td className={CELL}>
                   <ToneBadge tone={alertTone(row)}>{alertTitle(row.type)}</ToneBadge>
-                  {/* "Not reported since" is what an offline alert means. A different alert type
-                      would be about something else, so it only gets its badge and its dates. */}
+                  {/* "No meter reading since" is what an `offline` alert means. A different alert
+                      type would be about something else, so it only gets its badge and its dates. */}
                   {row.type === 'offline' ? (
                     <p className="mt-2 text-[13px]">
-                      Not reported since {formatDateTime(since)}
+                      No meter reading since {formatDateTime(since)}
                       <span className="text-muted-foreground"> · {formatGap(since, now)}</span>
                     </p>
                   ) : null}
                   {row.clearedAt ? (
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      Cleared {formatDateTime(row.clearedAt)} — the device reported again
+                      Cleared {formatDateTime(row.clearedAt)} — a meter reading arrived
                     </p>
                   ) : null}
                 </td>

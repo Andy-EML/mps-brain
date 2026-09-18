@@ -18,7 +18,7 @@ export interface ToneBadgeProps {
   className?: string;
 }
 
-/** The soft status pill beside the device title ("Toner critical", "Offline · 3h"). */
+/** The soft status pill beside the device title ("Toner critical", "No meter reading · 3h"). */
 export function ToneBadge({ tone, children, dot = true, className }: ToneBadgeProps) {
   return (
     <span
