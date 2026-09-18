@@ -18,6 +18,25 @@ export interface DeviceDetail {
   vantageRaw: unknown;
   latestSnapshotAt: Date | null;
   contractRef: string | null;
+  /** The DRMS registration record, for the detail page's "Record" card. */
+  record: {
+    erpId: string | null;
+    customerErpId: string | null;
+    customerCsrcId: string | null;
+    communicationType: string | null;
+    registrationTime: Date | null;
+    initialConnectionTime: Date | null;
+  };
+  /** The active Vantage link, for the detail page's "Links" card. Null fields when unlinked. */
+  link: {
+    vantageEquipmentId: number | null;
+    assetNumber: string | null;
+    description: string | null;
+    location: string | null;
+    customerName: string | null;
+    method: string | null;
+    linkedAt: Date | null;
+  };
 }
 
 export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | null> {
@@ -35,6 +54,16 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
       vantageEquipmentId: deviceLinks.vantageEquipmentId,
       linkMethod: deviceLinks.method,
       lastCounterAt: drmsEquipment.lastCounterReceivedTime,
+      erpId: drmsEquipment.erpId,
+      customerErpId: drmsEquipment.customerErpId,
+      customerCsrcId: drmsEquipment.customerCsrcId,
+      communicationType: drmsEquipment.communicationType,
+      registrationTime: drmsEquipment.registrationTime,
+      initialConnectionTime: drmsEquipment.initialConnectionTime,
+      assetNumber: vantageEquipment.assetNumber,
+      vantageDescription: vantageEquipment.description,
+      vantageLocation: vantageEquipment.location,
+      linkedAt: deviceLinks.linkedAt,
       black: pivot.black,
       cyan: pivot.cyan,
       magenta: pivot.magenta,
@@ -96,6 +125,23 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
     // No contracts table/column exists yet anywhere in the schema or the Vantage client types;
     // there is nothing to derive this from. Always null until a contracts source is added.
     contractRef: null,
+    record: {
+      erpId: row.erpId,
+      customerErpId: row.customerErpId,
+      customerCsrcId: row.customerCsrcId,
+      communicationType: row.communicationType,
+      registrationTime: row.registrationTime,
+      initialConnectionTime: row.initialConnectionTime,
+    },
+    link: {
+      vantageEquipmentId: row.vantageEquipmentId,
+      assetNumber: row.assetNumber,
+      description: row.vantageDescription,
+      location: row.vantageLocation,
+      customerName: row.vantageCustomerName,
+      method: row.linkMethod,
+      linkedAt: row.linkedAt,
+    },
   };
 }
 

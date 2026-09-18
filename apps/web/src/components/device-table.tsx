@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { DeviceRow } from '@mps/db/queries';
 import { cn } from 'cn';
 import { StatusDot, TONE_TEXT } from '@/components/status-dot';
@@ -64,7 +65,12 @@ export function DeviceTable({ rows, now = new Date(), emptyMessage = 'No devices
                     <StatusDot tone={status.tone} className="mt-[7px]" />
                     <div className="min-w-0">
                       <div className="flex min-w-0 items-baseline gap-2">
-                        <span className="truncate text-[15px] font-medium">{deviceName(row)}</span>
+                        <Link
+                          href={`/devices/${row.drmsId}`}
+                          className="truncate text-[15px] font-medium hover:text-brand hover:underline"
+                        >
+                          {deviceName(row)}
+                        </Link>
                         {row.serial ? (
                           <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{row.serial}</span>
                         ) : null}

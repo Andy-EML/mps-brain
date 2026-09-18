@@ -4,3 +4,6 @@ export * from './device';
 export * from './devices';
 export * from './fleet';
 export * from './issues';
+// The counter names the UI has to ask `getCounterHistory` for. The rest of `./shared` is
+// query-building plumbing and stays internal.
+export { DEFAULT_OFFLINE_HOURS, METER_NAMES, TONER_NAMES } from './shared';

@@ -1,4 +1,4 @@
-import { desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceAlerts, drmsEquipment, users } from '../schema';
 
@@ -15,9 +15,16 @@ export interface AlertRow {
   acknowledgedByName: string | null;
 }
 
-export async function listAlerts(db: Db, o: { includeCleared?: boolean; limit?: number } = {}): Promise<AlertRow[]> {
+export async function listAlerts(
+  db: Db,
+  o: { includeCleared?: boolean; limit?: number; drmsId?: string } = {},
+): Promise<AlertRow[]> {
   const limit = o.limit ?? 50;
-  const where = o.includeCleared ? undefined : isNull(deviceAlerts.clearedAt);
+  const conds = [
+    o.includeCleared ? undefined : isNull(deviceAlerts.clearedAt),
+    o.drmsId ? eq(deviceAlerts.drmsEquipmentId, o.drmsId) : undefined,
+  ].filter((c) => c !== undefined);
+  const where = conds.length > 0 ? and(...conds) : undefined;
 
   return db
     .select({

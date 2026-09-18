@@ -134,6 +134,34 @@ describe('queries', () => {
       expect(await getDevice(t.db, 'does-not-exist')).toBeNull();
     });
 
+    it('getDevice returns the DRMS record and the active link for the detail page', async () => {
+      const detail = await getDevice(t.db, f.drms.online);
+      expect(detail?.record).toMatchObject({ erpId: 'E1', customerErpId: 'C1' });
+      expect(detail?.link).toMatchObject({
+        vantageEquipmentId: f.vantage.linkedToOnline,
+        assetNumber: 'AST-1',
+        customerName: 'Acme Ltd (Vantage)',
+        method: 'serial',
+      });
+      expect(detail?.link.linkedAt?.getTime()).toBe(FIXED_NOW.getTime() - 100 * 86_400_000);
+      // Ruled out until a contracts source exists — the page renders an em dash for it.
+      expect(detail?.contractRef).toBeNull();
+    });
+
+    it('getDevice leaves the link block empty for an unlinked device', async () => {
+      const detail = await getDevice(t.db, f.drms.unlinked);
+      expect(detail?.link).toEqual({
+        vantageEquipmentId: null,
+        assetNumber: null,
+        description: null,
+        location: null,
+        customerName: null,
+        method: null,
+        linkedAt: null,
+      });
+      expect(detail?.record.erpId).toBe('E3');
+    });
+
     it('getLatestCounters returns names with categories from the latest snapshot', async () => {
       const counters = await getLatestCounters(t.db, f.drms.online);
       const byName = Object.fromEntries(counters.map((c) => [c.name, c]));
@@ -190,6 +218,13 @@ describe('queries', () => {
       expect(alerts).toHaveLength(1);
       expect(alerts[0]).toMatchObject({ drmsId: f.drms.offline, type: 'SC-541', acknowledgedAt: null });
       expect(alerts[0]?.deviceName).toBe('Beta Branch MFP');
+    });
+
+    it('drmsId narrows to one device, as the device detail page needs', async () => {
+      expect(await listAlerts(t.db, { drmsId: f.drms.offline })).toHaveLength(1);
+      // The online device's only alert is cleared, so it is absent unless asked for.
+      expect(await listAlerts(t.db, { drmsId: f.drms.online })).toHaveLength(0);
+      expect(await listAlerts(t.db, { drmsId: f.drms.online, includeCleared: true })).toHaveLength(1);
     });
 
     it('includeCleared adds cleared alerts, with the acknowledging user name', async () => {

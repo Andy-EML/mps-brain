@@ -3,6 +3,8 @@ import { cn } from 'cn';
 
 export interface PageHeaderProps {
   title: string;
+  /** A status pill shown beside the title, as the device page's mockup does. */
+  badge?: ReactNode;
   /** The grey line under the title, e.g. "42 devices across 6 sites · synced 4 minutes ago". */
   subtitle?: ReactNode;
   /** Right-hand controls (search, primary button). */
@@ -11,11 +13,14 @@ export interface PageHeaderProps {
 }
 
 /** The page title block from the mockup: title + subtitle on the left, actions on the right. */
-export function PageHeader({ title, subtitle, actions, className }: PageHeaderProps) {
+export function PageHeader({ title, badge, subtitle, actions, className }: PageHeaderProps) {
   return (
     <div className={cn('mb-6 flex flex-wrap items-start justify-between gap-4', className)}>
       <div className="min-w-0">
-        <h1 className="text-[28px] leading-tight font-semibold tracking-tight">{title}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-[28px] leading-tight font-semibold tracking-tight">{title}</h1>
+          {badge}
+        </div>
         {subtitle ? <p className="mt-1.5 text-sm text-muted-foreground">{subtitle}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-3">{actions}</div> : null}
