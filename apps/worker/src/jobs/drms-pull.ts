@@ -3,8 +3,10 @@ import { drmsCustomers, drmsEquipment, excluded, type Db } from '@mps/db';
 import type { DrmsClient, DrmsCustomer, DrmsEquipment } from '@mps/drms';
 import { and, isNull, lt, sql } from 'drizzle-orm';
 import type { JobResult } from '../sync-runs';
+import { evaluateOfflineAlerts } from './alerts-evaluate';
 
 const CHUNK = 500;
+const DEFAULT_OFFLINE_ALERT_HOURS = 24;
 
 export function mapDrmsEquipment(e: DrmsEquipment, seenAt: Date): typeof drmsEquipment.$inferInsert {
   return {
@@ -49,6 +51,7 @@ export interface DrmsPullDeps {
   db: Db;
   drms: Pick<DrmsClient, 'listEquipment' | 'listCustomers'>;
   now?: () => Date;
+  thresholdHours?: number;
 }
 
 export async function runDrmsPull(deps: DrmsPullDeps): Promise<JobResult> {
@@ -79,6 +82,11 @@ export async function runDrmsPull(deps: DrmsPullDeps): Promise<JobResult> {
       .returning({ id: drmsEquipment.drmsId })
   ).length;
 
+  const alerts = await evaluateOfflineAlerts(db, {
+    now: seenAt,
+    thresholdHours: deps.thresholdHours ?? DEFAULT_OFFLINE_ALERT_HOURS,
+  });
+
   let customers = 0;
   let errorSample: string | undefined;
   try {
@@ -96,7 +104,13 @@ export async function runDrmsPull(deps: DrmsPullDeps): Promise<JobResult> {
 
   return {
     status: errorSample ? 'partial' : 'success',
-    stats: { equipment: equipment.length, markedMissing, customers },
+    stats: {
+      equipment: equipment.length,
+      markedMissing,
+      customers,
+      alertsOpened: alerts.opened,
+      alertsCleared: alerts.cleared,
+    },
     errorSample,
   };
 }

@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   }
   const tz = env.TZ_SCHEDULE;
   await boss.schedule(QUEUES.vantagePull, '0 2 * * *', {}, { tz });
-  await boss.schedule(QUEUES.drmsPull, '15 2 * * *', {}, { tz });
+  await boss.schedule(QUEUES.drmsPull, env.DRMS_PULL_CRON, {}, { tz });
   await boss.schedule(QUEUES.drmsSnapshot, env.SNAPSHOT_CRON, {}, { tz });
 
   const handlers = buildHandlers({
@@ -49,6 +49,7 @@ async function main(): Promise<void> {
     linkConfig: { erpIdField: env.LINK_ERP_ID_FIELD, customerErpField: env.LINK_CUSTOMER_ERP_FIELD },
     tz,
     queueLinkRun: () => boss.send(QUEUES.linkRun, {}, { startAfter: 120 }),
+    offlineAlertHours: env.OFFLINE_ALERT_HOURS,
   });
 
   for (const [name, handler] of Object.entries(handlers) as [QueueName, (d: JobData) => Promise<void>][]) {

@@ -18,6 +18,7 @@ export interface HandlerDeps {
   tz: string;
   queueLinkRun: () => Promise<unknown>;
   now?: () => Date;
+  offlineAlertHours?: number;
 }
 
 export type JobData = { full?: boolean };
@@ -32,7 +33,9 @@ export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobDa
       await queueLinkRun();
     },
     [QUEUES.drmsPull]: async () => {
-      await withSyncRun(db, QUEUES.drmsPull, () => runDrmsPull({ db, drms, now }));
+      await withSyncRun(db, QUEUES.drmsPull, () =>
+        runDrmsPull({ db, drms, now, thresholdHours: deps.offlineAlertHours }),
+      );
       await queueLinkRun();
     },
     [QUEUES.linkRun]: async () => {
