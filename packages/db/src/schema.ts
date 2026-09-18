@@ -199,6 +199,27 @@ export const counterNames = pgTable('counter_names', {
   updatedAt: ts('updated_at').notNull().defaultNow(),
 });
 
+export const deviceAlerts = pgTable(
+  'device_alerts',
+  {
+    id: serial('id').primaryKey(),
+    drmsEquipmentId: text('drms_equipment_id')
+      .notNull()
+      .references(() => drmsEquipment.drmsId),
+    type: text('type').notNull(),
+    firstDetectedAt: ts('first_detected_at').notNull().defaultNow(),
+    lastSeenReportAt: ts('last_seen_report_at'),
+    clearedAt: ts('cleared_at'),
+    acknowledgedBy: integer('acknowledged_by').references(() => users.id),
+    acknowledgedAt: ts('acknowledged_at'),
+    details: jsonb('details').notNull().default({}),
+  },
+  (t) => [
+    uniqueIndex('device_alerts_open_uq').on(t.drmsEquipmentId, t.type).where(sql`cleared_at is null`),
+    index('device_alerts_type_cleared_idx').on(t.type, t.clearedAt),
+  ],
+);
+
 export const syncRuns = pgTable(
   'sync_runs',
   {

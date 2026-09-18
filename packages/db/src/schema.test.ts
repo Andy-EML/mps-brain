@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getAppState, setAppState } from './app-state';
-import { counterSnapshots, deviceLinks, drmsEquipment, linkIssues, vantageEquipment } from './schema';
+import { counterSnapshots, deviceAlerts, deviceLinks, drmsEquipment, linkIssues, vantageEquipment } from './schema';
 import { createTestDb, type TestDb } from './testing';
 
 describe('schema', () => {
@@ -44,6 +44,14 @@ describe('schema', () => {
     const row = { issueKey: 'no_match_drms|d1|', type: 'no_match_drms', drmsEquipmentId: 'd1' };
     await t.db.insert(linkIssues).values(row);
     await expect(t.db.insert(linkIssues).values(row)).rejects.toThrow();
+  });
+
+  it('allows one open alert per device and type, but history after clearing', async () => {
+    await t.db.insert(deviceAlerts).values({ drmsEquipmentId: 'd1', type: 'offline', firstDetectedAt: new Date(), clearedAt: new Date() });
+    await t.db.insert(deviceAlerts).values({ drmsEquipmentId: 'd1', type: 'offline', firstDetectedAt: new Date() });
+    await expect(
+      t.db.insert(deviceAlerts).values({ drmsEquipmentId: 'd1', type: 'offline', firstDetectedAt: new Date() }),
+    ).rejects.toThrow();
   });
 
   it('stores and overwrites app state', async () => {
