@@ -143,6 +143,16 @@ export const drmsEquipment = pgTable(
     serial: text('serial'),
     serialNorm: text('serial_norm'),
     modelName: text('model_name'),
+    /**
+     * Whether the device prints in colour, derived from `modelName` by `isColourModel` (@mps/core)
+     * on every DRMS pull. Stored rather than derived in SQL so the pivot and the fleet counts can
+     * filter on it without re-expressing the naming rule in Postgres, and so there is one column to
+     * override by hand later if KM ever ships a model the name does not describe.
+     *
+     * Defaults to false because mono is the safe default: hiding CMY on a colour device loses a
+     * reading, while the reverse invents three cartridges the device has never had.
+     */
+    isColour: boolean('is_colour').notNull().default(false),
     productName: text('product_name'),
     status: text('status'),
     communicationType: text('communication_type'),

@@ -1,5 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { isColourModel } from '@mps/core';
+import { inArray, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getAppState, setAppState } from './app-state';
+import { migrationsFolder } from './migrate';
 import {
   counterSnapshots,
   deviceAlarms,
@@ -75,6 +80,48 @@ describe('schema', () => {
     const again = await t.db.insert(deviceAlarms).values(row).onConflictDoNothing().returning();
     expect(again).toHaveLength(0);
     expect(await t.db.select().from(deviceAlarms)).toHaveLength(1);
+  });
+
+  it("backfills is_colour for rows that predate the column, agreeing with the helper's rule", async () => {
+    // The 0006 migration carries a one-off UPDATE for the 836 devices that were already in the
+    // table when the column arrived. Tests always migrate an empty database, so that statement
+    // would otherwise never be exercised at all: here we run the shipped SQL itself over rows that
+    // look like the live fleet and check it reaches the same verdict as `isColourModel`, which owns
+    // the rule for every write after the migration.
+    const models = [
+      'bizhub C3350i',
+      'bizhub C 258',
+      'C458',
+      'ineo+308',
+      'A-Plan (Southampton) MF3303',
+      'bizhub 301i',
+      'bizhub 4050i',
+      'bizhub 4701i',
+      'Konica Minolta bizhub 751i',
+      '287',
+      null,
+    ];
+    const ids = models.map((_, i) => `backfill-${i}`);
+    await t.db
+      .insert(drmsEquipment)
+      .values(models.map((modelName, i) => ({ drmsId: ids[i]!, modelName, raw: {} })));
+
+    const sqlFile = readFileSync(join(migrationsFolder, '0006_equipment_is_colour.sql'), 'utf8');
+    const backfill = sqlFile
+      .split('--> statement-breakpoint')
+      .find((statement) => statement.includes('UPDATE'));
+    if (!backfill) throw new Error('0006 migration no longer contains the backfill UPDATE');
+    await t.db.execute(sql.raw(backfill));
+
+    const rows = await t.db
+      .select({ modelName: drmsEquipment.modelName, isColour: drmsEquipment.isColour })
+      .from(drmsEquipment)
+      .where(inArray(drmsEquipment.drmsId, ids));
+
+    expect(rows).toHaveLength(models.length);
+    for (const row of rows) expect([row.modelName, row.isColour]).toEqual([row.modelName, isColourModel(row.modelName)]);
+    // Guard against a statement that flags everything (or nothing) and still "agrees" by accident.
+    expect(rows.filter((r) => r.isColour)).toHaveLength(5);
   });
 
   it('stores and overwrites app state', async () => {

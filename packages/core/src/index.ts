@@ -5,3 +5,4 @@ export * from './issues';
 export * from './alarms';
 export * from './collection';
 export * from './orders';
+export * from './models';

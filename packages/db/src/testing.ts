@@ -65,6 +65,9 @@ export async function seedDemoFixture(db: Db): Promise<DemoFixture> {
     .returning({ id: users.id, username: users.username });
   if (!user) throw new Error('seedDemoFixture: failed to insert user');
 
+  // All three fixture devices are colour models, and `isColour` is set the way the DRMS pull sets
+  // it (from the model name) rather than left to the column default — the counter pivot hides CMY
+  // on a mono device, so a fixture that skipped the flag would silently lose its colour readings.
   await db.insert(drmsEquipment).values([
     {
       drmsId: 'D1',
@@ -72,6 +75,7 @@ export async function seedDemoFixture(db: Db): Promise<DemoFixture> {
       serial: 'SN0000001',
       serialNorm: 'sn0000001',
       modelName: 'bizhub C3320i',
+      isColour: true,
       productName: 'Acme Office MFP',
       status: 'Registered',
       customerErpId: 'C1',
@@ -85,6 +89,7 @@ export async function seedDemoFixture(db: Db): Promise<DemoFixture> {
       serial: 'SN0000002',
       serialNorm: 'sn0000002',
       modelName: 'bizhub C3320i',
+      isColour: true,
       productName: 'Beta Branch MFP',
       status: 'Registered',
       customerErpId: 'C2',
@@ -98,6 +103,7 @@ export async function seedDemoFixture(db: Db): Promise<DemoFixture> {
       serial: 'SN0000003',
       serialNorm: 'sn0000003',
       modelName: 'bizhub C300i',
+      isColour: true,
       productName: 'Gamma Unlinked MFP',
       status: 'Discovered',
       customerErpId: 'C3',
