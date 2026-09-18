@@ -78,16 +78,16 @@ export function formatNumber(value: number | string | null | undefined): string 
   return numbers.format(n);
 }
 
+/** `1 device` / `9 devices`. */
+export function pluralise(count: number, singular: string, plural = `${singular}s`): string {
+  return count === 1 ? singular : plural;
+}
+
 /** `61%`. `—` for null. */
 export function formatPercent(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return `${Math.round(value)}%`;
 }
 
-/** Toner level → status band. Global Constraints: critical < 5%, low < 20%. */
-export function tonerLevelStatus(level: number | null | undefined): 'critical' | 'low' | 'ok' | 'unknown' {
-  if (level == null || !Number.isFinite(level)) return 'unknown';
-  if (level < 5) return 'critical';
-  if (level < 20) return 'low';
-  return 'ok';
-}
+/* The toner banding that used to live here is now `tonerState` in `@/components/toner`, next to
+ * `deviceStatusLabel` and its tests — one source of truth for the 5%/20% thresholds. */
