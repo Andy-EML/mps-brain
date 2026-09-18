@@ -6,7 +6,6 @@ import {
   listAlerts,
   listDeviceAlarms,
   listDeviceOrders,
-  METER_NAMES,
   type AlertRow,
   type DeviceOrders,
 } from '@mps/db/queries';
@@ -16,7 +15,7 @@ import { AlarmGroups } from '@/components/alarm-groups';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { CounterTable } from '@/components/counter-table';
 import { DetailCard, DetailRow } from '@/components/detail-card';
-import { counterHistoryRows, groupAlarms, rawString } from '@/components/device-detail';
+import { counterHistoryRows, groupAlarms, meterChannels, rawString } from '@/components/device-detail';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
 import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
@@ -161,8 +160,11 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   if (!detail) notFound();
 
   const vantageEquipmentId = detail.link.vantageEquipmentId;
+  // The meters this device has: a mono device never reports `Full Color:Total`, so the page does
+  // not ask for it either — nothing downstream can then put an all-em-dash Colour column back.
+  const meters = meterChannels(detail.device.isColour);
   const [history, alarms, alerts, orders] = await Promise.all([
-    getCounterHistory(db, id, [METER_NAMES.black, METER_NAMES.colour, METER_NAMES.scan], HISTORY_DAYS),
+    getCounterHistory(db, id, meters.map((m) => m.counter), HISTORY_DAYS),
     listDeviceAlarms(db, id, { limit: ALARM_LIMIT }),
     listAlerts(db, { drmsId: id }),
     // Orders hang off the Vantage equipment, so an unlinked device simply has none.
@@ -174,7 +176,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const { device, record, link } = detail;
   const now = new Date();
   const status = deviceStatusLabel(device, now);
-  const historyRows = counterHistoryRows(history, HISTORY_ROWS);
+  const historyRows = counterHistoryRows(history, meters, HISTORY_ROWS);
   const { groups, hiddenCount } = groupAlarms(alarms, showAllAlarms);
   // Stored type name; it means "no meter reading collected", not "unreachable".
   const noReadingAlert = alerts.find((a) => a.type === 'offline');
@@ -189,7 +191,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   // CMY here would drop a healthy mono device into the "no counter set yet" empty state below.
   const channels = tonerChannels(device);
   const hasCounters = channels.some((c) => device.toner[c.key] != null);
-  const hasMeters = device.meters.black != null || device.meters.colour != null || device.meters.scan != null;
+  const hasMeters = meters.some((m) => device.meters[m.key] != null);
 
   const subtitle = [
     device.model,
@@ -255,10 +257,12 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
           </Card>
 
           <Card title="Meters" meta={readAt ? formatDateTime(readAt) : null}>
+            {/* Three columns whatever the device reports, so a mono device's two tiles keep the
+                same size as every other device's rather than stretching across the card. */}
             <div className="grid gap-3 sm:grid-cols-3">
-              <Meter label="Black" value={device.meters.black} />
-              <Meter label="Colour" value={device.meters.colour} />
-              <Meter label="Scan" value={device.meters.scan} />
+              {meters.map((meter) => (
+                <Meter key={meter.key} label={meter.label} value={device.meters[meter.key]} />
+              ))}
             </div>
             {hasMeters ? null : (
               <p className="mt-3 text-[12px] text-muted-foreground">
@@ -333,6 +337,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
           >
             <CounterTable
               rows={historyRows}
+              channels={meters}
               emptyMessage="No counter snapshots have been collected for this device yet."
             />
             {historyRows.length === 1 ? (

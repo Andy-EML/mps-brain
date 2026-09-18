@@ -129,27 +129,50 @@ export interface CounterHistoryRow {
 }
 
 type Channel = 'black' | 'colour' | 'scan';
-const CHANNELS: [Channel, string][] = [
-  ['black', METER_NAMES.black],
-  ['colour', METER_NAMES.colour],
-  ['scan', METER_NAMES.scan],
+
+export interface MeterChannel {
+  key: Channel;
+  /** Column heading and tile label. */
+  label: string;
+  /** The DRMS counter name behind it — a wire value, hence the American spelling of `Full Color`. */
+  counter: string;
+}
+
+const METER_CHANNELS: MeterChannel[] = [
+  { key: 'black', label: 'Black', counter: METER_NAMES.black },
+  { key: 'colour', label: 'Colour', counter: METER_NAMES.colour },
+  { key: 'scan', label: 'Scan', counter: METER_NAMES.scan },
 ];
 
 /**
- * Merges the three meter series `getCounterHistory` returns into one row per snapshot timestamp,
- * newest first, with the change since the previous snapshot.
+ * The meters a device reports. A mono device has no `Full Color:Total`, so its Colour tile, its
+ * Colour history column and that column's delta would be em dashes for ever; the column is dropped
+ * instead. Black and Scan stay — a mono MFP still prints and still scans.
+ */
+export function meterChannels(isColour: boolean): MeterChannel[] {
+  return isColour ? METER_CHANNELS : METER_CHANNELS.filter((c) => c.key !== 'colour');
+}
+
+/**
+ * Merges the meter series `getCounterHistory` returns into one row per snapshot timestamp, newest
+ * first, with the change since the previous snapshot.
+ *
+ * `channels` says which meters this device has (from `meterChannels`); a meter left out stays null
+ * on every row and its delta is never computed, so a stale `Full Color:Total` collected before the
+ * model was known cannot put a colour column back on a mono device's table.
  *
  * Deltas are computed over the whole series before `limit` is applied, so the last visible row
  * still has a real delta if an older snapshot exists behind it.
  */
 export function counterHistoryRows(
   history: Record<string, CounterPoint[]>,
+  channels: MeterChannel[],
   limit = 30,
 ): CounterHistoryRow[] {
   const byTime = new Map<number, { at: Date; black: number | null; colour: number | null; scan: number | null }>();
 
-  for (const [channel, name] of CHANNELS) {
-    for (const point of history[name] ?? []) {
+  for (const { key: channel, counter } of channels) {
+    for (const point of history[counter] ?? []) {
       const key = point.at.getTime();
       let row = byTime.get(key);
       if (!row) {

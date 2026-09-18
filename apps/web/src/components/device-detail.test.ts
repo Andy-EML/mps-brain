@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { DeviceAlarmRow } from '@mps/db/queries';
-import { alarmCode, alarmStatusLabel, counterHistoryRows, groupAlarms, orderStatus, rawString } from './device-detail';
+import {
+  alarmCode,
+  alarmStatusLabel,
+  counterHistoryRows,
+  groupAlarms,
+  meterChannels,
+  orderStatus,
+  rawString,
+} from './device-detail';
 
 const at = (iso: string) => new Date(iso);
 
@@ -117,7 +125,19 @@ describe('alarmStatusLabel', () => {
   });
 });
 
+describe('meterChannels', () => {
+  it('gives a colour device the black, colour and scan meters', () => {
+    expect(meterChannels(true).map((c) => c.label)).toEqual(['Black', 'Colour', 'Scan']);
+  });
+
+  it('drops the colour meter for a mono device, which never reports one', () => {
+    expect(meterChannels(false).map((c) => c.label)).toEqual(['Black', 'Scan']);
+  });
+});
+
 describe('counterHistoryRows', () => {
+  const COLOUR = meterChannels(true);
+  const MONO = meterChannels(false);
   const history = {
     'Black:Total': [
       { at: at('2026-09-01T10:00:00Z'), value: 8000 },
@@ -132,7 +152,7 @@ describe('counterHistoryRows', () => {
   };
 
   it('merges the three meters onto one row per snapshot, newest first', () => {
-    const rows = counterHistoryRows(history);
+    const rows = counterHistoryRows(history, COLOUR);
     expect(rows.map((r) => r.at.toISOString())).toEqual([
       '2026-09-17T10:00:00.000Z',
       '2026-09-10T10:00:00.000Z',
@@ -142,12 +162,12 @@ describe('counterHistoryRows', () => {
   });
 
   it('leaves a meter null on a snapshot that did not report it', () => {
-    const rows = counterHistoryRows(history);
+    const rows = counterHistoryRows(history, COLOUR);
     expect(rows[1]).toMatchObject({ black: 8200, colour: null, scan: null });
   });
 
   it('computes each delta against the previous snapshot, and null when either side is missing', () => {
-    const rows = counterHistoryRows(history);
+    const rows = counterHistoryRows(history, COLOUR);
     expect(rows[0]!.deltas).toEqual({ black: 119, colour: null, scan: null });
     expect(rows[1]!.deltas).toEqual({ black: 200, colour: null, scan: null });
     // The oldest row has nothing to compare against.
@@ -155,18 +175,27 @@ describe('counterHistoryRows', () => {
   });
 
   it('applies the limit to the newest rows but still deltas the last one against the row before it', () => {
-    const rows = counterHistoryRows(history, 2);
+    const rows = counterHistoryRows(history, COLOUR, 2);
     expect(rows).toHaveLength(2);
     expect(rows[1]!.deltas.black).toBe(200);
   });
 
+  it('leaves the colour meter out for a mono device, even when the history holds one', () => {
+    // `Full Color:Total` on a mono device can only be a leftover from before the model was known:
+    // the page does not ask for it, and a column of em dashes for ever is worse than no column.
+    const rows = counterHistoryRows(history, MONO);
+    expect(rows[0]).toMatchObject({ black: 8319, colour: null, scan: 436 });
+    expect(rows[0]!.deltas).toEqual({ black: 119, colour: null, scan: null });
+    expect(rows.every((r) => r.colour === null)).toBe(true);
+  });
+
   it('returns nothing for a device with no counter history', () => {
-    expect(counterHistoryRows({})).toEqual([]);
-    expect(counterHistoryRows({ 'Black:Total': [] })).toEqual([]);
+    expect(counterHistoryRows({}, COLOUR)).toEqual([]);
+    expect(counterHistoryRows({ 'Black:Total': [] }, COLOUR)).toEqual([]);
   });
 
   it('survives a device with exactly one snapshot, which is what the live data mostly has', () => {
-    const rows = counterHistoryRows({ 'Black:Total': [{ at: at('2026-09-17T10:00:00Z'), value: 8319 }] });
+    const rows = counterHistoryRows({ 'Black:Total': [{ at: at('2026-09-17T10:00:00Z'), value: 8319 }] }, COLOUR);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.deltas.black).toBeNull();
   });
