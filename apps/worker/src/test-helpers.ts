@@ -1,7 +1,22 @@
 import { normaliseSerial } from '@mps/core';
 import { drmsEquipment, vantageEquipment, type Db } from '@mps/db';
 import type { DrmsEquipment } from '@mps/drms';
-import type { ListOptions, VantageRecord } from '@mps/vantage';
+import type { ListOptions, SalesOrderListOptions, VantageRecord } from '@mps/vantage';
+
+/** A `listSalesOrders` stub that records its options, or throws the error it was handed. */
+export function fakeVantageOrders(orders: VantageRecord[] | Error) {
+  const calls: SalesOrderListOptions[] = [];
+  return {
+    calls,
+    client: {
+      async listSalesOrders(opts: SalesOrderListOptions = {}) {
+        calls.push(opts);
+        if (orders instanceof Error) throw orders;
+        return orders;
+      },
+    },
+  };
+}
 
 export function fakeVantage(customers: VantageRecord[], equipment: VantageRecord[]) {
   const calls: { entity: 'customer' | 'equipment'; opts: ListOptions }[] = [];

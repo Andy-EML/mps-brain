@@ -13,6 +13,8 @@ const envSchema = z.object({
   SNAPSHOT_CRON: z.string().min(1).default('0 6 * * *'),
   DRMS_PULL_CRON: z.string().min(1).default('15 * * * *'),
   ALARMS_CRON: z.string().min(1).default('*/30 * * * *'),
+  /** Sales-order pull; runs after the nightly Vantage pull at 02:00. */
+  ORDERS_CRON: z.string().min(1).default('40 2 * * *'),
   OFFLINE_ALERT_HOURS: z.coerce.number().int().positive().default(24),
   TZ_SCHEDULE: z.string().min(1).default('Europe/London'),
   ADMIN_USERNAME: z.string().min(1).default('admin'),

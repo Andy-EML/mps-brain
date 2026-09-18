@@ -42,6 +42,7 @@ async function main(): Promise<void> {
   await boss.schedule(QUEUES.drmsPull, env.DRMS_PULL_CRON, {}, { tz });
   await boss.schedule(QUEUES.drmsSnapshot, env.SNAPSHOT_CRON, {}, { tz });
   await boss.schedule(QUEUES.drmsAlarms, env.ALARMS_CRON, {}, { tz });
+  await boss.schedule(QUEUES.vantageOrders, env.ORDERS_CRON, {}, { tz });
 
   const handlers = buildHandlers({
     db,

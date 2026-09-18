@@ -21,4 +21,5 @@ export const QUEUE_OPTIONS: Record<QueueName, WorkerQueueOptions> = {
   [QUEUES.drmsPull]: stately(QUEUES.drmsPull, 3600),
   [QUEUES.linkRun]: stately(QUEUES.linkRun, 1800),
   [QUEUES.drmsAlarms]: stately(QUEUES.drmsAlarms, 1800),
+  [QUEUES.vantageOrders]: stately(QUEUES.vantageOrders, 3600),
 };

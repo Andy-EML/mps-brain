@@ -7,6 +7,7 @@ import { runDrmsAlarms } from './jobs/drms-alarms';
 import { runDrmsPull } from './jobs/drms-pull';
 import { runDrmsSnapshot } from './jobs/drms-snapshot';
 import { runLinkRun } from './jobs/link-run';
+import { runVantageOrders } from './jobs/vantage-orders';
 import { runVantagePull } from './jobs/vantage-pull';
 import { withSyncRun } from './sync-runs';
 import { isSundayIn } from './time';
@@ -47,6 +48,10 @@ export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobDa
     },
     [QUEUES.drmsAlarms]: async () => {
       await withSyncRun(db, QUEUES.drmsAlarms, () => runDrmsAlarms({ db, drms, now }));
+    },
+    [QUEUES.vantageOrders]: async () => {
+      // Read-only: no link run to queue, and nothing is ever written back to Vantage.
+      await withSyncRun(db, QUEUES.vantageOrders, () => runVantageOrders({ db, vantage, now }));
     },
   };
 }

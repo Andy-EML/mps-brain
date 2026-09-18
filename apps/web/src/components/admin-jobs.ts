@@ -132,8 +132,8 @@ export interface JobCard {
 }
 
 /**
- * The five queues, in the order a person would think about them: the two pulls that bring data in,
- * the linker that joins them up, then the two DRMS collections.
+ * The six queues, in the order a person would think about them: the two pulls that bring data in,
+ * the linker that joins them up, then the two DRMS collections and the sales-order pull.
  */
 export const JOB_CARDS: readonly JobCard[] = [
   {
@@ -169,6 +169,14 @@ export const JOB_CARDS: readonly JobCard[] = [
     title: 'DRMS alarms',
     description: 'Pulls consumable and service alarms raised since the last run.',
     schedule: 'Hourly',
+    external: true,
+  },
+  {
+    queue: QUEUES.vantageOrders,
+    title: 'Vantage sales orders',
+    description:
+      'Fetches sales orders and their lines from Vantage, so the device page can show what consumables have already gone out. Read-only — it never raises an order.',
+    schedule: 'Daily at 02:40',
     external: true,
   },
 ];
