@@ -32,6 +32,13 @@ export interface SalesOrderListOptions extends ListOptions {
  */
 const SALES_ORDER_EXPAND = 'Lines($expand=Item($select=Id,PartNumber,Description)),Type($select=Id,Name)';
 
+/**
+ * `SalesOrder.OrderDate` is an `Edm.Date`, not an `Edm.DateTimeOffset`: comparing it to a full
+ * timestamp makes Vantage answer 400 ("incompatible types"). Confirmed against the live API,
+ * 2026-09-18.
+ */
+const odataDate = (d: Date) => d.toISOString().slice(0, 10);
+
 export type VantageRecord = Record<string, unknown>;
 
 const REISSUE_WINDOW_MS = 5 * 60_000;
@@ -163,7 +170,7 @@ export function createVantageClient(opts: VantageClientOptions) {
       odataList('SalesOrder', {
         filter: [
           ...listFilters(o),
-          ...(o.orderDateFrom ? [`orderdate ge ${o.orderDateFrom.toISOString()}`] : []),
+          ...(o.orderDateFrom ? [`orderdate ge ${odataDate(o.orderDateFrom)}`] : []),
         ],
         includeDeleted: o.includeDeleted,
         expand: SALES_ORDER_EXPAND,

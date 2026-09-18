@@ -96,9 +96,10 @@ describe('Vantage client', () => {
       '(modifieddate gt 2026-09-01T00:00:00.000Z or createddate gt 2026-09-01T00:00:00.000Z or deleteddate gt 2026-09-01T00:00:00.000Z)',
     );
 
-    await client.listSalesOrders({ orderDateFrom: new Date('2024-09-18T00:00:00Z') });
+    await client.listSalesOrders({ orderDateFrom: new Date('2024-09-18T02:40:00Z') });
     expect(calls[2]!.url.searchParams.get('$filter')).toBe(
-      '(deleteddate eq null) and (orderdate ge 2024-09-18T00:00:00.000Z)',
+      // OrderDate is an Edm.Date; a full timestamp makes Vantage answer 400.
+      '(deleteddate eq null) and (orderdate ge 2024-09-18)',
     );
   });
 
