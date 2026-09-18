@@ -1,6 +1,72 @@
-# Handoff — end of 2026-09-17 (updated 2026-09-18)
+# Handoff — end of 2026-09-18
 
-## 0a. Update — 2026-09-18 16:20 (supersedes 0b below where they disagree)
+**Read this section, then `CLAUDE.md`, then the spec. Sections 0a and 0b below are earlier in the
+same day and are kept only for the detail; where they disagree with this section, this one wins.**
+
+## Where we finished on 2026-09-18
+
+**Foundation Part 2 is complete and pushed.** Branch `feat/foundation-web` is at `163170d` on
+`github.com/Andy-EML/mps-brain`. Every task is done and reviewed except Task 10 (Docker/Portainer
+deploy), which the user deliberately moved to last. ~450 tests, typecheck and lint clean.
+
+### First thing tomorrow
+
+1. **Start the worker** (`npm run dev -w @mps/worker`) and **run `drms-snapshot`**. The 95 devices
+   registered on 18 Sep returned no counters that day because DRMS collects overnight. After the
+   overnight collection they should report, taking devices with toner data from **195 to roughly
+   290**. If they are still empty by mid-afternoon, that is worth raising with KM.
+2. Note the snapshot bug in the test report before relying on the run: `drms-snapshot` stamps
+   `last_snapshot_fetch_at` even on devices that return nothing, so anything registered after a
+   given day's run is skipped until the next day. To force a re-fetch, clear the stamp for the
+   affected devices first.
+
+### What was done on 18 Sep
+
+- **Registration finished**: 258 of 260, DB now 293 Registered / 541 Discovered / 2 Deleted. Two
+  failures, both benign "already registered in CSRC backbone" (A7PY321200377, AA7R021035348).
+- **The counter outage resolved itself** — DRMS resumed collecting. Nothing to escalate.
+- **Task 3B** Vantage sales-order history (7,131 orders, 9,248 lines, 166 open, colour per line).
+- **Task 9C** "Offline" became "No meter reading", with a fleet-wide outage banner and a
+  proportional rule: outage when `stale / expecting >= 0.7`, shared by worker and web.
+- **Task 9D** mono devices have no colour cartridges. `isColourModel` in
+  `packages/core/src/models.ts` is the single source of truth; `is_colour` is stored on
+  `drms_equipment` and the counter pivot nulls CMY for mono devices, so every count and every bar
+  agree. 21 mono, 815 colour, verified against the fleet.
+- **Task 9B** full test pass → `docs/TEST-REPORT-2026-09-18.md`. Read it before Task 10: it lists
+  four recorded-but-unfixed items and what was left untested.
+
+### Next: sub-project 3, replenishment
+
+Decisions already taken with the user — do not re-ask:
+- Thresholds cascade **default → customer → device**, defaults **CMY 10%, K 15%**, each value
+  showing where it came from.
+- Triggers are **both** thresholds and DRMS alarms.
+- **`auto_replenish`** flag, default on, same cascade. Off means the device is still monitored but
+  excluded from the Needs toner count and from proposals, visible under a "Manual replenishment"
+  filter. Some customers are on toner-inclusive contracts yet order by hand; Vantage cannot tell us
+  this, so it is our own flag.
+- **Bulk settings**: multi-select devices (including select-all-matching-filter), set thresholds per
+  colour, auto-replenish and alerts on/off, or reset to inherited. Confirmation step, one
+  transaction, audited.
+- Proposals go to an **operator review queue** (approve / edit quantity / reject); only approved
+  ones become **real Vantage sales orders** (`POST /Equipment(Id)/CreateConsumableOrder`), badged
+  via `created_by_mps` and shown as open until completed in Vantage.
+- **Quantity: 1 of each low colour** by default; the operator can raise it.
+- **Duplicate suppression**: skip a colour while an open Vantage order exists for that device and
+  colour, and for **14 days** after one completed.
+- **Waste toner boxes do raise proposals; drum/imaging-unit/parts alarms do not** — those need an
+  engineer, so they stay as alarms on the device page.
+- The Fleet overview **"Needs toner" tile must open this queue**, not a filtered device list.
+
+Sub-project order after 3: **4 site stock → 2 meter sync → 5 notifications → Task 10 deploy last.**
+
+### Still open, for the user rather than the code
+
+- The KM questions document (`F:\dev\API Docs Etc\KM DRMS3 questions - BGB Elmdale.docx`, Q1–Q11)
+  is written but **not sent**. Several questions are now answered by the pilot and could be trimmed
+  before it goes.
+
+## 0a. Update — 2026-09-18 16:20
 
 - **DRMS registration is finished.** 258 of 260 selected devices registered across five
   batches. The DB now holds 293 Registered, 541 Discovered, 2 Deleted. The two failures were
