@@ -33,6 +33,9 @@ packages/db/src/schema.ts                  Task 1  + deviceAlerts table
 packages/db/drizzle/0001_*.sql             Task 1  generated migration
 packages/db/src/queries/                   Task 2  fleet.ts, device.ts, issues.ts, alerts.ts, admin.ts (+ tests)
 apps/worker/src/jobs/alerts-evaluate.ts    Task 3  offline alert evaluation (+ test)
+packages/db/src/schema.ts                  Task 3A + deviceAlarms table (+ migration 0002)
+packages/drms/src/client.ts                Task 3A listAlarms (+ schema, tests)
+apps/worker/src/jobs/drms-alarms.ts        Task 3A alarm pull job (+ test)
 apps/worker/src/jobs/drms-pull.ts          Task 3  (unchanged) — main.ts gains the hourly schedule
 apps/web/                                  Task 4+ Next.js app
   src/app/layout.tsx, globals.css          Task 4  shell, sidebar, theme tokens
@@ -273,6 +276,64 @@ In `main.ts` use `env.DRMS_PULL_CRON` for the drms-pull schedule and pass `thres
 
 ---
 
+### Task 3A: DRMS alarm pull (waste toner, drums, imaging units)
+
+**Why:** DRMS has no counters for waste toner, drums, imaging units, ITB or fuser. Those only arrive as **alarms** (`TO-00` waste bottle almost full/full, `TR-00` waste bottle delivery, `TP-00`/`TP-01` PartsLife 1st/2nd call for IU/DC/filter, `TN-00` toner near empty/empty, `TS-00` toner delivery). Verified live on 2026-09-18: 299 alarms over 3 days across the fleet. Sub-project 3 needs this data too, and the dashboard shows it per device.
+
+**Files:**
+- Modify: `packages/db/src/schema.ts` (+ `deviceAlarms`), generated `packages/db/drizzle/0002_alarms.sql`
+- Modify: `packages/drms/src/schemas.ts`, `packages/drms/src/client.ts` (+ `listAlarms`), `packages/drms/src/client.test.ts`
+- Create: `apps/worker/src/jobs/drms-alarms.ts` + test
+- Modify: `apps/worker/src/env.ts` (`ALARMS_CRON`, default `*/30 * * * *`), `main.ts` (queue + schedule + handler), `packages/queue/src/index.ts` (`QUEUES.drmsAlarms = 'drms-alarms'`), `apps/worker/src/queue-options.ts`
+- Modify: `packages/db/src/queries/device.ts` (+ `listDeviceAlarms`), `queries/fleet.ts` (+ consumable warning counts)
+
+**Schema — `device_alarms`:**
+- `alarmId text primary key` (DRMS `AlarmId` Guid — natural dedupe key)
+- `drmsEquipmentId text not null references drms_equipment(drms_id)`
+- `receivedTime ts not null`, `fcCode text`, `scCode text`, `description text`, `status text`, `totalCount bigint`, `totalColorCount bigint`, `raw jsonb not null`, `fetchedAt ts not null default now()`
+- `category text` — derived on insert by `classifyAlarm()` (below), so the UI can filter without parsing descriptions
+- Indexes: `(drmsEquipmentId, receivedTime desc)`, `(category, receivedTime desc)`, `(status)`
+
+**`classifyAlarm(fcCode, description)` → `'toner' | 'waste' | 'parts' | 'service' | 'jam' | 'other'`** (pure, in `@mps/core`, tested):
+- `TN-*`, `TS-*` → `toner`
+- `TO-*`, `TR-*` → `waste`
+- `TP-*` → `parts` (imaging units, drums, filters — the description carries which, e.g. `PartsLife(IU_M) 2nd Call`)
+- `SC-*`, `SR-*`, `TV-*` → `service`
+- `JF-*`, `FW-*` → `jam`
+- anything else → `other`
+
+**DRMS client — `listAlarms({ dateFrom, dateTo, pageNo })`:**
+- `GET Equipment/Alarms?dateFrom=&dateTo=&pageNo=`, dates formatted `YYYY-MM-DD HH:mm:ss` UTC.
+- **The API rejects a range longer than 1 day** (verified: HTTP 400 `difference between dateFrom and dateTo exceeded - maximum allowed is 1 day(s)`). The client takes one range and validates it's ≤ 24 h, throwing `HttpError` otherwise; the **job** splits longer catch-ups into per-day calls.
+- Response shape: an array of `{ Id, Alarms: [{ AlarmId, ReceivedTime, FcCode, ScCode, Description, Status, TotalCount, TotalColorCount }] }` — one entry per equipment. Flatten it, keeping the equipment `Id`.
+- Method key for the limiter: `Equipment/Alarms`. Paging is the usual 1,000-per-page rule.
+- Test with fake fetch: the date format sent, flattening, the 1-day guard, paging, 429 behaviour.
+
+**Job `runDrmsAlarms(deps)`:**
+- Window: from the last successful `drms-alarms` run's `startedAt` minus 30 min (overlap), to `now`. First run: last 24 h.
+- Split the window into ≤ 24 h chunks, oldest first, max 7 chunks per run (a longer gap catches up over several runs).
+- Insert with `onConflictDoNothing` on `alarmId`, in chunks of 500. Skip alarms whose equipment isn't in `drms_equipment` (log the count) — the FK would otherwise fail.
+- Stats: `fetched`, `inserted`, `skippedUnknownDevice`, `windows`, and a per-category breakdown.
+- `RateLimitError`/`AuthError` → stop, return `partial` (never retry a 429).
+
+**Queries:**
+- `listDeviceAlarms(db, drmsId, opts?: { limit?: number; categories?: string[] })` → recent alarms for a device, newest first.
+- `getConsumableWarnings(db)` → per device, the latest open-ish `waste` and `parts` alarms in the last 30 days, for the fleet page count "N devices with waste/parts warnings".
+
+**Note on status:** most alarms currently come back as `EquipmentDiscovered` (DRMS won't deliver them to an ERP because the device isn't registered). Store every alarm regardless of status; the UI filters. `ReadyForErpDelivery` is what sub-project 3 will act on.
+
+- [ ] **Step 1:** schema + migration (`drizzle-kit generate --name alarms`), with a test that the same `alarmId` inserted twice doesn't duplicate.
+- [ ] **Step 2:** `classifyAlarm` in `@mps/core` (RED → GREEN, table-driven test over the real codes above).
+- [ ] **Step 3:** DRMS client `listAlarms` with fake-fetch tests (RED → GREEN).
+- [ ] **Step 4:** the job with PGlite tests: window calculation from the last run, day-splitting, dedupe on rerun, unknown-device skip, partial on rate limit.
+- [ ] **Step 5:** wire the queue, schedule (`ALARMS_CRON`, default every 30 min — DRMS refreshes about every 27), queue options (expire 1800 s), handler.
+- [ ] **Step 6:** the two queries + tests.
+- [ ] **Step 7: Manual check** (read-only, real API): run the job once via the send-job script; confirm rows land, categories look right, and a second run inserts 0 new rows.
+- [ ] **Step 8:** `npm test`, typecheck, lint, commit.
+
+
+---
+
 ### Task 4: Web app scaffold, theme, session auth, login
 
 **Files:**
@@ -357,7 +418,7 @@ export function deviceStatusLabel(row: DeviceRow): { text: string; tone: 'ok' | 
 
 **Fleet overview** mirrors the mockup:
 - Header: "Fleet overview", subtitle "N devices · M customers · synced <relative time>", a search box (submits to `/devices?search=`).
-- Four stat cards: **Total devices** (with "X monitored · Y linked" underneath), **Needs toner** (with "A critical · B low"), **Offline** (with "not reported in 24h"), **Open link issues** (with the top type).
+- Four stat cards (plus a fifth once Task 3A lands: **Consumable warnings** — devices with a waste-bottle or parts-life alarm in the last 30 days): **Total devices** (with "X monitored · Y linked" underneath), **Needs toner** (with "A critical · B low"), **Offline** (with "not reported in 24h"), **Open link issues** (with the top type).
 - "Fleet toner health" bar: one stacked bar of healthy/low/critical cartridge counts with a legend, exactly like the mockup.
 - Device table (first 8 rows, "View all devices" link): device name with customer underneath, model with the status line under it, five toner bars (C/M/Y/K and waste-if-present — waste isn't in DRMS, so render the four colours and leave the waste column out), and pages/month (leave "—" for now; volume history arrives with sub-project 2's meter sync).
 - `/devices` is the same table, full width, with search, filter tabs (All / Needs toner / Offline / Not linked) and pagination.
@@ -383,6 +444,7 @@ Both pages are server components: `const db = getDb()` then the Task 2 queries. 
 - **Meters card:** Black, Colour and Scan readings from the latest snapshot, plus the reading date.
 - **Counter history:** a table of the last 30 snapshots for the three meter counters (date, black, colour, scan, plus deltas). A chart can come later; the mockup's bar chart needs monthly aggregates from sub-project 2.
 - **Right column:** "Links" card (Vantage equipment id, asset number, customer, contract ref, link method, linked date, with a link to the issues queue if unlinked); "Record" card (DRMS id, ERP id, CSRC id, communication type, registration and initial connection times, last counter time); "Raw data" collapsible showing the DRMS and Vantage `raw` JSON (admins only).
+- **Consumables & alarms card:** the device's recent alarms from `listDeviceAlarms` (Task 3A), grouped by category with the newest first — waste toner bottle, parts life (imaging unit, drum, filter) and toner events. Show code, description, date and status. Hide `jam` and `service` categories behind a "Show all" toggle (the user doesn't want them by default).
 - If the device has an open offline alert, show a banner at the top with "Not reported since …" and an acknowledge button (the action lives in Task 8; import it).
 
 - [ ] **Step 1:** build the page from the Task 2 queries (`getDevice`, `getLatestCounters`, `getCounterHistory`).
@@ -535,6 +597,6 @@ volumes: { pgdata: {} }
    - `/issues`: linking one device by hand resolves its issue, and a later `link-run` doesn't undo it
    - `/alerts` lists devices that have stopped reporting, and acknowledging one moves it
    - `/admin`: create an operator, set a counter category, trigger a job and see the run appear
-3. Worker: `evaluateOfflineAlerts` runs as part of drms-pull, which is now hourly. `sync_runs.stats` shows `alertsOpened` / `alertsCleared`.
+3. Worker: `evaluateOfflineAlerts` runs as part of drms-pull, which is now hourly. `drms-alarms` runs every 30 min, dedupes on rerun, and the device page shows waste/parts/toner alarms. `sync_runs.stats` shows `alertsOpened` / `alertsCleared`.
 4. `npm run build -w @mps/web` succeeds.
 5. Deploy on the server through Portainer using `docs/DEPLOY.md`; the first sync is triggered from Admin → Jobs.
