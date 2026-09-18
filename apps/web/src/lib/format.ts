@@ -70,6 +70,24 @@ export function formatRelative(value: Date | string | null | undefined, now: Dat
   return rtf.format(-Math.floor(seconds / chosen[1]), chosen[0]);
 }
 
+/**
+ * How long a gap is, in the coarsest unit that is still honest: `31 hours`, `6 days`.
+ *
+ * Alerts open at 24 hours and the interesting question is "one missed collection, or three weeks?",
+ * so hours stay readable up to two days and everything past that rounds to days.
+ */
+export function formatGap(from: Date | string | null | undefined, to: Date = new Date()): string {
+  if (from == null) return '—';
+  const date = from instanceof Date ? from : new Date(from);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  const hours = Math.floor((to.getTime() - date.getTime()) / 3_600_000);
+  if (hours < 1) return 'under an hour';
+  if (hours < 48) return `${hours} ${pluralise(hours, 'hour')}`;
+  const days = Math.floor(hours / 24);
+  return `${days} ${pluralise(days, 'day')}`;
+}
+
 /** Thousands-separated integer, e.g. `12,480`. `—` for null. */
 export function formatNumber(value: number | string | null | undefined): string {
   if (value == null) return '—';

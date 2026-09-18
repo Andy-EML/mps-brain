@@ -1,4 +1,5 @@
 export * from './admin';
+export * from './alert-actions';
 export * from './alerts';
 export * from './device';
 export * from './devices';

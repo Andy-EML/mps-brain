@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { counterNames, counterSnapshots, counterValues, deviceAlarms, deviceAlerts, deviceLinks, drmsEquipment, linkIssues } from '../schema';
 import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '../testing';
 import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './admin';
-import { listAlerts } from './alerts';
+import { countAlerts, listAlerts } from './alerts';
 import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms } from './device';
 import { listDevices } from './devices';
 import { getConsumableWarnings, getFleetSummary } from './fleet';
@@ -254,6 +254,37 @@ describe('queries', () => {
       expect(alerts).toHaveLength(2);
       const cleared = alerts.find((a) => a.type === 'toner-low');
       expect(cleared?.acknowledgedByName).toBe(f.user.username);
+      expect(cleared?.clearedAt).toBeInstanceOf(Date);
+    });
+
+    describe('status, as the /alerts tabs use it', () => {
+      // An alert somebody has taken on, but which the device has not answered by reporting again.
+      beforeEach(async () => {
+        await t.db
+          .update(deviceAlerts)
+          .set({ acknowledgedBy: f.user.id, acknowledgedAt: FIXED_NOW })
+          .where(eq(deviceAlerts.id, f.alerts.open));
+      });
+
+      it('splits uncleared alerts into open and acknowledged', async () => {
+        expect(await listAlerts(t.db, { status: 'open' })).toHaveLength(0);
+
+        const acknowledged = await listAlerts(t.db, { status: 'acknowledged' });
+        expect(acknowledged).toHaveLength(1);
+        expect(acknowledged[0]).toMatchObject({ id: f.alerts.open, clearedAt: null });
+        expect(acknowledged[0]?.acknowledgedByName).toBe(f.user.username);
+      });
+
+      it('cleared returns the cleared alert, acknowledged or not', async () => {
+        const cleared = await listAlerts(t.db, { status: 'cleared' });
+        expect(cleared).toHaveLength(1);
+        expect(cleared[0]?.id).toBe(f.alerts.cleared);
+      });
+
+      it('countAlerts counts all three states in one pass', async () => {
+        expect(await countAlerts(t.db)).toEqual({ open: 0, acknowledged: 1, cleared: 1 });
+        expect(await countAlerts(t.db, { drmsId: f.drms.online })).toEqual({ open: 0, acknowledged: 0, cleared: 1 });
+      });
     });
   });
 

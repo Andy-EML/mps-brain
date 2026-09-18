@@ -8,6 +8,7 @@ import {
   METER_NAMES,
   type AlertRow,
 } from '@mps/db/queries';
+import { acknowledgeAlertAction } from '@/app/(app)/alerts/actions';
 import { AlarmGroups } from '@/components/alarm-groups';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { CounterTable } from '@/components/counter-table';
@@ -44,7 +45,7 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** The "Not reported since …" banner. The acknowledge action itself is Task 8's. */
+/** The "Not reported since …" banner, with Task 8's acknowledge action wired into it. */
 function OfflineBanner({ alert }: { alert: AlertRow }) {
   const since = alert.lastSeenReportAt ?? alert.firstDetectedAt;
   return (
@@ -61,12 +62,18 @@ function OfflineBanner({ alert }: { alert: AlertRow }) {
         </p>
       </div>
       {alert.acknowledgedAt ? null : (
-        <Link
-          href="/alerts"
-          className="shrink-0 rounded-lg border border-line bg-card px-3.5 py-2 text-sm font-medium hover:bg-muted"
-        >
-          Acknowledge
-        </Link>
+        // Acknowledging in place, rather than sending the operator to /alerts to find the row they
+        // are already looking at. A plain form, so it works without JavaScript.
+        <form action={acknowledgeAlertAction} className="shrink-0">
+          <input type="hidden" name="alertId" value={alert.id} />
+          <input type="hidden" name="drmsId" value={alert.drmsId} />
+          <button
+            type="submit"
+            className="rounded-lg border border-line bg-card px-3.5 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Acknowledge
+          </button>
+        </form>
       )}
     </div>
   );
