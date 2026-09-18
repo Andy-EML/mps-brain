@@ -1,0 +1,163 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/*
+ * The UI is light-only (the mockups are light), so `dark:` utilities that ship inside the
+ * shadcn components must never fire from the OS preference. Scoping the variant to a `.dark`
+ * ancestor — which we never render — keeps them inert.
+ */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * MPS Dashboard theme.
+ * Brand tokens come first; the shadcn/ui variables below are derived from them so every
+ * component picks the palette up automatically. Values are from Global Constraints.
+ */
+:root {
+  /* Surfaces */
+  --page: #f7f8f8;
+  --surface: #ffffff;
+  --line: #e7e9e9;
+
+  /* Text */
+  --text: #1a1d1d;
+  --text-muted: #6b7280;
+
+  /* Brand (the "accent" green from Global Constraints) */
+  --brand: #0f6b5c;
+  --brand-contrast: #ffffff;
+  /* Pale green: active nav item, quiet buttons, avatar chip. */
+  --brand-soft: #e7f0ee;
+
+  /* Toner / consumable colours */
+  --toner-cyan: #29abe2;
+  --toner-magenta: #e5177b;
+  --toner-yellow: #f5c400;
+  --toner-black: #111111;
+  --toner-waste: #9aa0a6;
+
+  /* Status */
+  --ok: #16a34a;
+  --warn: #d97706;
+  --critical: #dc2626;
+
+  /* Shape */
+  --radius: 0.75rem;
+
+  /* ---- shadcn/ui variables, mapped onto the brand palette ---- */
+  --background: var(--page);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-contrast);
+  --secondary: #eef0f0;
+  --secondary-foreground: var(--text);
+  --muted: #f1f2f2;
+  --muted-foreground: var(--text-muted);
+  --accent: var(--brand-soft);
+  --accent-foreground: var(--brand);
+  --destructive: var(--critical);
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--brand);
+  --chart-1: var(--brand);
+  --chart-2: #4d9285;
+  --chart-3: #8bb9b1;
+  --chart-4: #c3d9d5;
+  --chart-5: #d7dbdb;
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-contrast);
+  --sidebar-accent: var(--brand-soft);
+  --sidebar-accent-foreground: var(--brand);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--brand);
+}
+
+@theme inline {
+  /* Brand tokens as Tailwind utilities: bg-page, text-critical, bg-toner-cyan, ... */
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-toner-cyan: var(--toner-cyan);
+  --color-toner-magenta: var(--toner-magenta);
+  --color-toner-yellow: var(--toner-yellow);
+  --color-toner-black: var(--toner-black);
+  --color-toner-waste: var(--toner-waste);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-critical: var(--critical);
+
+  /* shadcn/ui tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-geist-sans);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* The mockup's content column: `max-w-shell`. */
+  --container-shell: 1400px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    background: var(--page);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Tabular figures wherever numbers are compared down a column. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
