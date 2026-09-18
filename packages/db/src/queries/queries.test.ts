@@ -62,6 +62,10 @@ describe('queries', () => {
       await t.db.insert(drmsEquipment).values({
         drmsId: 'LOW1',
         serial: 'SNLOW0001',
+        // A colour model, flagged the way the pull flags it: the pivot hides the colour channels
+        // of a mono device, and this test is about the cartridges, not about mono/colour.
+        modelName: 'bizhub C301i',
+        isColour: true,
         status: 'Registered',
         customerName: 'Low Toner Co',
         raw: {},
@@ -183,6 +187,10 @@ describe('queries', () => {
       await t.db.insert(drmsEquipment).values({
         drmsId: 'LOW1',
         serial: 'SNLOW0001',
+        // A colour model, flagged the way the pull flags it: the pivot hides the colour channels
+        // of a mono device, and this test is about the cartridges, not about mono/colour.
+        modelName: 'bizhub C301i',
+        isColour: true,
         status: 'Registered',
         customerName: 'Low Toner Co',
         raw: {},
@@ -199,6 +207,103 @@ describe('queries', () => {
       const health = await getTonerHealth(t.db);
       // D1's 4 cartridges + LOW1's 2 (both critical) = 6 cartridges across 2 devices.
       expect(health).toEqual({ healthy: 2, low: 1, critical: 3, cartridges: 6, devices: 2 });
+    });
+  });
+
+  describe('mono devices', () => {
+    /**
+     * A device with one counter snapshot, seeded the way `runDrmsPull` would leave it: `isColour`
+     * comes off the model name. Half the real fleet is mono, and DRMS still occasionally reports a
+     * colour toner level for one of them (a shared counter definition on the engine), which is
+     * exactly the case these tests are about.
+     */
+    async function seedWithLevels(
+      drmsId: string,
+      device: { modelName: string; isColour: boolean },
+      levels: Record<string, number>,
+    ) {
+      await t.db.insert(drmsEquipment).values({
+        drmsId,
+        serial: `SN-${drmsId}`,
+        status: 'Registered',
+        customerName: `${drmsId} Ltd`,
+        lastCounterReceivedTime: new Date(),
+        ...device,
+        raw: {},
+      });
+      const [snap] = await t.db
+        .insert(counterSnapshots)
+        .values({ drmsEquipmentId: drmsId, counterId: `${drmsId}-c1`, receivedTime: new Date(), raw: {} })
+        .returning({ id: counterSnapshots.id });
+      await t.db
+        .insert(counterValues)
+        .values(Object.entries(levels).map(([name, value]) => ({ snapshotId: snap!.id, name, value })));
+    }
+
+    const MONO = { modelName: 'bizhub 301i', isColour: false };
+    const COLOUR = { modelName: 'bizhub C301i', isColour: true };
+
+    it('returns no colour toner levels for a mono device, whatever the snapshot holds', async () => {
+      await seedWithLevels('MONO1', MONO, { BlackTonerLevel: 50, CyanTonerLevel: 0 });
+
+      const { rows } = await listDevices(t.db);
+      expect(rows.find((r) => r.drmsId === 'MONO1')?.toner).toEqual({
+        black: 50,
+        cyan: null,
+        magenta: null,
+        yellow: null,
+      });
+    });
+
+    it('does not count a colour cartridge a mono device cannot have', async () => {
+      await seedWithLevels('MONO1', MONO, { BlackTonerLevel: 50, CyanTonerLevel: 0 });
+
+      // The fixture's D1 contributes its usual 4 cartridges; MONO1 adds one (black), not two.
+      const health = await getTonerHealth(t.db);
+      expect(health).toEqual({ healthy: 3, low: 1, critical: 1, cartridges: 5, devices: 2 });
+    });
+
+    it('leaves a mono device out of the needs-toner set even at 0% cyan', async () => {
+      await seedWithLevels('MONO1', MONO, { BlackTonerLevel: 50, CyanTonerLevel: 0 });
+
+      const summary = await getFleetSummary(t.db);
+      // Only the fixture's D1 (black 3%) needs toner; ordering a cyan cartridge for a mono device
+      // is the mistake this whole flag exists to prevent.
+      expect(summary.needsToner).toBe(1);
+      expect(summary.criticalToner).toBe(1);
+      const { rows } = await listDevices(t.db, { filter: 'needs-toner' });
+      expect(rows.map((r) => r.drmsId)).toEqual([f.drms.online]);
+    });
+
+    it('still reports a mono device as critical on its black cartridge', async () => {
+      await seedWithLevels('MONO1', MONO, { BlackTonerLevel: 4, CyanTonerLevel: 90 });
+
+      const summary = await getFleetSummary(t.db);
+      expect(summary.needsToner).toBe(2);
+      expect(summary.criticalToner).toBe(2);
+      const { rows } = await listDevices(t.db, { filter: 'needs-toner' });
+      expect(rows.map((r) => r.drmsId).sort()).toEqual(['MONO1', f.drms.online].sort());
+    });
+
+    it('leaves a colour device with the same readings untouched', async () => {
+      await seedWithLevels('COL1', COLOUR, { BlackTonerLevel: 50, CyanTonerLevel: 0 });
+
+      const { rows } = await listDevices(t.db);
+      expect(rows.find((r) => r.drmsId === 'COL1')?.toner).toEqual({
+        black: 50,
+        cyan: 0,
+        magenta: null,
+        yellow: null,
+      });
+      const summary = await getFleetSummary(t.db);
+      expect(summary.needsToner).toBe(2);
+    });
+
+    it('keeps the meters of a mono device, which still counts pages', async () => {
+      await seedWithLevels('MONO1', MONO, { BlackTonerLevel: 50, 'Black:Total': 14_000, 'Scanner/FAX:Scan': 12 });
+
+      const { rows } = await listDevices(t.db);
+      expect(rows.find((r) => r.drmsId === 'MONO1')?.meters).toEqual({ black: 14_000, colour: null, scan: 12 });
     });
   });
 
@@ -277,6 +382,8 @@ describe('queries', () => {
       await t.db.insert(drmsEquipment).values({
         drmsId: 'A0-HEALTHY',
         serial: 'SNHEALTHY1',
+        modelName: 'bizhub C301i',
+        isColour: true,
         status: 'Registered',
         customerName: 'Healthy Co',
         lastCounterReceivedTime: new Date(),

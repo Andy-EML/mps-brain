@@ -1,6 +1,6 @@
 import { eq, max, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { counterSnapshots, counterValues, deviceAlarms } from '../schema';
+import { counterSnapshots, counterValues, deviceAlarms, drmsEquipment } from '../schema';
 
 /** Counter names this project cares about (see CLAUDE.md / global-constraints for the real values). */
 export const TONER_NAMES = {
@@ -38,8 +38,28 @@ function pivot(name: string) {
 }
 
 /**
+ * A colour toner pivot that only reports on a device that has that cartridge.
+ *
+ * Half the fleet is mono, and DRMS still sends the odd Cyan/Magenta/Yellow level for one of them —
+ * the engines share counter definitions, so a `bizhub 301i` can report a colour level of 0 it has
+ * no cartridge for. Read literally that is an empty cartridge, which put mono devices in "Needs
+ * toner", drew three empty bars on their row and inflated the fleet cartridge count.
+ *
+ * Nulling them here rather than in each caller means every consumer of this subquery — the fleet
+ * summary's needsToner/criticalToner, `getTonerHealth`, the devices list and its `needs-toner`
+ * filter and urgency ordering — is correct without knowing the rule, because "no reading" is a
+ * case they all already handle.
+ */
+function colourPivot(name: string) {
+  return sql<number | null>`case when ${drmsEquipment.isColour} then ${pivot(name)} end`;
+}
+
+/**
  * Subquery: one row per device with its latest toner + meter readings pivoted into columns.
  * `leftJoin` this on `drmsId` so devices without any snapshot still appear (all columns null).
+ *
+ * Joins `drms_equipment` only for `is_colour`; the join is on the snapshot's device, which is a
+ * foreign key into that table, so it can neither drop nor multiply rows.
  */
 export function counterPivotSubquery(db: Db) {
   const latest = latestSnapshotSubquery(db);
@@ -47,16 +67,22 @@ export function counterPivotSubquery(db: Db) {
     .select({
       drmsId: latest.drmsId,
       black: pivot(TONER_NAMES.black).as('black'),
-      cyan: pivot(TONER_NAMES.cyan).as('cyan'),
-      magenta: pivot(TONER_NAMES.magenta).as('magenta'),
-      yellow: pivot(TONER_NAMES.yellow).as('yellow'),
+      cyan: colourPivot(TONER_NAMES.cyan).as('cyan'),
+      magenta: colourPivot(TONER_NAMES.magenta).as('magenta'),
+      yellow: colourPivot(TONER_NAMES.yellow).as('yellow'),
+      // The meters are left alone: `Full Color:Total` is a page count, not a cartridge, and a mono
+      // device simply never reports one. Hiding the column is the device page's job (it drops the
+      // Colour tile and history column for a mono device) rather than the query's.
       meterBlack: pivot(METER_NAMES.black).as('meter_black'),
       meterColour: pivot(METER_NAMES.colour).as('meter_colour'),
       meterScan: pivot(METER_NAMES.scan).as('meter_scan'),
     })
     .from(latest)
+    .innerJoin(drmsEquipment, eq(drmsEquipment.drmsId, latest.drmsId))
     .leftJoin(counterValues, eq(counterValues.snapshotId, latest.snapshotId))
-    .groupBy(latest.drmsId)
+    // `is_colour` is grouped, not aggregated: it is one value per device, and the colour pivots
+    // above read it outside their own `max(...)`.
+    .groupBy(latest.drmsId, drmsEquipment.isColour)
     .as('counter_pivot');
 }
 
