@@ -9,8 +9,9 @@ export interface AlertEvaluation {
   cleared: number;
   open: number;
   /**
-   * True when the fleet-wide collection-outage guard held: every device that has ever reported
-   * was stale, so no new per-device alert was opened. Clearing still ran.
+   * True when the fleet-wide collection-outage guard held: a large enough share of the devices
+   * that have ever reported was stale (`COLLECTION_OUTAGE_STALE_RATIO`), so no new per-device
+   * alert was opened. Clearing still ran.
    */
   skippedDueToOutage: boolean;
 }
@@ -22,10 +23,11 @@ export interface AlertEvaluation {
  * `Deleted` (tracked separately), are left untouched either way.
  *
  * Guarded by `isCollectionOutage`: DRMS collects counters roughly once a day for the whole fleet,
- * so when *every* reporting device is stale the cause is the collection, not the devices, and one
- * alert per device is pure noise (2026-09-18: 35 devices alerted at once while CSRC showed them
- * all online). During an outage nothing new opens, alerts already open stay open, and a device
- * that reports again still clears. `stale ∪ fresh` is exactly the candidate set, so the tally
+ * so once the stale share of the reporting fleet reaches `COLLECTION_OUTAGE_STALE_RATIO` the cause
+ * is the collection, not the devices, and one alert per device is pure noise (2026-09-18: 35
+ * devices alerted at once while CSRC showed them all online, and again 30 of 35 the next day when
+ * collection resumed for only a handful). During an outage nothing new opens, alerts already open
+ * stay open, and a device that reports again still clears. `stale ∪ fresh` is exactly the candidate set, so the tally
  * needs no extra query and matches `getCollectionStatus` by construction.
  */
 export async function evaluateOfflineAlerts(db: Db, opts: { now: Date; thresholdHours: number }): Promise<AlertEvaluation> {

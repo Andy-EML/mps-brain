@@ -34,7 +34,8 @@ export function CollectionOutageBanner({ status, className }: CollectionOutageBa
       <div className="min-w-0">
         <p className="text-[15px] font-medium text-warn">
           Meter readings are behind — only {formatNumber(collected)} of {formatNumber(expecting)}{' '}
-          {pluralise(expecting, 'device')} have reported in the last 24 hours
+          {pluralise(expecting, 'device')} {expecting === 1 ? 'has' : 'have'} reported in the last 24
+          hours
         </p>
         <p className="mt-1 text-[13px] text-muted-foreground">
           DRMS collects counters about once a day; per-device alerts are paused until collection catches up. Newest
