@@ -13,6 +13,8 @@ Built as 5 sub-projects. Each one gets a spec in `docs/superpowers/specs/` and a
 4. Site stock tracking
 5. Notifications
 
+**Resuming work? Read `docs/HANDOFF.md` first.** It has the latest state, next steps and the DRMS registration batch process.
+
 Read the current spec and plan before changing anything. Plans use `- [ ]` checkboxes, so tick them off as tasks land.
 
 API reference docs (not in this repo): `F:\dev\API Docs Etc` (Vantage docs, DRMS3 spec PDF, the dealer's DRMS docx). Its `CLAUDE.md` explains how to extract the PDF and docx text. **Never read or copy `API Keys.txt`, or the JWT inside the docx.**
@@ -47,7 +49,7 @@ apps/worker       pg-boss schedules → jobs in src/jobs/*, each wrapped in with
 apps/web          Next.js UI (Foundation Part 2)
 ```
 
-Data flow: `vantage-pull` and `drms-pull` upsert raw records, then each queues `link-run` (+120 s), which computes links and issues in `@mps/core` and persists them. `drms-snapshot` stores `LatestCounters` for each Registered device, deduped on `(device, CounterId)`. Every job writes a `sync_runs` row.
+Data flow: `vantage-pull` and `drms-pull` upsert raw records, then each queues `link-run` (+120 s), which computes links and issues in `@mps/core` and persists them. `drms-snapshot` stores `LatestCounters` for each Registered or Discovered device (most of the fleet is Discovered; there is no production DRMS access, KM controls it), deduped on `(device, CounterId)`. Every job writes a `sync_runs` row.
 
 Job functions take injected deps (`db`, the client, `now`) and return a `JobResult`. Test them against `createTestDb()` with fake clients, never live APIs.
 
@@ -60,9 +62,9 @@ Job functions take injected deps (`db`, the client, `now`) and return a `JobResu
 - Vantage: send `api-version` on **every** call. Soft deletes aren't filtered automatically, so the client adds `deleteddate eq null`. Tokens last 30 min, and the client reissues when less than 5 min is left.
 - Vantage field casing varies (docs vs samples), so read API records with `getField/getString/getNumber` (case-insensitive).
 - **Manual links are never overwritten** by auto-linking. Link issues are keyed by `type|drmsId|vantageId`: `ignored` stays ignored, and auto issues resolve themselves.
-- What DRMS `ErpId` and `CustomerErpId` hold is set by config (`LINK_ERP_ID_FIELD`, `LINK_CUSTOMER_ERP_FIELD`). Phase 0 findings go in the spec.
+- Phase 0 (see spec): DRMS `ErpId` = Vantage `Equipment.Id` when set (mostly empty or a copy of the serial, so serial is the main key). `CustomerErpId` is a DRMS-side `CUST
 - Keep the full API payload in `raw jsonb` on synced rows, since later sub-projects need fields we haven't modelled.
-- Dealer fixed values (for later registration work): `GB500`, `OFC580`, COM servers `COM_GB501/502/503`, DCA `DEFCNTCOM_GB500`.
+- Dealer fixed values (for later registration work): `GB500`, `OFC580`, COM servers in use: **`COM_GB502` and `COM_GB503`** (not GB501). Almost every device is configured by hand to connect straight to CSRC; a handful go through the DCA (`DEFCNTCOM_GB500`).
 - Secrets only come from env (`.env` locally, Portainer stack env in prod). Never log tokens, and never commit `.env` or `fixtures/raw/`.
 
 ## Deploy target

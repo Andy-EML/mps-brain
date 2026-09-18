@@ -1,0 +1,21 @@
+{
+  "name": "@mps/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mps/core": "*",
+    "@mps/db": "*",
+    "@mps/drms": "*",
+    "@mps/queue": "*",
+    "@mps/vantage": "*",
+    "drizzle-orm": "^0.44.7",
+    "tsx": "^4.23.13",
+    "zod": "^4.6.5"
+  }
+}

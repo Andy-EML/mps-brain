@@ -151,3 +151,71 @@ Server-rendered tables (no heavy client state). Tailwind + shadcn/ui.
 - `ErpId` / `CustomerErpId` field meaning → config values `LINK_ERP_ID_FIELD`, `LINK_CUSTOMER_ERP_FIELD`
 - DRMS `/Customer` may be client-scoped → fallback: derive customers from equipment `CustomerErpId`/`CustomerName` (already the primary path)
 - Exact supply counter names → handled by the `counter_names` catalogue, no code change needed
+
+## Phase 0 findings (2026-09-17)
+
+- DRMS pageNo first page: **1**, not 0. `Equipment?pageNo=0` returned HTTP 500; `Equipment?pageNo=1` returned HTTP 200 with 837 records. Paging must start at 1.
+- DRMS equipment status counts (page 1, 837 total devices): `Discovered: 802`, `Registered: 35`. No other statuses present on this page.
+- DRMS `ErpId` holds: **other/mixed — flag as concern, does not cleanly match either listed option.** Of 837 equipment records, 508 have an empty `ErpId`. Of the 329 non-empty: 324 equal that same record's `SerialNumber` verbatim (all across mixed statuses — looks like a default/placeholder value, not an ERP link), and only 5 are short numeric strings (3–5 digits, e.g. `875`, `10243`, `215`, `37262`, `37257`) — all 5 restricted to `Registered`-status devices. Those 5 numeric values are the right shape to be a Vantage `Equipment.Id` (samples elsewhere in the run showed Vantage `Equipment.Id` values of 23, 24, 224, 331, 867 for unrelated serials), but this was **not directly confirmed** — the script's serial-number cross-check sampled the first 5 page-1 rows, which happened to be `Discovered`/empty-`ErpId` devices, not the 5 numeric-`ErpId` `Registered` ones. → `LINK_ERP_ID_FIELD=inconclusive, likely Vantage Id only for Registered devices, needs a targeted re-check next session`.
+- DRMS `CustomerErpId` holds: **other — flag as concern, does not match either listed option.** Examples (patterns, not real values): dealer-issued codes of the form `CUST` + 6 digits. These do **not** match Vantage `Customer.Id` (small integers, e.g. 161, 27, 295 in the sample) or Vantage `Customer.Reference` (short mnemonic codes, e.g. one 6-char code and one with a `/1` suffix in the sample). Cross-checked against DRMS's own `/Customer` list: the same `CUST######` value appears as that endpoint's `ErpId` field for the matching customer — so `CustomerErpId` on Equipment is DRMS's internal/dealer customer code, sourced from DRMS `Customer.ErpId`, and is **not populated with a Vantage identifier at all** in this QA data. → `LINK_CUSTOMER_ERP_FIELD=inconclusive, DRMS-side code not currently populated with a Vantage Id/Reference — customer linking will need a different key (e.g. CustomerName match) until this is populated correctly`.
+- DRMS `/Customer` returns: **end customers**, not just the single dealer/client. Page 1 returned 245 records, all with unique `ErpId` values and all with a non-empty `CsrcIds` array. One sampled `CustomerErpId` from the Equipment list was confirmed present among these 245 `ErpId` values, confirming the two endpoints reference the same customer codes.
+- Counter names seen (67 distinct names across 5 sampled `Registered` devices' `LatestCounters`): includes `BlackTonerLevel`, `CyanTonerLevel`, `MagentaTonerLevel`, `YellowTonerLevel`, plus paper-size/mode counters (`Total`, `Copy:*`, `Printer:*`, `Scanner/FAX:*`, `Discharge*`, `Billing total*`, etc.). **No waste-toner counter name was observed** in this 5-device sample — none of the 67 names contain "Waste". This may be model-dependent (only some MFPs report a waste-toner counter) or may need a larger sample; treat as inconclusive rather than "absent from the API."
+- DRMS token exp: `2100-01-14T23:00:00.000Z` — effectively non-expiring QA token, no near-term rotation concern for this spike.
+- Vantage list response shape: **`{"@odata.context", "value", ["@odata.count"]}`, never a bare array** — confirmed on `customer?$top=5`, `Equipment?$top=5&$expand=...`, and `Equipment?$top=1000&$count=true`. Client code must always unwrap `.value`.
+- Vantage server cap on `$top`: **none observed at N=1000** — requesting `$top=1000` returned exactly 1000 rows (of `@odata.count`=1843 total available), i.e. the server honored the requested page size up to 1000; no evidence of a lower forced cap. Not tested above 1000.
+- Vantage Equipment customer FK: **both** — `Equipment` has a scalar `CustomerId` plus a `$expand=Customer` navigation property exposing `Customer.Id` and `Customer.Reference`. In the 5 serial-matched samples, 2 records had `CustomerId`/`Customer` undefined (no customer attached on those particular Vantage equipment rows) and 3 had it populated normally.
+- Extra: `GET $metadata?api-version=1.22` returned **HTTP 400** (`Error.Code: "UnsupportedApiVersion"` — the docs' example version isn't accepted on this endpoint on this tenant). Not retried (single-run constraint); a later phase should try `api-version=1.19` (the value used elsewhere in the docs) or query `$metadata` without assuming 1.22 works everywhere.
+
+### Concerns for the controller
+1. Neither `ErpId` nor `CustomerErpId` matched the three listed candidate meanings cleanly — both need a follow-up targeted check (a handful of extra read-only Vantage GETs against the 5 numeric-`ErpId` `Registered` serials) before `LINK_ERP_ID_FIELD`/`LINK_CUSTOMER_ERP_FIELD` are finalized. This spike deliberately did not make those extra calls, to stay within "run once" scope; recommend a short dedicated follow-up task.
+2. `CustomerErpId` appears to hold a DRMS-side code that is not currently populated with any Vantage identifier for this dealer's QA data — customer-side linking may need to fall back to `CustomerName` matching (already noted as the primary path in "Open items" above) rather than `CustomerErpId`.
+3. Waste-toner counter name wasn't observed in the 5-device sample; don't hardcode its absence into `counter_names` seed data.
+
+## Phase 0 follow-up (2026-09-17)
+
+Targeted, read-only follow-up (`scripts/phase0-probe2.ts`) resolving the four concerns above, run once against the same QA credentials. All 5 of the `Registered`-status devices with a numeric DRMS `ErpId` (identified from the already-saved `fixtures/raw/drms-equipment-page1.json`, no new DRMS list call) and up to 5 distinct `CUST######` codes were probed against Vantage.
+
+- **Check 1 — numeric `ErpId`**: **`ErpId` = Vantage `Equipment.Id`, confirmed 5/5.** For all 5 sampled devices, `GET Equipment(<ErpId>)?$expand=Customer` returned 200 with a normalised `SerialNumber` match to the DRMS record, and an independent `GET Equipment?$filter=serialnumber eq '<serial>'` lookup returned the identical `Id`. `AssetNumber` was `null` on all 5 Vantage rows, so `ErpId` cannot be `AssetNumber` — it is the Vantage `Equipment.Id`. → **`LINK_ERP_ID_FIELD=VantageEquipmentId`** (only reliable for `Registered`-status devices; `Discovered`/other statuses mostly carry an empty `ErpId` or a `SerialNumber`-placeholder, per the original spike).
+- **Check 2 — customer codes**: **`CustomerErpId` does NOT map to any queried Vantage customer field — confirmed, not just suspected.** `customer?$filter=externalaccountnumber eq '<code>'` and `customer?$filter=reference eq '<code>'` both returned HTTP 200 with **0 matches** for all 5 sampled `CUST######` codes (no 400s). Check 2b cross-checked the other direction too: for the same 5 devices from Check 1, the Vantage `Customer` expanded on the *matched* equipment row (found via the confirmed `ErpId`→`Id` link) had its `Reference` and `ExternalAccountNumber` compared against that device's DRMS `CustomerErpId` — **0/5 matched** on either field. → **`LINK_CUSTOMER_ERP_FIELD=none — DRMS `CustomerErpId` has no confirmed counterpart among Vantage `Customer.Id`, `.Reference`, or `.ExternalAccountNumber` in this QA data; customer linking must use `CustomerName` matching (already the documented primary/fallback path), not `CustomerErpId`.**
+- **Check 3 — `$metadata` access**: **Resolved — the earlier CLAUDE.md guidance for this endpoint doesn't hold on this tenant.** `GET $metadata?api-version=1.19` (query param) → HTTP 400. `GET $metadata` with `api-version: 1.22` sent as a **header** (no query param) → HTTP 200 (1.5 MB), successfully retrieved and parsed. So `$metadata` on this tenant needs `api-version` as a header like every other endpoint, not a query param as the docs/CLAUDE.md state — flagging this as a documentation correction for later phases. From the retrieved schema: `Equipment` has 79 properties (`Customer` link fields: `CustomerId` scalar + `Customer` nav property, confirming the earlier spike's finding); interesting `Equipment` fields: `CollectionMethod`, `CollectionSchemaId`, `CollectionSchema`, `IsRemotelyMonitored`, `RemoteIP`; `Customer` has 170 properties, and of the Remote/Dca/Collection/External set, only `ExternalAccountNumber` exists on `Customer` (also checked directly in Check 2, with 0 matches).
+- **Check 4 — Discovered-device counters**: **Resolved — `LatestCounters` is unavailable for `Discovered` devices, confirmed 3/3.** `GET Equipment/<Id>/LatestCounters` returned **HTTP 404** (not 200 with empty data) for all 3 sampled `Discovered`-status devices. → **Toner/meter automation can only cover `Registered` devices; `Discovered`/`PreRegistered` devices must be excluded from `drms.snapshot`/consumable-alarm polling until they reach `Registered` status** (consistent with CLAUDE.md's note that a device only becomes `Registered` after the first CSRC connection).
+
+### Follow-up conclusions
+- `LINK_ERP_ID_FIELD` = **Vantage `Equipment.Id`** (confirmed, `Registered` devices only).
+- Customer-code mapping = **no confirmed Vantage field for `CustomerErpId`** (checked `Customer.Id`, `.Reference`, `.ExternalAccountNumber` — all 0/5); fall back to `CustomerName` matching.
+- `$metadata` access = **works with `api-version` as a request header, not a query param** (contrary to the existing CLAUDE.md guidance for that one endpoint — worth a doc correction).
+- Discovered-device counters = **`LatestCounters` returns 404 for `Discovered` devices; only `Registered` devices have counter data available.**
+
+## Added requirements (2026-09-17, from user)
+
+### Offline alert on the dashboard (Foundation Part 2)
+- The dashboard shows an alert when a device that **was previously reporting** has not reported for **more than 24 hours**.
+- Signal: DRMS `LastCounterReceivedTime` (fallback: `LastCounterBackboneReceivedTime`) on `drms_equipment`. Only `Registered` devices have it. `Discovered` devices have no heartbeat field (only `LastAlarmReceivedTime`, which is event-driven and missing on about a third of them).
+- "Previously active" means the device has had a non-null `LastCounterReceivedTime` at least once. Devices that never reported don't alert. They show in a separate "never reported" list.
+- Freshness: `drms-pull` currently runs once a day. For a 24-hour alert it must run more often (e.g. hourly: one `GET Equipment` call per page, well under the rate limits). Add an hourly schedule for `drms-pull` in Part 2.
+- Caveat: DRMS collects counters once a night, so a device that misses one collection shows as roughly 24 to 48 hours stale. The alert threshold is configurable (`OFFLINE_ALERT_HOURS`, default 24). Alerts are cleared automatically when the device reports again, and can be acknowledged in the UI.
+- Store state so alerts aren't recomputed noisily: `device_alerts` (drms_equipment_id, type `offline`, first_detected_at, last_seen_report_at, acknowledged_by/at, cleared_at).
+
+### Registration batches
+- Devices flagged as a customer mismatch are usually machines moved to a new location or customer. They are still active, so they're registered with the customer DRMS holds and listed for KM.
+- Devices that haven't checked in for a while are skipped.
+
+### Meter mapping (found 2026-09-17, needed by sub-project 2)
+- Vantage RMB equipment uses `CollectionSchemaId = 3` ("Konica/Olivetti CS Remote"). Each Vantage `Meter` has `Type` (Black=1, Colour=2, Scan=3) and `Column` (a `MeterCollectionSchemaColumn`). **The column names are exactly the DRMS `LatestCounters` counter names**:
+  - Black ← `Black:Total`
+  - Colour ← `Full Color:Total`
+  - Scan ← `Scanner/FAX:Scan`
+- Totals confirmed by user and verified on 4 sampled devices (sums exact):
+  - `Full Color:Total` [10] = `Copy:Full Color` [1] + `Printer:Full Color` [2] + `Scanner/FAX:Print(Full Color)` [3]
+  - `Black:Total` [11] = `Copy:Black` [4] + `Printer:Black` [5] + `Scanner/FAX:Print(Black)` [6]
+  - **Cross-checked by user against CSRC for A93E021244196 (St Hilary's C3350i): Black 8,319 / Colour 6,424 / Scan 436 — matches.**
+  - Bracket numbers are the user's CSRC counter numbers, **not** the DRMS `ItemNumber` field (which repeats across counters). Use counter `Name`.
+  - Use the totals directly. Optionally flag a device whose total ≠ sum of parts. 2-colour/mono-colour counters (`Copy:2C Color`, `Printer:2C Color`, `Copy:Mono Color`) are **not** in either total (small counts seen).
+- Meter sync maps **per device**: `GET Equipment(id)?$expand=Meters($expand=Type,Column)`, then for each meter take the DRMS counter whose `Name` equals `Column.Name`. Ignore all other DRMS counters (about 70 paper-size/mode counters). Not every device has all 3 meters (e.g. no Scan meter on some).
+- Other Vantage meter types exist (coverage-band colour types, `Black A3` id 12). They aren't mapped to DRMS columns on the sampled devices, so treat them as out of scope unless a device's meter points at a schema-3 column.
+- In the UI, the `counter_names` category editor can pre-mark these 3 as `meter` and the 4 `*TonerLevel` as `supply`.
+
+### Scope notes from user (2026-09-17)
+- Jams and error events (e.g. J-31) are **not needed** on the dashboard.
+- Drum/imaging-unit status is nice-to-have, not critical. DRMS `LatestCounters` has **no** drum, imaging-unit or waste-box counters (only C/M/Y/K toner levels and page counters). The only possible source is DRMS alarms. KM Q7 asks about waste toner.
+- Mockups (`mockups of dashboard/`): Fleet overview, Device detail, Toner orders. Part 2 copies the visual style and builds Fleet overview + Device detail from real data. Ordering and auto-reorder UI belong to sub-project 3. Uptime, IP, engineer, "Run diagnostic" and "Book an engineer" have no data source yet.

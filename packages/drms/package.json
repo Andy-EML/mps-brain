@@ -1,0 +1,16 @@
+{
+  "name": "@mps/drms",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mps/core": "*",
+    "zod": "^4.6.5"
+  }
+}
