@@ -3,6 +3,7 @@ import type { Db } from '@mps/db';
 import type { DrmsClient } from '@mps/drms';
 import { QUEUES, type QueueName } from '@mps/queue';
 import type { VantageClient } from '@mps/vantage';
+import { runDrmsAlarms } from './jobs/drms-alarms';
 import { runDrmsPull } from './jobs/drms-pull';
 import { runDrmsSnapshot } from './jobs/drms-snapshot';
 import { runLinkRun } from './jobs/link-run';
@@ -43,6 +44,9 @@ export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobDa
     },
     [QUEUES.drmsSnapshot]: async () => {
       await withSyncRun(db, QUEUES.drmsSnapshot, () => runDrmsSnapshot({ db, drms, now }));
+    },
+    [QUEUES.drmsAlarms]: async () => {
+      await withSyncRun(db, QUEUES.drmsAlarms, () => runDrmsAlarms({ db, drms, now }));
     },
   };
 }

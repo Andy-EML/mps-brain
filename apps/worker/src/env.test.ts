@@ -19,6 +19,7 @@ describe('loadEnv', () => {
       LINK_CUSTOMER_ERP_FIELD: 'none',
       SNAPSHOT_CRON: '0 6 * * *',
       DRMS_PULL_CRON: '15 * * * *',
+      ALARMS_CRON: '*/30 * * * *',
       OFFLINE_ALERT_HOURS: 24,
       TZ_SCHEDULE: 'Europe/London',
       ADMIN_USERNAME: 'admin',

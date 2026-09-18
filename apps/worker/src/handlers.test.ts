@@ -20,6 +20,7 @@ describe('buildHandlers', () => {
       listEquipment: async () => [drmsDevice('g1')],
       listCustomers: async () => [],
       latestCounters: async () => null,
+      listAlarms: async () => [],
       testAuth: async () => 'Ok',
     } as DrmsClient;
     const handlers = buildHandlers({
@@ -42,6 +43,7 @@ describe('buildHandlers', () => {
     await handlers['vantage-pull']({});
     await handlers['link-run']({});
     await handlers['drms-snapshot']({});
+    await handlers['drms-alarms']({});
     expect(queued()).toBe(2);
     const runs = await t.db.select().from(syncRuns).orderBy(syncRuns.id);
     expect(runs.map((r) => [r.job, r.status])).toEqual([
@@ -49,6 +51,7 @@ describe('buildHandlers', () => {
       ['vantage-pull', 'success'],
       ['link-run', 'success'],
       ['drms-snapshot', 'success'],
+      ['drms-alarms', 'success'],
     ]);
   });
 

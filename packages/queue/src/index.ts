@@ -5,6 +5,7 @@ export const QUEUES = {
   drmsPull: 'drms-pull',
   linkRun: 'link-run',
   drmsSnapshot: 'drms-snapshot',
+  drmsAlarms: 'drms-alarms',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

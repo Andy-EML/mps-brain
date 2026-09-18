@@ -12,6 +12,7 @@ const envSchema = z.object({
   LINK_CUSTOMER_ERP_FIELD: z.enum(['id', 'reference', 'none']).default('none'),
   SNAPSHOT_CRON: z.string().min(1).default('0 6 * * *'),
   DRMS_PULL_CRON: z.string().min(1).default('15 * * * *'),
+  ALARMS_CRON: z.string().min(1).default('*/30 * * * *'),
   OFFLINE_ALERT_HOURS: z.coerce.number().int().positive().default(24),
   TZ_SCHEDULE: z.string().min(1).default('Europe/London'),
   ADMIN_USERNAME: z.string().min(1).default('admin'),
