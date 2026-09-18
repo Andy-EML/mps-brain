@@ -219,3 +219,8 @@ Targeted, read-only follow-up (`scripts/phase0-probe2.ts`) resolving the four co
 - Jams and error events (e.g. J-31) are **not needed** on the dashboard.
 - Drum/imaging-unit status is nice-to-have, not critical. DRMS `LatestCounters` has **no** drum, imaging-unit or waste-box counters (only C/M/Y/K toner levels and page counters). The only possible source is DRMS alarms. KM Q7 asks about waste toner.
 - Mockups (`mockups of dashboard/`): Fleet overview, Device detail, Toner orders. Part 2 copies the visual style and builds Fleet overview + Device detail from real data. Ordering and auto-reorder UI belong to sub-project 3. Uptime, IP, engineer, "Run diagnostic" and "Book an engineer" have no data source yet.
+
+### Snapshot timing (2026-09-18, user)
+- CSRC collects across Europe during the morning, so DRMS counters for UK devices land late morning at the earliest.
+- `SNAPSHOT_CRON` default changed from `0 6 * * *` to **`30 13 * * *`** (13:30 Europe/London) so the nightly snapshot reads counters collected that day.
+- The snapshot's "already fetched today" resume boundary is UTC midnight, which still works with an afternoon run.

@@ -94,6 +94,9 @@ Folder: `F:\dev\API Docs Etc\DRMS registration batches\`
 - DRMS has no drum/imaging-unit/waste counters. Jams and errors are not wanted on the dashboard.
 - Vantage `$metadata` needs `api-version` as a **header**.
 
+## 5. Snapshot timing
+`SNAPSHOT_CRON` is `30 13 * * *` (13:30 London). CSRC collects across Europe in the morning, so counters aren't there earlier (user, 2026-09-18).
+
 ## 5. Documents
 
 - KM questions (Word): `F:\dev\API Docs Etc\KM DRMS3 questions - BGB Elmdale.docx`. Q1–Q9, not sent yet. Fill in the name/role/email placeholder. Q2–Q4 are partly answered by the pilot and could be updated.
