@@ -1,3 +1,4 @@
+import { isColourModel } from '@mps/core';
 import { PGlite } from '@electric-sql/pglite';
 import { drizzle } from 'drizzle-orm/pglite';
 import { migrate } from 'drizzle-orm/pglite/migrator';
@@ -65,17 +66,22 @@ export async function seedDemoFixture(db: Db): Promise<DemoFixture> {
     .returning({ id: users.id, username: users.username });
   if (!user) throw new Error('seedDemoFixture: failed to insert user');
 
-  // All three fixture devices are colour models, and `isColour` is set the way the DRMS pull sets
-  // it (from the model name) rather than left to the column default — the counter pivot hides CMY
-  // on a mono device, so a fixture that skipped the flag would silently lose its colour readings.
+  // `isColour` is derived from the model name here, exactly as the DRMS pull derives it, rather
+  // than written out by hand — the counter pivot hides CMY on a mono device, so a fixture whose
+  // flag disagreed with its model name would quietly lose its colour readings and the tests that
+  // depend on them would pass for the wrong reason.
+  const d1Model = 'bizhub C3320i';
+  const d2Model = 'bizhub C3320i';
+  const d3Model = 'bizhub C300i';
+
   await db.insert(drmsEquipment).values([
     {
       drmsId: 'D1',
       erpId: 'E1',
       serial: 'SN0000001',
       serialNorm: 'sn0000001',
-      modelName: 'bizhub C3320i',
-      isColour: true,
+      modelName: d1Model,
+      isColour: isColourModel(d1Model),
       productName: 'Acme Office MFP',
       status: 'Registered',
       customerErpId: 'C1',
@@ -88,8 +94,8 @@ export async function seedDemoFixture(db: Db): Promise<DemoFixture> {
       erpId: 'E2',
       serial: 'SN0000002',
       serialNorm: 'sn0000002',
-      modelName: 'bizhub C3320i',
-      isColour: true,
+      modelName: d2Model,
+      isColour: isColourModel(d2Model),
       productName: 'Beta Branch MFP',
       status: 'Registered',
       customerErpId: 'C2',
@@ -102,8 +108,8 @@ export async function seedDemoFixture(db: Db): Promise<DemoFixture> {
       erpId: 'E3',
       serial: 'SN0000003',
       serialNorm: 'sn0000003',
-      modelName: 'bizhub C300i',
-      isColour: true,
+      modelName: d3Model,
+      isColour: isColourModel(d3Model),
       productName: 'Gamma Unlinked MFP',
       status: 'Discovered',
       customerErpId: 'C3',

@@ -109,7 +109,10 @@ describe('schema', () => {
     const sqlFile = readFileSync(join(migrationsFolder, '0006_equipment_is_colour.sql'), 'utf8');
     const backfill = sqlFile
       .split('--> statement-breakpoint')
-      .find((statement) => statement.includes('UPDATE'));
+      // Anchored on the statement itself rather than a bare `includes('UPDATE')`: the word could
+      // turn up in a comment, or a later edit could add a second UPDATE, and this test would then
+      // fuzz the wrong statement while still passing.
+      .find((statement) => /^\s*UPDATE\s+"drms_equipment"/m.test(statement));
     if (!backfill) throw new Error('0006 migration no longer contains the backfill UPDATE');
     await t.db.execute(sql.raw(backfill));
 
