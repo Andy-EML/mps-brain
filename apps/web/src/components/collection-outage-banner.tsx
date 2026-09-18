@@ -9,17 +9,18 @@ export interface CollectionOutageBannerProps {
 }
 
 /**
- * Shown when DRMS has collected no meter reading for *any* device.
+ * Shown when DRMS is far enough behind on collecting meter counters that the collection, not the
+ * devices, is the likely cause.
  *
  * This is the correction the fleet asked for on 2026-09-18: the dashboard called 35 devices
- * "Offline" while CSRC showed every one of them online. The only thing we actually know is that
- * the nightly counter collection produced nothing, so the banner says that instead of blaming the
- * devices. Renders nothing when collection is running, so pages can drop it in unconditionally.
+ * "Offline" while CSRC showed every one of them online. All we actually know is how much of the
+ * batch has come in, so the banner counts that rather than blaming the devices. Renders nothing
+ * while collection is keeping up, so pages can drop it in unconditionally.
  */
 export function CollectionOutageBanner({ status, className }: CollectionOutageBannerProps) {
   if (!status.outage) return null;
 
-  const devices = status.devicesExpectingReadings;
+  const { devicesCollectedRecently: collected, devicesExpectingReadings: expecting } = status;
 
   return (
     <div
@@ -32,12 +33,12 @@ export function CollectionOutageBanner({ status, className }: CollectionOutageBa
       <AlertTriangle aria-hidden className="mt-0.5 size-[18px] shrink-0 text-warn" />
       <div className="min-w-0">
         <p className="text-[15px] font-medium text-warn">
-          No meter readings received since {formatDateTime(status.newestReadingAt)}
+          Meter readings are behind — only {formatNumber(collected)} of {formatNumber(expecting)}{' '}
+          {pluralise(expecting, 'device')} have reported in the last 24 hours
         </p>
         <p className="mt-1 text-[13px] text-muted-foreground">
-          DRMS collects counters about once a day; this affects every device, so it looks like a collection problem
-          rather than a device problem. All {formatNumber(devices)} {pluralise(devices, 'device')} that have ever
-          reported are affected, so none of them is being treated as an individual fault.
+          DRMS collects counters about once a day; per-device alerts are paused until collection catches up. Newest
+          reading {formatDateTime(status.newestReadingAt)}.
         </p>
       </div>
     </div>

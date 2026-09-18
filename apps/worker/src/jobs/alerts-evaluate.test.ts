@@ -132,10 +132,39 @@ describe('evaluateOfflineAlerts', () => {
     });
 
     it('still opens alerts on a mixed fleet, where collection is demonstrably running', async () => {
+      // 2 stale of 10 = 0.2, well under the ratio: the batch clearly reached the other eight, so
+      // these two really are individually quiet.
       await seedDrms(t.db, [
-        { drmsId: 'D1', lastCounterReceivedTime: hoursAgo(1) },
+        ...Array.from({ length: 8 }, (_, i) => ({ drmsId: `F${i}`, lastCounterReceivedTime: hoursAgo(1) })),
         { drmsId: 'D2', lastCounterReceivedTime: hoursAgo(30) },
         { drmsId: 'D3', lastCounterReceivedTime: hoursAgo(31) },
+      ]);
+
+      const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+
+      expect(result).toEqual({ opened: 2, cleared: 0, open: 2, skippedDueToOutage: false });
+    });
+
+    it('opens nothing while collection is only part-way through the fleet', async () => {
+      // The live shape on 2026-09-18: collection restarted and delivered 5 of 35 devices. 30/35 =
+      // 0.857, so the other 30 are waiting their turn, not offline — the all-or-nothing rule read
+      // this as "collection is fine" and opened 30 alerts.
+      await seedDrms(t.db, [
+        ...Array.from({ length: 5 }, (_, i) => ({ drmsId: `FRESH${i}`, lastCounterReceivedTime: hoursAgo(1) })),
+        ...Array.from({ length: 30 }, (_, i) => ({ drmsId: `STALE${i}`, lastCounterReceivedTime: hoursAgo(30) })),
+      ]);
+
+      const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+
+      expect(result).toEqual({ opened: 0, cleared: 0, open: 0, skippedDueToOutage: true });
+      expect(await t.db.select().from(deviceAlerts)).toHaveLength(0);
+    });
+
+    it('opens the stragglers once collection has caught up with most of the fleet', async () => {
+      // Same fleet, collection now through 33 of 35: 2/35 = 0.057, so the two left really are quiet.
+      await seedDrms(t.db, [
+        ...Array.from({ length: 33 }, (_, i) => ({ drmsId: `FRESH${i}`, lastCounterReceivedTime: hoursAgo(1) })),
+        ...Array.from({ length: 2 }, (_, i) => ({ drmsId: `STALE${i}`, lastCounterReceivedTime: hoursAgo(30) })),
       ]);
 
       const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });

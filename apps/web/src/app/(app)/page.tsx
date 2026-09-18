@@ -71,14 +71,14 @@ export default async function FleetOverviewPage() {
           tone={summary.needsToner > 0 ? 'warn' : 'muted'}
           sub={`${formatNumber(summary.criticalToner)} critical · ${formatNumber(summary.lowToner)} low`}
         />
-        {/* Not "Offline": the number only says DRMS collected no counter set. During a fleet-wide
-            collection outage it would be every reporting device at once, which is a statement
+        {/* Not "Offline": the number only says DRMS collected no counter set. While collection is
+            behind, most of that number is devices the batch has not reached yet — a statement
             about DRMS, not about the devices — so the card refuses to quote a device count. */}
         <StatCard
           label="No meter reading"
           value={collection.outage ? '—' : formatNumber(summary.offline)}
           tone={collection.outage ? 'warn' : summary.offline > 0 ? 'critical' : 'muted'}
-          sub={collection.outage ? 'collection stopped' : 'in the last 24h'}
+          sub={collection.outage ? 'collection behind' : 'in the last 24h'}
         />
         <StatCard
           label="Consumable warnings"

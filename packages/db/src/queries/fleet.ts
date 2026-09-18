@@ -82,12 +82,17 @@ export interface CollectionStatus {
   devicesExpectingReadings: number;
   /** How many of those have no reading inside the threshold window. */
   devicesStale: number;
-  /** True when *every* reporting device is stale: collection has stopped, not the fleet. */
+  /** The rest: devices DRMS has collected from inside the window. What the banner counts up. */
+  devicesCollectedRecently: number;
+  /**
+   * True when a large enough share of the reporting fleet is stale that collection, not the
+   * devices, is the likely cause — see `COLLECTION_OUTAGE_STALE_RATIO`.
+   */
   outage: boolean;
 }
 
 /**
- * Whether DRMS is still collecting meter counters at all.
+ * How far behind DRMS is on collecting meter counters.
  *
  * The device set is the one `evaluateOfflineAlerts` alerts on — monitored (not missing, not
  * `Deleted`) and having reported at least once — so the banner on screen and the worker's
@@ -116,6 +121,7 @@ export async function getCollectionStatus(db: Db, opts: { staleHours?: number } 
     newestReadingAt: row?.newestReadingAt ?? null,
     devicesExpectingReadings,
     devicesStale,
+    devicesCollectedRecently: devicesExpectingReadings - devicesStale,
     outage: isCollectionOutage({ devicesExpectingReadings, devicesStale }),
   };
 }

@@ -94,8 +94,8 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
       <p className="mb-5 max-w-3xl rounded-xl border border-line bg-card px-5 py-4 text-sm text-muted-foreground">
         A device alerts when DRMS has collected a meter reading for it before but none in the last 24 hours. That means
         “no meter reading”, not “offline” — DRMS collects counters about once a day, so a device that misses one
-        collection shows as 24–48 hours stale. When every reporting device goes quiet at once, no alerts are opened:
-        that is a collection outage, not a fleet of broken devices.
+        collection shows as 24–48 hours stale. When most of the reporting fleet is stale at once, no alerts are
+        opened: the collection is behind, not the devices.
       </p>
 
       <section className="rounded-xl border border-line bg-card">

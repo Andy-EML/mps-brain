@@ -95,6 +95,8 @@ describe('queries', () => {
       expect(status.newestReadingAt?.getTime()).toBe(FIXED_NOW.getTime() - 2 * 3_600_000);
       expect(status.devicesExpectingReadings).toBe(2);
       expect(status.devicesStale).toBe(1);
+      expect(status.devicesCollectedRecently).toBe(1);
+      // 1/2 = 0.5, under the 0.7 outage ratio.
       expect(status.outage).toBe(false);
     });
 
@@ -110,8 +112,30 @@ describe('queries', () => {
         newestReadingAt: staleAt,
         devicesExpectingReadings: 2,
         devicesStale: 2,
+        devicesCollectedRecently: 0,
         outage: true,
       });
+    });
+
+    it('still reports an outage while a minority of the fleet has come in', async () => {
+      // The live shape on 2026-09-18 after collection restarted: 30 of 35 reporting devices still
+      // stale, 5 collected. 30/35 = 0.857, so it is still an outage and the worker must not open
+      // 30 alerts for devices the batch simply has not reached yet.
+      // The fixture already supplies D1 (fresh) and D2 (stale), so 33 more: 29 stale + 4 fresh.
+      await t.db.insert(drmsEquipment).values(
+        Array.from({ length: 33 }, (_, i) => ({
+          drmsId: `BULK${i}`,
+          status: 'Registered',
+          raw: {},
+          lastCounterReceivedTime: new Date(FIXED_NOW.getTime() - (i < 29 ? 30 : 1) * 3_600_000),
+        })),
+      );
+
+      const status = await getCollectionStatus(t.db);
+      expect(status.devicesExpectingReadings).toBe(35);
+      expect(status.devicesStale).toBe(30);
+      expect(status.devicesCollectedRecently).toBe(5);
+      expect(status.outage).toBe(true);
     });
 
     it('is not an outage when no device has ever reported', async () => {
@@ -120,6 +144,7 @@ describe('queries', () => {
         newestReadingAt: null,
         devicesExpectingReadings: 0,
         devicesStale: 0,
+        devicesCollectedRecently: 0,
         outage: false,
       });
     });
@@ -135,6 +160,7 @@ describe('queries', () => {
       const status = await getCollectionStatus(t.db);
       expect(status.devicesExpectingReadings).toBe(1);
       expect(status.devicesStale).toBe(0);
+      expect(status.devicesCollectedRecently).toBe(1);
       expect(status.outage).toBe(false);
     });
 
