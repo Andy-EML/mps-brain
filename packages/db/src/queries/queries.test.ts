@@ -1,12 +1,12 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { counterNames, counterSnapshots, counterValues, deviceAlerts, drmsEquipment, linkIssues } from '../schema';
+import { counterNames, counterSnapshots, counterValues, deviceAlarms, deviceAlerts, drmsEquipment, linkIssues } from '../schema';
 import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '../testing';
 import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './admin';
 import { listAlerts } from './alerts';
-import { getCounterHistory, getDevice, getLatestCounters } from './device';
+import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms } from './device';
 import { listDevices } from './devices';
-import { getFleetSummary } from './fleet';
+import { getConsumableWarnings, getFleetSummary } from './fleet';
 import { listIssues, searchVantageEquipment } from './issues';
 
 // Frozen "now" for the whole suite: seedDemoFixture's hoursAgo()/daysAgo() helpers and the query
@@ -197,6 +197,82 @@ describe('queries', () => {
       expect(alerts).toHaveLength(2);
       const cleared = alerts.find((a) => a.type === 'toner-low');
       expect(cleared?.acknowledgedByName).toBe(f.user.username);
+    });
+  });
+
+  describe('listDeviceAlarms / getConsumableWarnings', () => {
+    const daysAgo = (d: number) => new Date(FIXED_NOW.getTime() - d * 86_400_000);
+    const hoursAgo = (h: number) => new Date(FIXED_NOW.getTime() - h * 3_600_000);
+
+    beforeEach(async () => {
+      await t.db.insert(deviceAlarms).values([
+        {
+          alarmId: 'al-toner',
+          drmsEquipmentId: f.drms.online,
+          receivedTime: hoursAgo(2),
+          fcCode: 'TN-00',
+          description: 'Toner near empty',
+          status: 'EquipmentDiscovered',
+          category: 'toner',
+          raw: {},
+        },
+        {
+          alarmId: 'al-waste',
+          drmsEquipmentId: f.drms.online,
+          receivedTime: hoursAgo(1),
+          fcCode: 'TO-00',
+          description: 'Waste toner almost full',
+          status: 'ReadyForErpDelivery',
+          category: 'waste',
+          raw: {},
+        },
+        {
+          alarmId: 'al-parts-old',
+          drmsEquipmentId: f.drms.online,
+          receivedTime: daysAgo(40),
+          fcCode: 'TP-00',
+          description: 'PartsLife(IU_C) 1st Call',
+          status: 'EquipmentDiscovered',
+          category: 'parts',
+          raw: {},
+        },
+        {
+          alarmId: 'al-parts-d2',
+          drmsEquipmentId: f.drms.offline,
+          receivedTime: daysAgo(5),
+          fcCode: 'TP-01',
+          description: 'PartsLife(IU_M) 2nd Call',
+          status: 'EquipmentDiscovered',
+          category: 'parts',
+          raw: {},
+        },
+      ]);
+    });
+
+    it('listDeviceAlarms returns a devicealarms newest first', async () => {
+      const alarms = await listDeviceAlarms(t.db, f.drms.online);
+      expect(alarms.map((a) => a.alarmId)).toEqual(['al-waste', 'al-toner', 'al-parts-old']);
+    });
+
+    it('listDeviceAlarms filters by category and respects limit', async () => {
+      const waste = await listDeviceAlarms(t.db, f.drms.online, { categories: ['waste'] });
+      expect(waste.map((a) => a.alarmId)).toEqual(['al-waste']);
+
+      const limited = await listDeviceAlarms(t.db, f.drms.online, { limit: 1 });
+      expect(limited).toHaveLength(1);
+      expect(limited[0]?.alarmId).toBe('al-waste');
+    });
+
+    it('returns no rows for a device with no alarms', async () => {
+      expect(await listDeviceAlarms(t.db, f.drms.unlinked)).toEqual([]);
+    });
+
+    it('getConsumableWarnings returns the latest waste/parts alarm per device within 30 days, excluding toner and stale alarms', async () => {
+      const warnings = await getConsumableWarnings(t.db);
+      const byDevice = Object.fromEntries(warnings.map((w) => [`${w.drmsId}:${w.category}`, w]));
+      expect(Object.keys(byDevice).sort()).toEqual([`${f.drms.online}:waste`, `${f.drms.offline}:parts`].sort());
+      expect(byDevice[`${f.drms.online}:waste`]?.fcCode).toBe('TO-00');
+      expect(byDevice[`${f.drms.offline}:parts`]?.fcCode).toBe('TP-01');
     });
   });
 

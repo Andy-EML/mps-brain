@@ -1,6 +1,6 @@
-import { and, count, eq, isNotNull, isNull, lt, max, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, max, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { deviceLinks, drmsEquipment, linkIssues, syncRuns } from '../schema';
+import { deviceAlarms, deviceLinks, drmsEquipment, linkIssues, syncRuns } from '../schema';
 import { counterPivotSubquery, offlineCutoff } from './shared';
 
 export interface FleetSummary {
@@ -62,4 +62,39 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
     openIssues: issuesRow?.n ?? 0,
     lastSyncAt: syncRow?.finishedAt ?? null,
   };
+}
+
+const CONSUMABLE_WARNING_CATEGORIES = ['waste', 'parts'] as const;
+type ConsumableWarningCategory = (typeof CONSUMABLE_WARNING_CATEGORIES)[number];
+
+export interface ConsumableWarning {
+  drmsId: string;
+  category: ConsumableWarningCategory;
+  latestAt: Date;
+  fcCode: string | null;
+  description: string | null;
+}
+
+/**
+ * The latest waste/parts (imaging unit, drum, filter) alarm per device within the last `days`
+ * days. DRMS alarms have no real "cleared" state, so "open-ish" here just means recent — one row
+ * per (device, category). The fleet page's "N devices with waste/parts warnings" count is the
+ * number of distinct `drmsId`s across the result.
+ */
+export async function getConsumableWarnings(db: Db, opts: { days?: number } = {}): Promise<ConsumableWarning[]> {
+  const since = new Date(Date.now() - (opts.days ?? 30) * 86_400_000);
+
+  const rows = await db
+    .selectDistinctOn([deviceAlarms.drmsEquipmentId, deviceAlarms.category], {
+      drmsId: deviceAlarms.drmsEquipmentId,
+      category: deviceAlarms.category,
+      latestAt: deviceAlarms.receivedTime,
+      fcCode: deviceAlarms.fcCode,
+      description: deviceAlarms.description,
+    })
+    .from(deviceAlarms)
+    .where(and(inArray(deviceAlarms.category, CONSUMABLE_WARNING_CATEGORIES), gte(deviceAlarms.receivedTime, since)))
+    .orderBy(deviceAlarms.drmsEquipmentId, deviceAlarms.category, desc(deviceAlarms.receivedTime));
+
+  return rows.map((r) => ({ ...r, category: r.category as ConsumableWarningCategory }));
 }

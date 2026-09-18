@@ -1,6 +1,14 @@
 import { and, asc, desc, eq, gte, inArray, isNull } from 'drizzle-orm';
 import type { Db } from '../client';
-import { counterNames, counterSnapshots, counterValues, deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
+import {
+  counterNames,
+  counterSnapshots,
+  counterValues,
+  deviceAlarms,
+  deviceLinks,
+  drmsEquipment,
+  vantageEquipment,
+} from '../schema';
 import type { DeviceRow } from './devices';
 import { counterPivotSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
@@ -145,4 +153,44 @@ export async function getCounterHistory(
     result[r.name]?.push({ at: r.at, value: r.value });
   }
   return result;
+}
+
+export interface DeviceAlarmRow {
+  alarmId: string;
+  receivedTime: Date;
+  fcCode: string | null;
+  scCode: string | null;
+  description: string | null;
+  status: string | null;
+  category: string | null;
+  totalCount: number | null;
+  totalColorCount: number | null;
+}
+
+/** A device's alarms, newest first (DRMS collects these roughly every 27 min — see drms-alarms job). */
+export async function listDeviceAlarms(
+  db: Db,
+  drmsId: string,
+  opts: { limit?: number; categories?: string[] } = {},
+): Promise<DeviceAlarmRow[]> {
+  const limit = opts.limit ?? 50;
+  const conds = [eq(deviceAlarms.drmsEquipmentId, drmsId)];
+  if (opts.categories && opts.categories.length > 0) conds.push(inArray(deviceAlarms.category, opts.categories));
+
+  return db
+    .select({
+      alarmId: deviceAlarms.alarmId,
+      receivedTime: deviceAlarms.receivedTime,
+      fcCode: deviceAlarms.fcCode,
+      scCode: deviceAlarms.scCode,
+      description: deviceAlarms.description,
+      status: deviceAlarms.status,
+      category: deviceAlarms.category,
+      totalCount: deviceAlarms.totalCount,
+      totalColorCount: deviceAlarms.totalColorCount,
+    })
+    .from(deviceAlarms)
+    .where(and(...conds))
+    .orderBy(desc(deviceAlarms.receivedTime))
+    .limit(limit);
 }
