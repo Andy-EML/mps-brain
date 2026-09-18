@@ -49,6 +49,30 @@ describe('runDrmsPull', () => {
     expect(c1).toMatchObject({ drmsId: 'c1', erpId: 'C1', csrcIds: ['X'] });
   });
 
+  it('stores the colour flag from the model name, and corrects it when DRMS renames the model', async () => {
+    // The flag is derived on write rather than read, so a model name DRMS corrects later (they do
+    // get typed in by hand at registration) has to move the flag with it on the next pull —
+    // otherwise a device stays mono for ever and its CMY readings are hidden.
+    const day1 = new Date('2026-09-16T02:15:00Z');
+    const day2 = new Date('2026-09-17T02:15:00Z');
+    const mono = drmsDevice('mono1', { ModelName: 'bizhub 301i' });
+    const colour = drmsDevice('col1', { ModelName: 'bizhub C301i' });
+    await runDrmsPull({ db: t.db, drms: fakeDrms([mono, colour], []), now: () => day1 });
+
+    const flags = async () =>
+      Object.fromEntries(
+        (await t.db.select().from(drmsEquipment)).map((r) => [r.drmsId, r.isColour]),
+      );
+    expect(await flags()).toEqual({ mono1: false, col1: true });
+
+    await runDrmsPull({
+      db: t.db,
+      drms: fakeDrms([drmsDevice('mono1', { ModelName: 'bizhub C301i' }), colour], []),
+      now: () => day2,
+    });
+    expect(await flags()).toEqual({ mono1: true, col1: true });
+  });
+
   it('clears missingSince when a device returns', async () => {
     await runDrmsPull({ db: t.db, drms: fakeDrms([drmsDevice('g1'), drmsDevice('g2')], []), now: () => new Date('2026-09-15T02:15:00Z') });
     await runDrmsPull({ db: t.db, drms: fakeDrms([drmsDevice('g1')], []), now: () => new Date('2026-09-16T02:15:00Z') });

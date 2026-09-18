@@ -1,4 +1,4 @@
-import { chunk, errorMessage, normaliseSerial, parseApiDate } from '@mps/core';
+import { chunk, errorMessage, isColourModel, normaliseSerial, parseApiDate } from '@mps/core';
 import { drmsCustomers, drmsEquipment, excluded, type Db } from '@mps/db';
 import type { DrmsClient, DrmsCustomer, DrmsEquipment } from '@mps/drms';
 import { and, isNull, lt, sql } from 'drizzle-orm';
@@ -15,6 +15,11 @@ export function mapDrmsEquipment(e: DrmsEquipment, seenAt: Date): typeof drmsEqu
     serial: e.SerialNumber ?? null,
     serialNorm: normaliseSerial(e.SerialNumber),
     modelName: e.ModelName ?? null,
+    // Derived on every pull, not once on insert: DRMS model names are typed in at registration and
+    // do get corrected later, and the flag has to follow the correction or a device renamed from
+    // `bizhub 301i` to `bizhub C301i` would keep its colour readings hidden for ever. The upsert's
+    // update set carries it through (see `excluded(...)` below).
+    isColour: isColourModel(e.ModelName),
     productName: e.ProductName ?? null,
     status: e.Status ?? null,
     communicationType: e.CommunicationType ?? null,
