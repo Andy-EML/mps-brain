@@ -14,6 +14,7 @@
     "generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@mps/core": "*",
     "@node-rs/argon2": "^2.2.1",
     "drizzle-orm": "^0.44.7",
     "pg": "^8.23.0"

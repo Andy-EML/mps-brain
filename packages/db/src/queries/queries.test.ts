@@ -10,11 +10,13 @@ import {
   drmsEquipment,
   linkIssues,
   vantageEquipment,
+  vantageSalesOrderLines,
+  vantageSalesOrders,
 } from '../schema';
 import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '../testing';
 import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './admin';
 import { countAlerts, listAlerts } from './alerts';
-import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms } from './device';
+import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms, listDeviceOrders } from './device';
 import { listDevices } from './devices';
 import { getConsumableWarnings, getCustomerCount, getFleetSummary, getTonerHealth } from './fleet';
 import { getIssueCounts, listIssues, searchVantageEquipment } from './issues';
@@ -508,6 +510,197 @@ describe('queries', () => {
 
     it('getAppStateValue re-exports getAppState behaviour', async () => {
       expect(await getAppStateValue(t.db, 'missing-key')).toBeNull();
+    });
+  });
+
+  describe('listDeviceOrders', () => {
+    const daysAgo = (d: number) => new Date(FIXED_NOW.getTime() - d * 86_400_000);
+    /** The Vantage equipment linked to the online device; `other` belongs to the offline one. */
+    let eq1: number;
+    let other: number;
+
+    beforeEach(async () => {
+      eq1 = f.vantage.linkedToOnline;
+      other = f.vantage.linkedToOffline;
+
+      await t.db.insert(vantageSalesOrders).values([
+        // Newest. Header names the device; open, and raised by this app.
+        {
+          vantageId: 500,
+          reference: 'SO2609-0214',
+          orderDate: daysAgo(3),
+          completedDate: null,
+          isOnHold: false,
+          typeId: 1,
+          typeName: 'Consumable order',
+          createdByMps: true,
+          vantageEquipmentId: eq1,
+          raw: {},
+        },
+        // Header points at another device; only its line names this one. Completed.
+        {
+          vantageId: 501,
+          reference: 'SO2608-0100',
+          orderDate: daysAgo(20),
+          completedDate: daysAgo(18),
+          isOnHold: false,
+          typeName: 'Consumable order',
+          vantageEquipmentId: other,
+          raw: {},
+        },
+        // Oldest, header-linked, on hold. Its black line was returned.
+        {
+          vantageId: 502,
+          reference: 'SO2604-0001',
+          orderDate: daysAgo(150),
+          completedDate: daysAgo(140),
+          isOnHold: true,
+          typeName: 'Consumable order',
+          vantageEquipmentId: eq1,
+          raw: {},
+        },
+        // Belongs to a different device entirely, and must never appear.
+        {
+          vantageId: 503,
+          reference: 'SO2609-9999',
+          orderDate: daysAgo(1),
+          vantageEquipmentId: other,
+          raw: {},
+        },
+        // Soft-deleted, header-linked: excluded like every other vantage_* read.
+        {
+          vantageId: 504,
+          reference: 'SO2609-DEL',
+          orderDate: daysAgo(2),
+          vantageEquipmentId: eq1,
+          deletedDate: daysAgo(1),
+          raw: {},
+        },
+      ]);
+
+      await t.db.insert(vantageSalesOrderLines).values([
+        {
+          vantageId: 5000,
+          salesOrderId: 500,
+          itemPartNumber: 'MISC',
+          itemDescription: 'Miscellaneous',
+          details: 'Xerox B310 Black Toner',
+          quantity: '2',
+          colour: 'black',
+          colourSource: 'details',
+          raw: {},
+        },
+        {
+          vantageId: 5001,
+          salesOrderId: 500,
+          itemPartNumber: 'MIN90014',
+          details: 'Konica Minolta C3351i Waste Toner',
+          quantity: '1',
+          colour: 'waste',
+          colourSource: 'details',
+          raw: {},
+        },
+        // The only thing tying order 501 to this device.
+        {
+          vantageId: 5010,
+          salesOrderId: 501,
+          vantageEquipmentId: eq1,
+          itemPartNumber: 'B1168',
+          details: 'Olivetti MF304 Magenta Toner',
+          quantity: '1',
+          colour: 'magenta',
+          colourSource: 'details',
+          raw: {},
+        },
+        // Returned: never counts as "last sent".
+        {
+          vantageId: 5020,
+          salesOrderId: 502,
+          itemPartNumber: 'TN328K',
+          details: 'Black Toner',
+          quantity: '1',
+          returnedDate: daysAgo(130),
+          colour: 'black',
+          colourSource: 'details',
+          raw: {},
+        },
+        {
+          vantageId: 5021,
+          salesOrderId: 502,
+          itemPartNumber: 'MISC',
+          details: 'Callout charge',
+          quantity: '1',
+          colour: 'unknown',
+          colourSource: 'none',
+          raw: {},
+        },
+        { vantageId: 5030, salesOrderId: 503, details: 'Cyan Toner', colour: 'cyan', colourSource: 'details', raw: {} },
+        { vantageId: 5040, salesOrderId: 504, details: 'Yellow Toner', colour: 'yellow', colourSource: 'details', raw: {} },
+      ]);
+    });
+
+    it('returns the device orders newest first, by header link or by line link', async () => {
+      const { orders } = await listDeviceOrders(t.db, eq1);
+      expect(orders.map((o) => o.vantageId)).toEqual([500, 501, 502]);
+      expect(orders.map((o) => o.reference)).toEqual(['SO2609-0214', 'SO2608-0100', 'SO2604-0001']);
+    });
+
+    it('excludes soft-deleted orders and other devices orders', async () => {
+      const refs = (await listDeviceOrders(t.db, eq1)).orders.map((o) => o.reference);
+      expect(refs).not.toContain('SO2609-DEL');
+      expect(refs).not.toContain('SO2609-9999');
+    });
+
+    it('attaches each order lines in line order, with Details and quantity', async () => {
+      const { orders } = await listDeviceOrders(t.db, eq1);
+      const [newest] = orders;
+      expect(newest?.lines.map((l) => l.vantageId)).toEqual([5000, 5001]);
+      expect(newest?.lines[0]).toMatchObject({
+        details: 'Xerox B310 Black Toner',
+        itemPartNumber: 'MISC',
+        quantity: 2,
+        colour: 'black',
+        returnedDate: null,
+      });
+    });
+
+    it('derives open/completed/on-hold and carries createdByMps', async () => {
+      const byId = new Map((await listDeviceOrders(t.db, eq1)).orders.map((o) => [o.vantageId, o]));
+      expect(byId.get(500)).toMatchObject({ open: true, isOnHold: false, createdByMps: true });
+      expect(byId.get(501)).toMatchObject({ open: false, createdByMps: false });
+      expect(byId.get(502)).toMatchObject({ open: false, isOnHold: true });
+      expect(byId.get(501)?.completedDate?.toISOString()).toBe(daysAgo(18).toISOString());
+    });
+
+    it('reports the most recent non-returned line per colour, including waste', async () => {
+      const { lastByColour } = await listDeviceOrders(t.db, eq1);
+      expect(Object.keys(lastByColour).sort()).toEqual(['black', 'cyan', 'magenta', 'waste', 'yellow']);
+
+      expect(lastByColour.black).toMatchObject({
+        partNumber: 'MISC',
+        description: 'Xerox B310 Black Toner',
+        quantity: 2,
+        reference: 'SO2609-0214',
+        orderOpen: true,
+      });
+      expect(lastByColour.waste).toMatchObject({ reference: 'SO2609-0214', quantity: 1, orderOpen: true });
+      expect(lastByColour.magenta).toMatchObject({ reference: 'SO2608-0100', orderOpen: false });
+      // Cyan and yellow only appear on the excluded orders.
+      expect(lastByColour.cyan).toBeNull();
+      expect(lastByColour.yellow).toBeNull();
+    });
+
+    it('limits the orders it returns but still looks further back for the per-colour summary', async () => {
+      const { orders, lastByColour } = await listDeviceOrders(t.db, eq1, { limit: 1 });
+      expect(orders.map((o) => o.vantageId)).toEqual([500]);
+      // Magenta last went out on order 501, which the limit cut from the table.
+      expect(lastByColour.magenta?.reference).toBe('SO2608-0100');
+    });
+
+    it('returns nothing for a device with no orders', async () => {
+      const result = await listDeviceOrders(t.db, 999_999);
+      expect(result.orders).toEqual([]);
+      expect(result.lastByColour.black).toBeNull();
     });
   });
 
