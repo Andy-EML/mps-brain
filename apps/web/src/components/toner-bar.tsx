@@ -1,6 +1,6 @@
 import { cn } from 'cn';
 import { TONE_TEXT } from '@/components/status-dot';
-import { TONER_CHANNELS, type TonerState, tonerState } from '@/components/toner';
+import { TONER_CHANNELS, tonerChannels, type TonerState, tonerState } from '@/components/toner';
 import type { DeviceRow } from '@mps/db/queries';
 
 const PCT_TEXT: Record<TonerState, string> = {
@@ -43,18 +43,42 @@ export function TonerBar({ level, fillClassName, label, className }: TonerBarPro
   );
 }
 
-/** The four DRMS channels for one device. Waste is deliberately absent — DRMS doesn't report it. */
-export function TonerBars({ toner, className }: { toner: DeviceRow['toner']; className?: string }) {
+/**
+ * The DRMS channels one device actually has. Waste is deliberately absent — DRMS doesn't report it.
+ *
+ * A mono device draws its one black bar in the fourth column rather than stretching across the row:
+ * the grid stays four columns wide and the CMY cells are simply left empty, so black lines up down
+ * the whole table and a row with fewer cartridges reads as "nothing there" instead of as a bar of a
+ * different size. Which channels those are comes from `tonerChannels`, not from a null check — a
+ * missing reading and a missing cartridge look the same in `toner` but are not the same thing.
+ */
+export function TonerBars({ row, className }: { row: DeviceRow; className?: string }) {
+  const present = new Set(tonerChannels(row).map((c) => c.key));
   return (
     <div className={cn('grid grid-cols-4 gap-3', className)}>
-      {TONER_CHANNELS.map((channel) => (
-        <TonerBar key={channel.key} level={toner[channel.key]} fillClassName={channel.className} label={channel.label} />
-      ))}
+      {TONER_CHANNELS.map((channel) =>
+        present.has(channel.key) ? (
+          <TonerBar
+            key={channel.key}
+            level={row.toner[channel.key]}
+            fillClassName={channel.className}
+            label={channel.label}
+          />
+        ) : (
+          <div key={channel.key} aria-hidden />
+        ),
+      )}
     </div>
   );
 }
 
-/** The Cyan / Magenta / Yellow / Black key above the table. */
+/**
+ * The Cyan / Magenta / Yellow / Black key above the table.
+ *
+ * Fleet-wide, not per device: it explains what the bar colours mean for the table as a whole, so it
+ * keeps all four channels even though roughly half the rows under it are mono and draw only black.
+ * Narrowing it would mean the key changed with whichever devices happened to be on the page.
+ */
 export function TonerLegend({ className }: { className?: string }) {
   return (
     <div className={cn('flex flex-wrap items-center gap-x-4 gap-y-1.5', className)}>

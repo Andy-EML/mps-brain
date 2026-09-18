@@ -25,8 +25,24 @@ export const TONER_CHANNELS = [
   { key: 'black', label: 'Black', className: 'bg-toner-black' },
 ] as const satisfies readonly { key: keyof DeviceRow['toner']; label: string; className: string }[];
 
+export type TonerChannel = (typeof TONER_CHANNELS)[number];
+
+/**
+ * The cartridges this particular device has: all four for a colour device, black alone for a mono
+ * one. Roughly half the fleet is mono, and a `bizhub 301i` drawn with three empty CMY bars reads as
+ * three cartridges that have run out rather than three that do not exist.
+ *
+ * The query layer already nulls the colour levels of a mono device, so this is not about hiding a
+ * number — it is about the difference between "no reading yet" and "no cartridge", which a null on
+ * its own cannot express. Everything derived from the levels (`deviceStatusLabel`, `tonerHealth`,
+ * `attentionRank`) goes through `tonerLevels` and so inherits it.
+ */
+export function tonerChannels(row: DeviceRow): readonly TonerChannel[] {
+  return row.isColour ? TONER_CHANNELS : TONER_CHANNELS.filter((c) => c.key === 'black');
+}
+
 export function tonerLevels(row: DeviceRow): (number | null)[] {
-  return TONER_CHANNELS.map((c) => row.toner[c.key]);
+  return tonerChannels(row).map((c) => row.toner[c.key]);
 }
 
 /**

@@ -19,7 +19,7 @@ import { DetailCard, DetailRow } from '@/components/detail-card';
 import { counterHistoryRows, groupAlarms, rawString } from '@/components/device-detail';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
-import { deviceStatusLabel, hasRecentAlarm, TONER_CHANNELS } from '@/components/toner';
+import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
 import { requireUser } from '@/lib/auth';
@@ -185,7 +185,10 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const comServer = rawString(detail.drmsRaw, 'CsrcComServerId');
   const csrcId = rawString(detail.drmsRaw, 'CsrcId');
   const readAt = detail.latestSnapshotAt ?? device.lastCounterAt;
-  const hasCounters = TONER_CHANNELS.some((c) => device.toner[c.key] != null);
+  // Only the cartridges this device has: a mono device has one tile, not four, and asking about
+  // CMY here would drop a healthy mono device into the "no counter set yet" empty state below.
+  const channels = tonerChannels(device);
+  const hasCounters = channels.some((c) => device.toner[c.key] != null);
   const hasMeters = device.meters.black != null || device.meters.colour != null || device.meters.scan != null;
 
   const subtitle = [
@@ -224,8 +227,10 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
             meta={readAt ? `Read ${formatRelative(readAt, now)}` : 'No reading yet'}
           >
             {hasCounters ? (
+              // The grid keeps its four columns whatever the device has, so a tile is the same size
+              // on a mono device as on a colour one rather than stretching to fill the card.
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {TONER_CHANNELS.map((channel) => (
+                {channels.map((channel) => (
                   <TonerTile
                     key={channel.key}
                     label={channel.label}

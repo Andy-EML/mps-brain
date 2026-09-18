@@ -89,7 +89,7 @@ export function DeviceTable({ rows, now = new Date(), emptyMessage = 'No devices
                   <div className={cn('truncate text-[13px]', TONE_TEXT[status.tone])}>{status.text}</div>
                 </td>
                 <td className="px-5 py-4">
-                  <TonerBars toner={row.toner} />
+                  <TonerBars row={row} />
                 </td>
                 <td className="px-5 py-4 text-right text-[15px] text-muted-foreground tabular">—</td>
               </tr>

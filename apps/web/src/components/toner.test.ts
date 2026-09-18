@@ -5,6 +5,7 @@ import {
   deviceNameAddsInfo,
   deviceStatusLabel,
   hasRecentAlarm,
+  tonerChannels,
   tonerHealth,
   tonerState,
   topIssueType,
@@ -19,6 +20,7 @@ function row(over: Partial<DeviceRow> = {}): DeviceRow {
     serial: 'A1B2C3D4E',
     name: 'Reception',
     model: 'bizhub C458',
+    isColour: true,
     status: 'Registered',
     customerName: 'Customer A',
     vantageCustomerName: 'Customer A',
@@ -32,6 +34,21 @@ function row(over: Partial<DeviceRow> = {}): DeviceRow {
     ...over,
   };
 }
+
+/** A black-only device: half the fleet is mono, and it has no CMY cartridges at all. */
+function monoRow(over: Partial<DeviceRow> = {}): DeviceRow {
+  return row({ model: 'bizhub 301i', isColour: false, toner: { black: 50, cyan: null, magenta: null, yellow: null }, ...over });
+}
+
+describe('tonerChannels', () => {
+  it('gives a colour device all four channels, in the mockup order', () => {
+    expect(tonerChannels(row()).map((c) => c.label)).toEqual(['Cyan', 'Magenta', 'Yellow', 'Black']);
+  });
+
+  it('gives a mono device black only', () => {
+    expect(tonerChannels(monoRow()).map((c) => c.label)).toEqual(['Black']);
+  });
+});
 
 describe('tonerState', () => {
   it('is unknown for a missing level', () => {
@@ -123,6 +140,18 @@ describe('deviceStatusLabel', () => {
     expect(label).toEqual({ text: 'Online', tone: 'ok' });
   });
 
+  it('ignores a colour level reported against a mono device rather than calling it critical', () => {
+    // The pivot already hides these, so a level here means a stale row or a hand-written fixture;
+    // either way a bizhub 301i has no cyan cartridge to be critical about.
+    const label = deviceStatusLabel(monoRow({ toner: { black: 50, cyan: 2, magenta: null, yellow: null } }), NOW);
+    expect(label).toEqual({ text: 'Online', tone: 'ok' });
+  });
+
+  it('says "No counters" for a mono device whose only reading is a colour one', () => {
+    const label = deviceStatusLabel(monoRow({ toner: { black: null, cyan: 60, magenta: null, yellow: null } }), NOW);
+    expect(label).toEqual({ text: 'No counters', tone: 'muted' });
+  });
+
   it('reports online when everything is healthy', () => {
     expect(deviceStatusLabel(row(), NOW)).toEqual({ text: 'Online', tone: 'ok' });
   });
@@ -176,6 +205,11 @@ describe('tonerHealth', () => {
       row({ toner: { black: 100, cyan: 100, magenta: 100, yellow: 100 } }),
     ]);
     expect(tally).toEqual({ critical: 1, low: 1, ok: 5, total: 7 });
+  });
+
+  it('counts one cartridge for a mono device, not four', () => {
+    const tally = tonerHealth([monoRow({ toner: { black: 50, cyan: 10, magenta: 10, yellow: 10 } })]);
+    expect(tally).toEqual({ critical: 0, low: 0, ok: 1, total: 1 });
   });
 
   it('is all zeroes for a fleet with no readings', () => {

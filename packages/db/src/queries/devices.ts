@@ -9,6 +9,12 @@ export interface DeviceRow {
   name: string | null;
   model: string | null;
   status: string | null;
+  /**
+   * Whether the device prints in colour, stored on the DRMS pull from the model name. Roughly half
+   * the fleet is mono, and the UI needs the flag itself (not just null CMY readings) to know the
+   * difference between "this device has no cyan cartridge" and "no cyan reading has arrived yet".
+   */
+  isColour: boolean;
   customerName: string | null;
   vantageCustomerName: string | null;
   vantageEquipmentId: number | null;
@@ -59,6 +65,7 @@ function deviceRowFields(
     name: drmsEquipment.productName,
     model: drmsEquipment.modelName,
     status: drmsEquipment.status,
+    isColour: drmsEquipment.isColour,
     customerName: drmsEquipment.customerName,
     vantageCustomerName: vantageEquipment.customerName,
     vantageEquipmentId: deviceLinks.vantageEquipmentId,
@@ -80,6 +87,7 @@ interface RawDeviceRow {
   name: string | null;
   model: string | null;
   status: string | null;
+  isColour: boolean;
   customerName: string | null;
   vantageCustomerName: string | null;
   vantageEquipmentId: number | null;
@@ -103,6 +111,7 @@ function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
     name: r.name,
     model: r.model,
     status: r.status,
+    isColour: r.isColour,
     customerName: r.customerName,
     vantageCustomerName: r.vantageCustomerName,
     vantageEquipmentId: r.vantageEquipmentId,
