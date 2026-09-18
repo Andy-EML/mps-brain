@@ -6,6 +6,7 @@ const CATEGORY_BY_PREFIX: Record<string, AlarmCategory> = {
   TO: 'waste',
   TR: 'waste',
   TP: 'parts',
+  TQ: 'parts',
   SC: 'service',
   SR: 'service',
   TV: 'service',
@@ -21,7 +22,7 @@ function extractPrefix(value: string | null | undefined): string | null {
 
 /**
  * Categorises a DRMS alarm from its `FcCode` prefix (e.g. `TN-00` -> toner, `TO-00`/`TR-00` ->
- * waste, `TP-*` -> parts (imaging units/drums/filters), `SC-*`/`SR-*`/`TV-*` -> service,
+ * waste, `TP-*`/`TQ-*` -> parts (imaging units/drums/filters), `SC-*`/`SR-*`/`TV-*` -> service,
  * `JF-*`/`FW-*` -> jam; anything else, including numeric codes like `09-1156`, -> other.
  *
  * `description` is a defensive fallback for the rare case `fcCode` is missing/blank but the

@@ -9,6 +9,7 @@ describe('classifyAlarm', () => {
     ['TR-00', 'waste'],
     ['TP-00', 'parts'],
     ['TP-01', 'parts'],
+    ['TQ-10 PartsLife(DC_K)', 'parts'],
     ['SC-00', 'service'],
     ['SR-00', 'service'],
     ['TV-00', 'service'],
