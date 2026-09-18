@@ -1,5 +1,6 @@
 import type { LinkConfig } from '@mps/core';
-import { customerLinks, deviceLinks, drmsEquipment, linkIssues, vantageEquipment } from '@mps/db';
+import { customerLinks, deviceLinks, drmsEquipment, linkIssues, users, vantageEquipment } from '@mps/db';
+import { manualLink } from '@mps/db/queries';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { eq, isNotNull, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -119,5 +120,35 @@ describe('runLinkRun', () => {
     for (let i = 0; i < 3; i++) await runLinkRun({ db: t.db, config });
     const broken = (await openIssues()).filter((i) => i.type === 'link_broken');
     expect(broken).toMatchObject([{ issueKey: 'link_broken|d1|10', status: 'open' }]);
+  });
+
+  it('leaves an operator’s manual link alone, and its resolved issue resolved', async () => {
+    // The Task 7 promise, end to end: an operator fixes a no_match_drms issue by hand, and the
+    // nightly link-run neither re-links the device by serial nor reopens the issue it answered.
+    const [user] = await t.db
+      .insert(users)
+      .values({ username: 'operator', passwordHash: 'x', role: 'operator' })
+      .returning({ id: users.id });
+    await seedVantage(t.db, [
+      { vantageId: 10, serial: 'A1' },
+      { vantageId: 20, serial: 'B2' },
+    ]);
+    await seedDrms(t.db, [{ drmsId: 'd1', serial: 'ZZ9' }]);
+
+    await runLinkRun({ db: t.db, config });
+    const before = await openIssues();
+    expect(before.map((i) => i.issueKey).sort()).toEqual(['no_match_drms|d1|', 'no_match_vantage||10', 'no_match_vantage||20']);
+
+    await manualLink(t.db, { drmsId: 'd1', vantageId: 10, userId: user!.id });
+    expect(await activeLinks()).toMatchObject([{ drmsEquipmentId: 'd1', vantageEquipmentId: 10, method: 'manual', linkedBy: user!.id }]);
+
+    const result = await runLinkRun({ db: t.db, config });
+    expect(result.stats).toMatchObject({ linksCreated: 0, linksClosed: 0, activeLinks: 1, issuesOpened: 0 });
+    expect(await activeLinks()).toMatchObject([{ drmsEquipmentId: 'd1', vantageEquipmentId: 10, method: 'manual', linkedBy: user!.id }]);
+    // Only the untouched Vantage record is still a problem; both issues the link answered stay shut.
+    expect((await openIssues()).map((i) => i.issueKey)).toEqual(['no_match_vantage||20']);
+    const resolved = await t.db.select().from(linkIssues).where(eq(linkIssues.status, 'resolved'));
+    expect(resolved.map((i) => i.issueKey).sort()).toEqual(['no_match_drms|d1|', 'no_match_vantage||10']);
+    expect(resolved.every((i) => i.resolvedBy === user!.id)).toBe(true);
   });
 });

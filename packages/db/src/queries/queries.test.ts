@@ -1,6 +1,6 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { counterNames, counterSnapshots, counterValues, deviceAlarms, deviceAlerts, drmsEquipment, linkIssues } from '../schema';
+import { counterNames, counterSnapshots, counterValues, deviceAlarms, deviceAlerts, deviceLinks, drmsEquipment, linkIssues } from '../schema';
 import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '../testing';
 import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './admin';
 import { listAlerts } from './alerts';
@@ -203,6 +203,28 @@ describe('queries', () => {
 
       const resolved = await listIssues(t.db, { status: 'resolved' });
       expect(resolved.total).toBe(0);
+    });
+
+    it('excludes types from the rows but still counts them', async () => {
+      const { rows, total, countsByType } = await listIssues(t.db, { excludeTypes: ['unlinked_drms'] });
+      expect(total).toBe(1);
+      expect(rows.map((r) => r.type)).toEqual(['conflicting_customer']);
+      // The hidden type keeps its count, so its own tab can still say how many rows are behind it.
+      expect(countsByType).toEqual({ unlinked_drms: 1, conflicting_customer: 1 });
+    });
+
+    it('reports the device’s live link, for the Unlink action', async () => {
+      const { rows } = await listIssues(t.db);
+      // D2 is actively linked to 1002; D3 has no link at all.
+      expect(rows.find((r) => r.drmsId === f.drms.offline)?.linkedVantageId).toBe(f.vantage.linkedToOffline);
+      expect(rows.find((r) => r.drmsId === f.drms.unlinked)?.linkedVantageId).toBeNull();
+
+      await t.db
+        .update(deviceLinks)
+        .set({ unlinkedAt: new Date(), unlinkedReason: 'manual_unlink' })
+        .where(eq(deviceLinks.drmsEquipmentId, f.drms.offline));
+      const after = await listIssues(t.db);
+      expect(after.rows.find((r) => r.drmsId === f.drms.offline)?.linkedVantageId).toBeNull();
     });
 
     it('searchVantageEquipment finds by serial and marks an already-linked record', async () => {
