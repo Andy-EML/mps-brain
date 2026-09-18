@@ -7,6 +7,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   serial,
   text,
@@ -59,6 +60,78 @@ export const vantageEquipment = pgTable(
   (t) => [
     index('vantage_equipment_serial_norm_idx').on(t.serialNorm),
     index('vantage_equipment_customer_idx').on(t.vantageCustomerId),
+  ],
+);
+
+/**
+ * Vantage sales orders, pulled read-only by the `vantage-orders` job so the device page can answer
+ * "has a toner already gone out, and when?".
+ *
+ * `completedDate` is the open/closed flag (null = open); `isOnHold` is separate. `typeName` is
+ * either `Consumable order` or `Equipment deal`.
+ *
+ * Deliberately no foreign key to `vantage_equipment`: an order can reference equipment we have not
+ * synced (or none at all — `vantageEquipmentId` is often null, with the link only on the lines).
+ * Date columns are `timestamptz` like every other `vantage_*` date, so whatever time component
+ * Vantage sends survives the round trip and display stays a Europe/London concern.
+ */
+export const vantageSalesOrders = pgTable(
+  'vantage_sales_orders',
+  {
+    vantageId: integer('vantage_id').primaryKey(),
+    reference: text('reference'),
+    orderDate: ts('order_date'),
+    /** Null while the order is open; set once Vantage completes it. */
+    completedDate: ts('completed_date'),
+    isOnHold: boolean('is_on_hold'),
+    isNonStock: boolean('is_non_stock'),
+    typeId: integer('type_id'),
+    typeName: text('type_name'),
+    /**
+     * Set by sub-project 3 for orders this app raises in Vantage, so the dashboard can badge them
+     * as "raised here". The pull never overwrites it — see `excluded(..., ['createdByMps'])`.
+     */
+    createdByMps: boolean('created_by_mps').notNull().default(false),
+    vantageEquipmentId: integer('vantage_equipment_id'),
+    contractId: integer('contract_id'),
+    customerSellToId: integer('customer_sell_to_id'),
+    customerShipToId: integer('customer_ship_to_id'),
+    raw: jsonb('raw').notNull(),
+    modifiedDate: ts('modified_date'),
+    deletedDate: ts('deleted_date'),
+    syncedAt: ts('synced_at').notNull().defaultNow(),
+  },
+  (t) => [index('vantage_sales_orders_equipment_date_idx').on(t.vantageEquipmentId, t.orderDate.desc())],
+);
+
+export const vantageSalesOrderLines = pgTable(
+  'vantage_sales_order_lines',
+  {
+    vantageId: integer('vantage_id').primaryKey(),
+    salesOrderId: integer('sales_order_id').notNull(),
+    /** A line can name the equipment even when the order header does not, so both link paths exist. */
+    vantageEquipmentId: integer('vantage_equipment_id'),
+    itemId: integer('item_id'),
+    itemPartNumber: text('item_part_number'),
+    itemDescription: text('item_description'),
+    quantity: numeric('quantity'),
+    returnedDate: ts('returned_date'),
+    /**
+     * The line's `Details` free text. Filled in even for `MISC` parts (a machine another reseller
+     * supplies), which is why the UI shows it verbatim rather than the item description.
+     */
+    details: text('details'),
+    /** The line's `Comment`, when Vantage sends one. Kept for sub-project 3; not displayed. */
+    comment: text('comment'),
+    /** Derived on insert by `classifyOrderLine` (@mps/core) so queries need not re-parse text. */
+    colour: text('colour'),
+    colourSource: text('colour_source'),
+    raw: jsonb('raw').notNull(),
+    syncedAt: ts('synced_at').notNull().defaultNow(),
+  },
+  (t) => [
+    index('vantage_sales_order_lines_order_idx').on(t.salesOrderId),
+    index('vantage_sales_order_lines_equipment_part_idx').on(t.vantageEquipmentId, t.itemPartNumber),
   ],
 );
 
