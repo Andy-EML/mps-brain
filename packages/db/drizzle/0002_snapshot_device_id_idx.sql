@@ -1,0 +1,1 @@
+CREATE INDEX "counter_snapshots_device_id_idx" ON "counter_snapshots" USING btree ("drms_equipment_id","id");

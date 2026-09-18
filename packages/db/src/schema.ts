@@ -169,6 +169,9 @@ export const counterSnapshots = pgTable(
   (t) => [
     uniqueIndex('counter_snapshots_device_counter_uq').on(t.drmsEquipmentId, t.counterId),
     index('counter_snapshots_device_received_idx').on(t.drmsEquipmentId, t.receivedTime),
+    // Supports the latest-snapshot-per-device pivot (max(id) grouped by device) used by the
+    // fleet/devices/device queries.
+    index('counter_snapshots_device_id_idx').on(t.drmsEquipmentId, t.id),
   ],
 );
 

@@ -48,8 +48,12 @@ export interface DemoFixture {
  * rows, two counter snapshots on the online device (so counter-history ordering can be tested),
  * 2 link issues, 2 device alerts (one open, one cleared), 1 user and 2 sync runs.
  *
- * Timestamps are relative to the real `Date.now()` (not a fixed date) because the query layer
- * compares "offline" and "last sync" against the real current time.
+ * Timestamps are relative to `Date.now()` at seed time (not a fixed calendar date), because the
+ * query layer itself compares "offline" and "last sync" against `Date.now()` at query time.
+ * Callers that need exact, reproducible values (rather than just consistent relative ordering)
+ * should freeze the clock before calling this — e.g. `vi.useFakeTimers({ toFake: ['Date'] })` +
+ * `vi.setSystemTime(...)` — so both the fixture's timestamps and the query layer's own `Date.now()`
+ * calls resolve against the same frozen instant. See `queries.test.ts` for the pattern.
  */
 export async function seedDemoFixture(db: Db): Promise<DemoFixture> {
   const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000);

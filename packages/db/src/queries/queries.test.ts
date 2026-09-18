@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { counterNames, counterSnapshots, counterValues, deviceAlerts, drmsEquipment, linkIssues } from '../schema';
 import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '../testing';
 import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './admin';
@@ -9,14 +9,25 @@ import { listDevices } from './devices';
 import { getFleetSummary } from './fleet';
 import { listIssues, searchVantageEquipment } from './issues';
 
+// Frozen "now" for the whole suite: seedDemoFixture's hoursAgo()/daysAgo() helpers and the query
+// layer's own Date.now() calls (offlineCutoff, etc.) both read this, so every timestamp
+// relationship is exact and doesn't depend on real wall-clock time. Only Date is faked (not
+// setTimeout/setInterval/microtasks), so PGlite's own async plumbing is unaffected.
+const FIXED_NOW = new Date('2026-09-18T12:00:00Z');
+
 describe('queries', () => {
   let t: TestDb;
   let f: DemoFixture;
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
     t = await createTestDb();
     f = await seedDemoFixture(t.db);
   });
-  afterEach(() => t.close());
+  afterEach(async () => {
+    await t.close();
+    vi.useRealTimers();
+  });
 
   describe('getFleetSummary', () => {
     it('counts devices, monitored, linked, toner tiers, offline and open issues', async () => {
@@ -29,7 +40,7 @@ describe('queries', () => {
       expect(summary.lowToner).toBe(0);
       expect(summary.offline).toBe(1);
       expect(summary.openIssues).toBe(2);
-      expect(summary.lastSyncAt?.getTime()).toBeCloseTo(Date.now() - 3_600_000, -3);
+      expect(summary.lastSyncAt?.getTime()).toBe(FIXED_NOW.getTime() - 3_600_000);
     });
 
     it('distinguishes low toner (>=5%) from critical toner (<5%) devices', async () => {
@@ -114,7 +125,7 @@ describe('queries', () => {
       expect(detail?.device.serial).toBe('SN0000001');
       expect(detail?.device.vantageEquipmentId).toBe(f.vantage.linkedToOnline);
       expect(detail?.device.toner.black).toBe(3);
-      expect(detail?.latestSnapshotAt?.getTime()).toBeCloseTo(Date.now() - 2 * 3_600_000, -3);
+      expect(detail?.latestSnapshotAt?.getTime()).toBe(FIXED_NOW.getTime() - 2 * 3_600_000);
       expect(detail?.drmsRaw).toEqual({});
       expect(detail?.vantageRaw).toEqual({});
     });
