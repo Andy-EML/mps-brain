@@ -1,6 +1,6 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, max, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { counterSnapshots, counterValues } from '../schema';
+import { counterSnapshots, counterValues, deviceAlarms } from '../schema';
 
 /** Counter names this project cares about (see CLAUDE.md / global-constraints for the real values). */
 export const TONER_NAMES = {
@@ -58,6 +58,27 @@ export function counterPivotSubquery(db: Db) {
     .leftJoin(counterValues, eq(counterValues.snapshotId, latest.snapshotId))
     .groupBy(latest.drmsId)
     .as('counter_pivot');
+}
+
+/**
+ * Subquery: one row per device with the time of its newest alarm.
+ *
+ * DRMS refreshes the alarm feed roughly every 27 minutes, against meter counters' once a day, so a
+ * recent alarm is a *second signal of life*: it proves the device is reaching CSRC even when no
+ * meter reading has arrived. Grouped once and left-joined on `drmsId`, like the counter pivot —
+ * never one query per row.
+ */
+export function lastAlarmSubquery(db: Db) {
+  return db
+    .select({
+      drmsId: deviceAlarms.drmsEquipmentId,
+      // drizzle's `max()` (not a raw `sql` fragment) so the alias keeps the column's timestamp
+      // mapper and the field comes back as a Date rather than a Postgres timestamp string.
+      lastAlarmAt: max(deviceAlarms.receivedTime).as('last_alarm_at'),
+    })
+    .from(deviceAlarms)
+    .groupBy(deviceAlarms.drmsEquipmentId)
+    .as('last_alarm');
 }
 
 export function toNumberOrNull(v: unknown): number | null {

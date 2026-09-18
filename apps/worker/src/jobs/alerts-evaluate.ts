@@ -1,3 +1,4 @@
+import { isCollectionOutage } from '@mps/core';
 import { deviceAlerts, drmsEquipment, type Db } from '@mps/db';
 import { and, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 
@@ -7,12 +8,25 @@ export interface AlertEvaluation {
   opened: number;
   cleared: number;
   open: number;
+  /**
+   * True when the fleet-wide collection-outage guard held: every device that has ever reported
+   * was stale, so no new per-device alert was opened. Clearing still ran.
+   */
+  skippedDueToOutage: boolean;
 }
 
 /**
- * Opens/clears "offline" alerts for devices that have reported counters before but have gone
- * quiet for more than `thresholdHours`. Devices that have never reported, or that are currently
- * `missingSince`/`Deleted` (tracked separately), are left untouched either way.
+ * Opens/clears `offline` alerts — which mean "DRMS collected no meter reading", not "the device is
+ * unreachable" — for devices that have reported counters before but have gone quiet for more than
+ * `thresholdHours`. Devices that have never reported, or that are currently `missingSince` /
+ * `Deleted` (tracked separately), are left untouched either way.
+ *
+ * Guarded by `isCollectionOutage`: DRMS collects counters roughly once a day for the whole fleet,
+ * so when *every* reporting device is stale the cause is the collection, not the devices, and one
+ * alert per device is pure noise (2026-09-18: 35 devices alerted at once while CSRC showed them
+ * all online). During an outage nothing new opens, alerts already open stay open, and a device
+ * that reports again still clears. `stale ∪ fresh` is exactly the candidate set, so the tally
+ * needs no extra query and matches `getCollectionStatus` by construction.
  */
 export async function evaluateOfflineAlerts(db: Db, opts: { now: Date; thresholdHours: number }): Promise<AlertEvaluation> {
   const { now, thresholdHours } = opts;
@@ -40,7 +54,12 @@ export async function evaluateOfflineAlerts(db: Db, opts: { now: Date; threshold
     .where(and(eq(deviceAlerts.type, OFFLINE_TYPE), isNull(deviceAlerts.clearedAt)));
   const openSet = new Set(openAlerts.map((a) => a.drmsId));
 
-  const toOpen = stale.filter((s) => !openSet.has(s.drmsId));
+  const skippedDueToOutage = isCollectionOutage({
+    devicesExpectingReadings: stale.length + fresh.length,
+    devicesStale: stale.length,
+  });
+
+  const toOpen = skippedDueToOutage ? [] : stale.filter((s) => !openSet.has(s.drmsId));
   const toClear = fresh.filter((f) => openSet.has(f.drmsId));
 
   if (toOpen.length > 0) {
@@ -76,5 +95,5 @@ export async function evaluateOfflineAlerts(db: Db, opts: { now: Date; threshold
     .from(deviceAlerts)
     .where(and(eq(deviceAlerts.type, OFFLINE_TYPE), isNull(deviceAlerts.clearedAt)));
 
-  return { opened: toOpen.length, cleared: toClear.length, open: n };
+  return { opened: toOpen.length, cleared: toClear.length, open: n, skippedDueToOutage };
 }

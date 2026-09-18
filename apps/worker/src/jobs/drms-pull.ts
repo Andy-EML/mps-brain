@@ -110,6 +110,9 @@ export async function runDrmsPull(deps: DrmsPullDeps): Promise<JobResult> {
       customers,
       alertsOpened: alerts.opened,
       alertsCleared: alerts.cleared,
+      // Why a run with stale devices opened nothing: DRMS collected no meter reading for any
+      // device, so this is a collection outage rather than a fleet of offline devices.
+      alertsSkippedDueToOutage: alerts.skippedDueToOutage,
     },
     errorSample,
   };

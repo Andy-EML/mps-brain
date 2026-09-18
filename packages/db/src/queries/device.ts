@@ -13,7 +13,7 @@ import {
   vantageSalesOrders,
 } from '../schema';
 import type { DeviceRow } from './devices';
-import { counterPivotSubquery, offlineCutoff, toNumberOrNull } from './shared';
+import { counterPivotSubquery, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
 export interface DeviceDetail {
   device: DeviceRow;
@@ -44,9 +44,11 @@ export interface DeviceDetail {
 
 export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | null> {
   const pivot = counterPivotSubquery(db);
+  const alarms = lastAlarmSubquery(db);
 
   const [row] = await db
     .select({
+      lastAlarmAt: alarms.lastAlarmAt,
       drmsId: drmsEquipment.drmsId,
       serial: drmsEquipment.serial,
       name: drmsEquipment.productName,
@@ -81,6 +83,8 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
     .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
     .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
     .leftJoin(pivot, eq(pivot.drmsId, drmsEquipment.drmsId))
+    // Grouped to one row per device, so the detail query still returns exactly one row.
+    .leftJoin(alarms, eq(alarms.drmsId, drmsEquipment.drmsId))
     .where(eq(drmsEquipment.drmsId, drmsId));
 
   if (!row) return null;
@@ -107,6 +111,7 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
     linkMethod: row.linkMethod,
     lastCounterAt,
     offline: lastCounterAt !== null && lastCounterAt < cutoff,
+    lastAlarmAt: row.lastAlarmAt ?? null,
     toner: {
       black: toNumberOrNull(row.black),
       cyan: toNumberOrNull(row.cyan),

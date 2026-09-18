@@ -18,7 +18,7 @@ import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './a
 import { countAlerts, listAlerts } from './alerts';
 import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms, listDeviceOrders } from './device';
 import { listDevices } from './devices';
-import { getConsumableWarnings, getCustomerCount, getFleetSummary, getTonerHealth } from './fleet';
+import { getCollectionStatus, getConsumableWarnings, getCustomerCount, getFleetSummary, getTonerHealth } from './fleet';
 import { getIssueCounts, listIssues, searchVantageEquipment } from './issues';
 
 // Frozen "now" for the whole suite: seedDemoFixture's hoursAgo()/daysAgo() helpers and the query
@@ -85,6 +85,63 @@ describe('queries', () => {
     it('honours a custom offline threshold', async () => {
       const summary = await getFleetSummary(t.db, { offlineHours: 48 });
       expect(summary.offline).toBe(0);
+    });
+  });
+
+  describe('getCollectionStatus', () => {
+    it('reports the newest reading, the reporting fleet and the stale part of it', async () => {
+      // Fixture: D1 reported 2h ago, D2 30h ago, D3 has never reported.
+      const status = await getCollectionStatus(t.db);
+      expect(status.newestReadingAt?.getTime()).toBe(FIXED_NOW.getTime() - 2 * 3_600_000);
+      expect(status.devicesExpectingReadings).toBe(2);
+      expect(status.devicesStale).toBe(1);
+      expect(status.outage).toBe(false);
+    });
+
+    it('flags an outage once every reporting device is stale', async () => {
+      const staleAt = new Date(FIXED_NOW.getTime() - 26 * 3_600_000);
+      await t.db
+        .update(drmsEquipment)
+        .set({ lastCounterReceivedTime: staleAt })
+        .where(eq(drmsEquipment.drmsId, f.drms.online));
+
+      const status = await getCollectionStatus(t.db);
+      expect(status).toEqual({
+        newestReadingAt: staleAt,
+        devicesExpectingReadings: 2,
+        devicesStale: 2,
+        outage: true,
+      });
+    });
+
+    it('is not an outage when no device has ever reported', async () => {
+      await t.db.update(drmsEquipment).set({ lastCounterReceivedTime: null });
+      expect(await getCollectionStatus(t.db)).toEqual({
+        newestReadingAt: null,
+        devicesExpectingReadings: 0,
+        devicesStale: 0,
+        outage: false,
+      });
+    });
+
+    it('ignores devices DRMS no longer expects to hear from', async () => {
+      // D2 (the stale one) goes missing, so only the fresh D1 is still expected: not an outage,
+      // and D2 must not be counted on either side of the tally.
+      await t.db
+        .update(drmsEquipment)
+        .set({ missingSince: FIXED_NOW })
+        .where(eq(drmsEquipment.drmsId, f.drms.offline));
+
+      const status = await getCollectionStatus(t.db);
+      expect(status.devicesExpectingReadings).toBe(1);
+      expect(status.devicesStale).toBe(0);
+      expect(status.outage).toBe(false);
+    });
+
+    it('honours a custom staleness threshold', async () => {
+      const status = await getCollectionStatus(t.db, { staleHours: 48 });
+      expect(status.devicesStale).toBe(0);
+      expect(status.outage).toBe(false);
     });
   });
 
@@ -227,6 +284,52 @@ describe('queries', () => {
       const unsorted = await listDevices(t.db);
       expect(unsorted.rows.map((r) => r.drmsId)).toEqual(['A0-HEALTHY', f.drms.online, f.drms.offline, f.drms.unlinked]);
     });
+
+    describe('lastAlarmAt', () => {
+      it('is the newest alarm per device, and null for a device with none', async () => {
+        const newest = new Date(FIXED_NOW.getTime() - 40 * 60_000);
+        await t.db.insert(deviceAlarms).values([
+          {
+            alarmId: 'a-old',
+            drmsEquipmentId: f.drms.offline,
+            receivedTime: new Date(FIXED_NOW.getTime() - 5 * 86_400_000),
+            category: 'toner',
+            raw: {},
+          },
+          { alarmId: 'a-new', drmsEquipmentId: f.drms.offline, receivedTime: newest, category: 'toner', raw: {} },
+          {
+            alarmId: 'a-other',
+            drmsEquipmentId: f.drms.online,
+            receivedTime: new Date(FIXED_NOW.getTime() - 3 * 86_400_000),
+            category: 'jam',
+            raw: {},
+          },
+        ]);
+
+        const { rows } = await listDevices(t.db);
+        const byId = new Map(rows.map((r) => [r.drmsId, r]));
+        // The device with no meter reading is still talking to CSRC — an alarm arrived 40 min ago.
+        expect(byId.get(f.drms.offline)?.lastAlarmAt?.getTime()).toBe(newest.getTime());
+        expect(byId.get(f.drms.online)?.lastAlarmAt?.getTime()).toBe(FIXED_NOW.getTime() - 3 * 86_400_000);
+        expect(byId.get(f.drms.unlinked)?.lastAlarmAt).toBeNull();
+      });
+
+      it('does not multiply rows when a device has several alarms', async () => {
+        await t.db.insert(deviceAlarms).values(
+          [1, 2, 3].map((i) => ({
+            alarmId: `dup-${i}`,
+            drmsEquipmentId: f.drms.online,
+            receivedTime: new Date(FIXED_NOW.getTime() - i * 3_600_000),
+            category: 'toner',
+            raw: {},
+          })),
+        );
+
+        const { rows, total } = await listDevices(t.db);
+        expect(rows).toHaveLength(3);
+        expect(total).toBe(3);
+      });
+    });
   });
 
   describe('getDevice / getLatestCounters / getCounterHistory', () => {
@@ -239,6 +342,25 @@ describe('queries', () => {
       expect(detail?.latestSnapshotAt?.getTime()).toBe(FIXED_NOW.getTime() - 2 * 3_600_000);
       expect(detail?.drmsRaw).toEqual({});
       expect(detail?.vantageRaw).toEqual({});
+    });
+
+    it('getDevice carries lastAlarmAt, the second signal that a device is reaching CSRC', async () => {
+      const newest = new Date(FIXED_NOW.getTime() - 27 * 60_000);
+      await t.db.insert(deviceAlarms).values([
+        {
+          alarmId: 'det-old',
+          drmsEquipmentId: f.drms.offline,
+          receivedTime: new Date(FIXED_NOW.getTime() - 2 * 86_400_000),
+          category: 'toner',
+          raw: {},
+        },
+        { alarmId: 'det-new', drmsEquipmentId: f.drms.offline, receivedTime: newest, category: 'toner', raw: {} },
+      ]);
+
+      const detail = await getDevice(t.db, f.drms.offline);
+      expect(detail?.device.lastAlarmAt?.getTime()).toBe(newest.getTime());
+      // And null where a device has never raised one.
+      expect((await getDevice(t.db, f.drms.unlinked))?.device.lastAlarmAt).toBeNull();
     });
 
     it('getDevice returns null for an unknown drms id', async () => {

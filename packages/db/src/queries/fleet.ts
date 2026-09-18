@@ -1,3 +1,4 @@
+import { isCollectionOutage } from '@mps/core';
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, max, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceAlarms, deviceLinks, drmsEquipment, linkIssues, syncRuns, vantageEquipment } from '../schema';
@@ -10,6 +11,14 @@ export interface FleetSummary {
   needsToner: number;
   criticalToner: number;
   lowToner: number;
+  /**
+   * Devices with **no meter reading** inside the threshold window — DRMS collected no counter set
+   * for them. Not a reachability signal: DRMS collects roughly once a day for the whole fleet, so
+   * a stalled collection makes every reporting device look "offline" at once. Check
+   * `getCollectionStatus().outage` before presenting this as a count of devices in trouble. The
+   * field name stays as it is so the `?filter=offline` links and the `offline` alert type keep
+   * working; the user-facing label is "No meter reading".
+   */
   offline: number;
   openIssues: number;
   lastSyncAt: Date | null;
@@ -63,6 +72,51 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
     offline: offlineRow?.n ?? 0,
     openIssues: issuesRow?.n ?? 0,
     lastSyncAt: syncRow?.finishedAt ?? null,
+  };
+}
+
+export interface CollectionStatus {
+  /** The newest `LastCounterReceivedTime` anywhere in the reporting fleet. */
+  newestReadingAt: Date | null;
+  /** Monitored devices that have reported a counter at least once — DRMS should keep collecting from them. */
+  devicesExpectingReadings: number;
+  /** How many of those have no reading inside the threshold window. */
+  devicesStale: number;
+  /** True when *every* reporting device is stale: collection has stopped, not the fleet. */
+  outage: boolean;
+}
+
+/**
+ * Whether DRMS is still collecting meter counters at all.
+ *
+ * The device set is the one `evaluateOfflineAlerts` alerts on — monitored (not missing, not
+ * `Deleted`) and having reported at least once — so the banner on screen and the worker's
+ * decision to hold off opening alerts always agree about what an outage is.
+ *
+ * One grouped scan of `drms_equipment`; no join.
+ *
+ * @param opts.staleHours Staleness threshold, default 24 (`DEFAULT_OFFLINE_HOURS`).
+ */
+export async function getCollectionStatus(db: Db, opts: { staleHours?: number } = {}): Promise<CollectionStatus> {
+  const cutoff = offlineCutoff(opts.staleHours);
+
+  const [row] = await db
+    .select({
+      newestReadingAt: max(drmsEquipment.lastCounterReceivedTime),
+      expecting: sql<number>`count(*)::int`,
+      stale: sql<number>`count(*) filter (where ${drmsEquipment.lastCounterReceivedTime} < ${cutoff})::int`,
+    })
+    .from(drmsEquipment)
+    .where(and(monitoredCondition(), isNotNull(drmsEquipment.lastCounterReceivedTime)));
+
+  const devicesExpectingReadings = Number(row?.expecting ?? 0);
+  const devicesStale = Number(row?.stale ?? 0);
+
+  return {
+    newestReadingAt: row?.newestReadingAt ?? null,
+    devicesExpectingReadings,
+    devicesStale,
+    outage: isCollectionOutage({ devicesExpectingReadings, devicesStale }),
   };
 }
 

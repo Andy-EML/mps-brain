@@ -1,7 +1,7 @@
 import { and, asc, count, eq, ilike, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
-import { counterPivotSubquery, offlineCutoff, toNumberOrNull } from './shared';
+import { counterPivotSubquery, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
 export interface DeviceRow {
   drmsId: string;
@@ -13,8 +13,22 @@ export interface DeviceRow {
   vantageCustomerName: string | null;
   vantageEquipmentId: number | null;
   linkMethod: string | null;
+  /** When DRMS last collected a meter counter set for this device. */
   lastCounterAt: Date | null;
+  /**
+   * **No meter reading** inside the threshold window: `lastCounterAt` is older than 24 h. It does
+   * *not* mean the device is unreachable — DRMS collects counters roughly once a day, so a stalled
+   * collection sets this on every reporting device at once. `lastAlarmAt` is the independent
+   * signal of life. The field name is kept so `?filter=offline` links stay valid; the label on
+   * screen is "No meter reading".
+   */
   offline: boolean;
+  /**
+   * The newest alarm DRMS received from this device, or null if it has never raised one. The alarm
+   * feed refreshes every ~27 min, so a recent value proves the device is reaching CSRC even when
+   * no meter reading has arrived.
+   */
+  lastAlarmAt: Date | null;
   toner: { black: number | null; cyan: number | null; magenta: number | null; yellow: number | null };
   meters: { black: number | null; colour: number | null; scan: number | null };
 }
@@ -34,8 +48,12 @@ export interface DeviceListOptions {
   offset?: number;
 }
 
-function deviceRowFields(pivot: ReturnType<typeof counterPivotSubquery>) {
+function deviceRowFields(
+  pivot: ReturnType<typeof counterPivotSubquery>,
+  alarms: ReturnType<typeof lastAlarmSubquery>,
+) {
   return {
+    lastAlarmAt: alarms.lastAlarmAt,
     drmsId: drmsEquipment.drmsId,
     serial: drmsEquipment.serial,
     name: drmsEquipment.productName,
@@ -67,6 +85,7 @@ interface RawDeviceRow {
   vantageEquipmentId: number | null;
   linkMethod: string | null;
   lastCounterAt: Date | null;
+  lastAlarmAt: Date | null;
   black: number | null;
   cyan: number | null;
   magenta: number | null;
@@ -90,6 +109,7 @@ function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
     linkMethod: r.linkMethod,
     lastCounterAt,
     offline: lastCounterAt !== null && lastCounterAt < cutoff,
+    lastAlarmAt: r.lastAlarmAt ?? null,
     toner: {
       black: toNumberOrNull(r.black),
       cyan: toNumberOrNull(r.cyan),
@@ -109,6 +129,7 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
   const offset = o.offset ?? 0;
   const cutoff = offlineCutoff();
   const pivot = counterPivotSubquery(db);
+  const alarms = lastAlarmSubquery(db);
 
   const conds = [];
   if (o.search) {
@@ -149,11 +170,13 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
   const orderBy = o.sort === 'urgent' ? [urgencyRank, urgencyTieBreak] : [asc(drmsEquipment.drmsId)];
 
   const rowsQuery = db
-    .select(deviceRowFields(pivot))
+    .select(deviceRowFields(pivot, alarms))
     .from(drmsEquipment)
     .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
     .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
     .leftJoin(pivot, eq(pivot.drmsId, drmsEquipment.drmsId))
+    // Already grouped to one row per device, so this cannot multiply rows (or the count below).
+    .leftJoin(alarms, eq(alarms.drmsId, drmsEquipment.drmsId))
     .where(where)
     .orderBy(...orderBy)
     .limit(limit)

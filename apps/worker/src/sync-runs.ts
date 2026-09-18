@@ -6,7 +6,13 @@ export type RunStatus = 'success' | 'partial' | 'failed';
 
 export interface JobResult {
   status: RunStatus;
-  stats: Record<string, number>;
+  /**
+   * Written verbatim to `sync_runs.stats` (jsonb) and rendered by `statLines` on the admin jobs
+   * page. Mostly counts; a boolean is allowed for a flag that explains a count, such as
+   * `alertsSkippedDueToOutage` — "0 opened" and "0 opened because collection stopped" are
+   * different facts and 0/1 would not say which.
+   */
+  stats: Record<string, number | boolean>;
   errorSample?: string;
 }
 
