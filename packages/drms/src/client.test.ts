@@ -89,4 +89,63 @@ describe('DRMS client', () => {
     const { fn } = fakeFetch(() => new Response('"Ok(28.11.2021 14: 48: 30)"'));
     expect(await client(fn).testAuth()).toBe('"Ok(28.11.2021 14: 48: 30)"');
   });
+
+  describe('listAlarms', () => {
+    const dateFrom = new Date('2026-09-16T00:00:00Z');
+    const dateTo = new Date('2026-09-17T00:00:00Z');
+
+    it('sends dates formatted YYYY-MM-DD HH:mm:ss UTC and the method key for the limiter', async () => {
+      const { fn, calls } = fakeFetch(() => json([]));
+      await client(fn).listAlarms({ dateFrom, dateTo });
+      expect(calls[0]?.url.pathname).toBe('/api/v8/Equipment/Alarms');
+      expect(calls[0]?.url.searchParams.get('dateFrom')).toBe('2026-09-16 00:00:00');
+      expect(calls[0]?.url.searchParams.get('dateTo')).toBe('2026-09-17 00:00:00');
+      expect(calls[0]?.url.searchParams.get('pageNo')).toBe('1');
+    });
+
+    it('flattens the per-equipment Alarms arrays, keeping the equipment Id', async () => {
+      const { fn } = fakeFetch(() =>
+        json([
+          {
+            Id: 'eq-1',
+            Alarms: [
+              { AlarmId: 'a1', FcCode: 'TN-00', Description: 'Toner near empty', Status: 'EquipmentDiscovered', ReceivedTime: '2026-09-16 01:00:00' },
+              { AlarmId: 'a2', FcCode: 'TO-00', Description: 'Waste toner full', Status: 'ReadyForErpDelivery', ReceivedTime: '2026-09-16 02:00:00' },
+            ],
+          },
+          { Id: 'eq-2', Alarms: [{ AlarmId: 'a3', FcCode: 'SC-00', Status: 'EquipmentDiscovered', ReceivedTime: '2026-09-16 03:00:00' }] },
+        ]),
+      );
+      const alarms = await client(fn).listAlarms({ dateFrom, dateTo });
+      expect(alarms).toHaveLength(3);
+      expect(alarms[0]).toMatchObject({ EquipmentId: 'eq-1', AlarmId: 'a1', FcCode: 'TN-00' });
+      expect(alarms[2]).toMatchObject({ EquipmentId: 'eq-2', AlarmId: 'a3' });
+    });
+
+    it('treats an entry with no Alarms array as contributing nothing', async () => {
+      const { fn } = fakeFetch(() => json([{ Id: 'eq-1', Alarms: null }]));
+      expect(await client(fn).listAlarms({ dateFrom, dateTo })).toEqual([]);
+    });
+
+    it('paginates until a short page, like the other list* methods', async () => {
+      const page1 = Array.from({ length: 1000 }, (_, i) => ({ Id: `eq-${i}`, Alarms: [{ AlarmId: `a-${i}`, FcCode: 'TN-00', Status: 'EquipmentDiscovered', ReceivedTime: '2026-09-16 01:00:00' }] }));
+      const page2 = [{ Id: 'eq-last', Alarms: [{ AlarmId: 'a-last', FcCode: 'TN-00', Status: 'EquipmentDiscovered', ReceivedTime: '2026-09-16 01:00:00' }] }];
+      const { fn, calls } = fakeFetch((url) => (url.searchParams.get('pageNo') === '1' ? json(page1) : json(page2)));
+      const alarms = await client(fn).listAlarms({ dateFrom, dateTo });
+      expect(alarms).toHaveLength(1001);
+      expect(calls).toHaveLength(2);
+    });
+
+    it('rejects a range longer than 1 day without calling the API', async () => {
+      const { fn, calls } = fakeFetch(() => json([]));
+      await expect(client(fn).listAlarms({ dateFrom, dateTo: new Date('2026-09-17T00:00:01Z') })).rejects.toBeInstanceOf(HttpError);
+      expect(calls).toHaveLength(0);
+    });
+
+    it('throws RateLimitError on 429 without paginating further', async () => {
+      const { fn, calls } = fakeFetch(() => new Response('', { status: 429 }));
+      await expect(client(fn).listAlarms({ dateFrom, dateTo })).rejects.toBeInstanceOf(RateLimitError);
+      expect(calls).toHaveLength(1);
+    });
+  });
 });

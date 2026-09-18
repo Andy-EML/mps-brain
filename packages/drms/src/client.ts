@@ -2,17 +2,33 @@ import { AuthError, HttpError, ParseError, RateLimitError } from '@mps/core';
 import type { z } from 'zod';
 import { MethodLimiter } from './limiter';
 import {
+  drmsAlarmsEntrySchema,
   drmsCustomerSchema,
   drmsEquipmentSchema,
   drmsLatestCountersSchema,
   type DrmsCustomer,
   type DrmsEquipment,
+  type DrmsFlatAlarm,
   type DrmsLatestCounters,
 } from './schemas';
 
 export const DRMS_PAGE_SIZE = 1000;
 /** Confirmed in Phase 0 findings (spec). */
 export const FIRST_PAGE_NO = 1;
+/** Verified live 2026-09-18: a longer range returns HTTP 400 (max 1 day). */
+export const MAX_ALARM_RANGE_MS = 24 * 60 * 60 * 1000;
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** Formats a Date as DRMS's `YYYY-MM-DD HH:mm:ss` UTC, used for dateFrom/dateTo query params. */
+export function formatDrmsDateTime(d: Date): string {
+  return (
+    `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ` +
+    `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`
+  );
+}
 
 export interface DrmsClientOptions {
   baseUrl: string;
@@ -113,6 +129,40 @@ export function createDrmsClient(opts: DrmsClientOptions) {
         throw err;
       }
       return body === null ? null : parseItem('LatestCounters', drmsLatestCountersSchema, body);
+    },
+    /**
+     * Alarms for all equipment in [dateFrom, dateTo]. DRMS rejects a range over 1 day (HTTP 400),
+     * so this validates that client-side and throws `HttpError`; callers that need to catch up a
+     * longer gap must split it into per-day calls (see the drms-alarms worker job).
+     */
+    async listAlarms(params: { dateFrom: Date; dateTo: Date }): Promise<DrmsFlatAlarm[]> {
+      const { dateFrom, dateTo } = params;
+      if (dateTo.getTime() - dateFrom.getTime() > MAX_ALARM_RANGE_MS) {
+        throw new HttpError(
+          'DRMS Equipment/Alarms range exceeded the 1-day maximum allowed by the API',
+          400,
+        );
+      }
+      const out: DrmsFlatAlarm[] = [];
+      const seen = new Set<string>();
+      for (let pageNo = FIRST_PAGE_NO; ; pageNo++) {
+        const body = await requestJson('Equipment/Alarms', 'Equipment/Alarms', {
+          dateFrom: formatDrmsDateTime(dateFrom),
+          dateTo: formatDrmsDateTime(dateTo),
+          pageNo,
+        });
+        if (body === null) return out;
+        if (!Array.isArray(body)) throw new ParseError('DRMS Equipment/Alarms did not return an array', 200);
+        let added = 0;
+        for (const raw of body) {
+          const entry = parseItem('Equipment/Alarms', drmsAlarmsEntrySchema, raw);
+          if (seen.has(entry.Id)) continue;
+          seen.add(entry.Id);
+          added++;
+          for (const alarm of entry.Alarms ?? []) out.push({ ...alarm, EquipmentId: entry.Id });
+        }
+        if (body.length < DRMS_PAGE_SIZE || added === 0) return out;
+      }
     },
   };
 }

@@ -43,7 +43,27 @@ export const drmsLatestCountersSchema = z.looseObject({
     .nullish(),
 });
 
+export const drmsAlarmSchema = z.looseObject({
+  AlarmId: z.string(),
+  ReceivedTime: str,
+  FcCode: str,
+  ScCode: str,
+  Description: str,
+  Status: str,
+  TotalCount: z.union([z.number(), z.string()]).nullish(),
+  TotalColorCount: z.union([z.number(), z.string()]).nullish(),
+});
+
+export const drmsAlarmsEntrySchema = z.looseObject({
+  Id: z.string(),
+  Alarms: z.array(drmsAlarmSchema).nullish(),
+});
+
 export type DrmsEquipment = z.infer<typeof drmsEquipmentSchema>;
 export type DrmsCustomer = z.infer<typeof drmsCustomerSchema>;
 export type DrmsCounter = z.infer<typeof drmsCounterSchema>;
 export type DrmsLatestCounters = z.infer<typeof drmsLatestCountersSchema>;
+export type DrmsAlarm = z.infer<typeof drmsAlarmSchema>;
+export type DrmsAlarmsEntry = z.infer<typeof drmsAlarmsEntrySchema>;
+/** A single alarm flattened with the equipment `Id` it came from (see `listAlarms`). */
+export type DrmsFlatAlarm = DrmsAlarm & { EquipmentId: string };
