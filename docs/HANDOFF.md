@@ -1,4 +1,42 @@
-# Handoff — end of 2026-09-17
+# Handoff — end of 2026-09-17 (updated 2026-09-18)
+
+## 0a. Update — 2026-09-18 16:20 (supersedes 0b below where they disagree)
+
+- **DRMS registration is finished.** 258 of 260 selected devices registered across five
+  batches. The DB now holds 293 Registered, 541 Discovered, 2 Deleted. The two failures were
+  both "already registered in CSRC backbone" (A7PY321200377, AA7R021035348) and need nothing.
+- **The counter outage resolved itself.** DRMS resumed collecting on 18 Sep; 198 devices now
+  expect readings and 175 have one inside 24h. 195 devices have toner levels, against 32
+  before registration. Nothing to escalate to KM on that front.
+- **Tasks 9C and 3B are complete and reviewed.** 9C replaced "Offline" with "No meter
+  reading", added a fleet-wide outage banner, and after a live miss was changed to a
+  proportional rule: outage when `stale / expecting >= 0.7` (`COLLECTION_OUTAGE_STALE_RATIO`),
+  shared by the worker and the web so they cannot disagree. Alerts now stand at 21 open, all
+  genuine.
+- **Task 9D is in flight:** mono devices have no colour cartridges. A device is colour only
+  if its model name carries `C` before the model number, a `+` (Develop `ineo+`), or `MF`;
+  everything else is mono. `isColourModel` in `packages/core/src/models.ts` is the single
+  source of truth, verified against the fleet. The task adds `is_colour` to `drms_equipment`,
+  nulls CMY inside `counterPivotSubquery` (which fixes needs-toner, urgency sort and fleet
+  toner health at once) and drops the colour bars, tiles and meter column on mono devices.
+- **Order from here:** 9D → 9B full test pass → sub-project 3 (replenishment: threshold
+  cascade, `auto_replenish`, bulk settings, operator review queue, real Vantage orders) →
+  4 site stock → 2 meter sync → 5 notifications → **Task 10 deploy last**.
+- **The "Needs toner" tile must open the toner order queue**, not a filtered device list.
+  That screen belongs to sub-project 3.
+- **Stop the worker while an implementer is editing `apps/worker`** — tsx watch restarts it
+  on every save and will interrupt a running job.
+
+## 0b. Update — 2026-09-18 13:20
+
+- **Part 1 merged to `main`** and pushed to `github.com/Andy-EML/mps-brain` (private), along with `feat/foundation-web`.
+- **Part 2 (web + deploy)** is on `feat/foundation-web`, plan `docs/superpowers/plans/2026-09-18-foundation-part2-web-deploy.md`, live status in the SDD ledger `.superpowers/sdd/2026-09-18-foundation-part2-web-deploy/progress.md`.
+  - Done and reviewed: alerts table, query layer, offline alerts + hourly DRMS pull, **alarm pull** (waste toner, drums, imaging units), web scaffold/login/shell, fleet overview + devices list, device detail, link issues queue, alerts page, admin. ~295 tests.
+  - Remaining: **9A** review follow-ups → **3B** Vantage sales-order history (read-only, colour chips per order line) → **9B** full test pass (worker end-to-end + page-by-page UI, writes `docs/TEST-REPORT-*.md`) → **10** Docker/Portainer deploy.
+- **Dashboard runs locally:** `npm run dev -w @mps/web` → http://localhost:3000 (admin credentials from `.env`).
+- **Registration:** batch-04 (50 devices) started 2026-09-18 ~13:15. Totals before it: 47 registered, 1 failed/Deleted, 7 skipped.
+- **Open issue:** no device in the fleet has collected counters since 2026-09-17 12:01 UTC — including the 35 that were reporting before. So it isn't caused by our registrations. Re-check; escalate to KM if the older devices resume and ours don't.
+- **Decisions since yesterday:** sub-project 3 creates real Vantage orders (not provisional); order status comes from `CompletedDate`; colour of an order line comes from its `Details` text (MISC = machines another reseller supplies); no jams/service events on the dashboard; test thoroughly before deploying.
 
 Where to pick up tomorrow. Read this first, then `CLAUDE.md`, then the spec.
 

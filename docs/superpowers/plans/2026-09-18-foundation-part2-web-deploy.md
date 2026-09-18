@@ -24,7 +24,7 @@
 - Tests: Vitest, PGlite for anything touching the DB. Test query helpers, domain logic and server actions. No DOM/browser tests in this plan.
 - Colours (from the mockups): accent `#0F6B5C`, page background `#F7F8F8`, card `#FFFFFF`, border `#E7E9E9`, text `#1A1D1D`, muted `#6B7280`; toner: cyan `#29ABE2`, magenta `#E5177B`, yellow `#F5C400`, black `#111111`, waste `#9AA0A6`; status: ok `#16A34A`, warn `#D97706`, critical `#DC2626`.
 - Thresholds for display: toner **critical < 5%**, **low < 20%** (the spec's per-customer thresholds arrive in sub-project 3).
-- Don't build ordering, auto-reorder, uptime or "book an engineer" — no data or not wanted. Jams and service-code events are pulled and stored (Task 3A) but hidden from the UI by default. Drums, imaging units, waste bottles and filters appear only as PartsLife/waste **alarms**, never as percentages — DRMS has no counters for them.
+- Don't build order **creation**, auto-reorder, uptime or "book an engineer" (order history is read-only in Task 3B; creating orders belongs to sub-project 3) — no data or not wanted. Jams and service-code events are pulled and stored (Task 3A) but hidden from the UI by default. Drums, imaging units, waste bottles and filters appear only as PartsLife/waste **alarms**, never as percentages — DRMS has no counters for them.
 
 ## File Map
 
@@ -334,6 +334,70 @@ In `main.ts` use `env.DRMS_PULL_CRON` for the drms-pull schedule and pass `thres
 
 ---
 
+### Task 3B: Vantage sales order pull (what toner was sent, and when)
+
+**Why:** operators need to see, on the device, whether a toner has already gone out and when the last one went — before anyone orders another. Sub-project 3's duplicate check will use the same tables. This task is **read-only**: no order is ever created here.
+
+**Files:**
+- Create: `apps/web/src/components/colour-chip.tsx` (+ test for its label/ordering helper)
+- Modify: `packages/db/src/schema.ts` (+ `vantageSalesOrders`, `vantageSalesOrderLines`), generated migration
+- Modify: `packages/vantage/src/client.ts` (+ `listSalesOrders`), `client.test.ts`
+- Create: `apps/worker/src/jobs/vantage-orders.ts` + test
+- Modify: `apps/worker/src/{env,main,handlers,queue-options}.ts`, `packages/queue/src/index.ts` (`QUEUES.vantageOrders = 'vantage-orders'`), `.env.example`
+- Modify: `packages/db/src/queries/device.ts` (+ `listDeviceOrders`), `queries.test.ts`
+- Modify: `apps/web/src/app/(app)/devices/[id]/page.tsx` (+ an orders card)
+
+**Schema (mirrors the existing vantage_* tables — keep `raw jsonb`, `modified_date`, `deleted_date`, `synced_at`):**
+- `vantage_sales_orders`: `vantageId int pk`, `reference`, `orderDate date`, `completedDate date`, `isOnHold bool`, `isNonStock bool`, `typeId int`, `typeName text`, `createdByMps bool not null default false`, `vantageEquipmentId int`, `contractId int`, `customerSellToId int`, `customerShipToId int`, `raw`, `modifiedDate`, `deletedDate`, `syncedAt`. Index on `(vantageEquipmentId, orderDate desc)`.
+- `vantage_sales_order_lines`: `vantageId int pk`, `salesOrderId int not null`, `vantageEquipmentId int`, `itemId int`, `itemPartNumber text`, `itemDescription text`, `quantity numeric`, `returnedDate date`, `comment text`, `raw`, `syncedAt`. Index on `(salesOrderId)` and `(vantageEquipmentId, itemPartNumber)`.
+- No foreign key to `vantage_equipment`: an order can reference equipment we haven't synced. Filter by join instead.
+
+**Vantage client — `listSalesOrders({ since?, includeDeleted? })`:**
+- Entity `SalesOrder`, `$expand=Lines($expand=Item($select=Id,PartNumber,Description)),Type($select=Id,Name)`.
+- The same paging, `deleteddate eq null` guard and incremental filter as `listEquipment` (reuse `odataList` and `listFilters`).
+- Test with fake fetch: the expand string, the incremental filter, flattening lines.
+
+**Job `runVantageOrders(deps)`:**
+- Same shape as `vantage-pull`: incremental on the last successful run minus the standard overlap; weekly full refresh is unnecessary here (orders are append-mostly) — instead, when there's no previous success, pull the **last 24 months** using `orderdate ge <date>` so the first run doesn't drag in a decade of history.
+- Upsert orders and lines in chunks of 500. Lines are replaced per order: delete the order's existing lines, insert the fetched ones, inside the same transaction as that order's upsert.
+- Stats: `orders`, `lines`, `full` (1/0). `RateLimitError`/`AuthError` → `partial`, never retried.
+- Schedule `ORDERS_CRON`, default `40 2 * * *` (after the nightly Vantage pull), queue options expiry 3600 s.
+
+**Colour of an order line (`classifyOrderLine`, pure, in `@mps/core`, tested):**
+- Line `Details` is filled in even for `MISC` parts (the user's case: a machine another reseller supplies, ordered as MISC). Real examples: `"Xerox B310 Black Toner"`, `"Konica Minolta C3351i Black Toner - CMYK"`, `"Olivetti MF304 Magenta Toner"`, `"Konica Minolta C3351i Waste Toner"`.
+- `classifyOrderLine({ details, itemDescription, partNumber })` → `{ colour: 'black' | 'cyan' | 'magenta' | 'yellow' | 'waste' | 'unknown'; source: 'details' | 'item' | 'none' }`.
+- Rule order: match `Details` first (case-insensitive, whole words), then the item description, then give up. Colour detection is a convenience for the per-colour summary and sub-project 3's duplicate check; the line text is always shown as-is, so an unrecognised line is never hidden. `waste` wins over a colour when both appear (e.g. "Waste Toner"). `Black` also matches a standalone `K`/`BK`. A line like "Black Toner - CMYK" is `black` (the leading colour word wins over the trailing `CMYK`).
+- Store the result on `vantage_sales_order_lines` as `colour text` and `colour_source text`, computed on insert, so queries can filter without re-parsing.
+- Test it with the exact strings above plus a few awkward ones (no colour at all, two colours, "Magenta/Yellow").
+
+**Query `listDeviceOrders(db, vantageEquipmentId, opts?: { limit?: number })`:**
+- Orders for that equipment, newest first, each with its lines; also match lines whose own `vantageEquipmentId` is the device even when the order header points elsewhere (both link paths exist in Vantage).
+- Return `{ orders: [...], lastByColour: Record<colour, { partNumber, description, quantity, orderDate, reference, orderOpen: boolean }> }` — the most recent non-returned line per colour, so the device page can answer "when did black last go out, and is it still open?". Include `waste` as a colour.
+
+**Order status (confirmed against live data 2026-09-18):** `CompletedDate` is the open/closed flag — null = **Open**, set = **Completed**; `IsOnHold` is separate. `Type.Name` is either `Consumable order` or `Equipment deal`, so toner orders filter on the former. There are ~164 open orders today. Some orders have a null `EquipmentId` and generic parts (e.g. `MISC`), so every display path must tolerate that.
+
+**Decision (user, 2026-09-18):** sub-project 3 will create **real** Vantage sales orders (not provisional ones). Nothing extra is needed here: an order created by the app appears through this same pull and shows as **Open** until it's completed in Vantage. Add a `created_by_mps boolean not null default false` column to `vantage_sales_orders` now, so sub-project 3 can mark the orders it raises and the dashboard can badge them as "raised here".
+
+**Device page — "Consumable orders" card (place it under the alarms card):**
+- The same chip component is reused in the per-colour headline. Headline: one small row per colour (K/C/M/Y and waste) showing the last date sent, quantity and order reference, with an "Open" badge when that order is still open. Colours with no history show "—".
+- Table of the last 10 orders: date, reference, type, status (Open / Completed / On hold, derived from `completedDate`/`isOnHold`), and a "returned" marker where set.
+- **Colour chips per order row.** Beside the reference, render one small chip per line, in line order: a filled dot in the toner colour (cyan `#29ABE2`, magenta `#E5177B`, yellow `#F5C400`, black `#111111`) with the quantity next to it when it's more than 1 — so a black+magenta order shows two chips, and "black ×2" shows `●2`. Waste uses the grey waste colour with a hollow ring so it doesn't read as black. A line whose colour can't be determined gets a grey outline chip marked `?`. Every chip carries the line's full text as its `title`, and the chips have text labels for screen readers (`Black ×2`), so colour isn't the only signal.
+- **Each line shows its `Details` text verbatim** (e.g. "Xerox B310 Black Toner", "Konica Minolta C3351i Waste Toner") with the part number and quantity beside it — this is what makes `MISC` lines readable, since those are machines another reseller supplies. Fall back to the item description when `Details` is empty.
+- Status badges: **Open** (amber) when `completedDate` is null, **Completed** (green) when set, **On hold** (grey) when `isOnHold`. Orders with `createdByMps` get a small "raised here" tag.
+- Devices with no orders show a single muted line, like the other cards.
+
+- [ ] **Step 1:** schema + migration, with a test that lines are replaced (not duplicated) when an order is re-pulled.
+- [ ] **Step 2:** client method + fake-fetch tests (RED → GREEN).
+- [ ] **Step 3:** job + PGlite tests: first run's 24-month window, incremental window, line replacement, partial on rate limit.
+- [ ] **Step 4:** wiring (queue, schedule, handler, env).
+- [ ] **Step 5:** `listDeviceOrders` + tests.
+- [ ] **Step 6:** the device-page card.
+- [ ] **Step 7: Manual check** (read-only, real API): run the job once; report counts only (orders, lines, devices with orders) — no customer names; open a device that has orders and confirm the card matches the database.
+- [ ] **Step 8:** `npm test`, typecheck, lint, `next build`, commit.
+
+
+---
+
 ### Task 4: Web app scaffold, theme, session auth, login
 
 **Files:**
@@ -532,7 +596,107 @@ Password rules: at least 12 characters; hash with `hashPassword` from `@mps/db`;
 
 ---
 
+### Task 9A: Follow-ups from the task reviews (aggregates, alarm codes, unlink audit)
+
+Small, independent fixes collected from earlier reviews. Each has its own test.
+
+**Files:**
+- Modify: `packages/db/src/queries/fleet.ts` (+ `getTonerHealth`, `getCustomerCount`), `issues.ts` (+ `getIssueCounts`), `packages/db/src/queries/queries.test.ts`
+- Modify: `apps/web/src/app/(app)/page.tsx` (use the aggregates; drop the 5,000-row scan)
+- Modify: `packages/core/src/alarms.ts` + test (add the `TQ` prefix)
+- Modify: `packages/db/src/schema.ts` (+ `device_links.unlinked_by`), generated migration, `packages/db/src/queries/issue-actions.ts` (+ test)
+- Modify: `apps/web/src/components/search-input.tsx`
+
+**1. Overview aggregates (Important, from the Task 5 review).** The fleet page reads up to 5,000 device rows to tally cartridges, count customers and order its preview. Past that cap it would silently truncate.
+- `getTonerHealth(db)` → `{ healthy: number; low: number; critical: number; cartridges: number; devices: number }`, computed in SQL from the latest snapshot per device, using the same 5%/20% thresholds.
+- `getCustomerCount(db)` → the number of distinct linked Vantage customers among monitored devices.
+- `getIssueCounts(db)` → `countsByType` without fetching any issue rows.
+- The overview then calls these three plus `listDevices` with a small limit for its 8-row preview. Keep the preview's "most urgent first" ordering correct — do the ordering in SQL, not in JS over a large array.
+- Tests: assert the same numbers the current page produces for the shared fixture.
+
+**2. `TQ-*` alarm prefix (from the Task 6 review).** A real drum alarm (`TQ-10 PartsLife(DC_K)`) currently classifies as `other`. Add `TQ` to the `parts` prefixes in `classifyAlarm`, with a test case using that exact code.
+
+**3. `unlinked_by` (from the Task 7 review).** `unlinkDevice` takes a `userId` but can't store it. Add `unlinkedBy: integer('unlinked_by').references(() => users.id)` to `device_links`, generate an additive migration, and persist it in `unlinkDevice`. Test that a manual unlink records who did it, and that the worker's automatic unlinks leave it null.
+
+**4. Clear-search link (Minor, Task 5 review).** `SearchInput`'s "Clear search" link drops the active filter tab. Make it keep the other query parameters.
+
+- [ ] **Step 1:** TDD each item in order (1 → 4), each with its failing test first.
+- [ ] **Step 2:** `npm test`, `npm run typecheck`, `npm run lint`, `next build`.
+- [ ] **Step 3: Manual check:** the fleet overview shows the same numbers as before the change (836 devices, the same toner health split and customer count), with no full scan.
+- [ ] **Step 4:** commit.
+
+
+---
+
+### Task 9C: "Offline" means "no meter reading" — outage awareness
+
+**Why (user, 2026-09-18):** the dashboard showed 35 devices as **Offline** while CSRC showed them online. Our signal is `LastCounterReceivedTime` older than 24 h, which means "DRMS collected no meter reading", not "the device is unreachable". DRMS collects counters about once a day, and collection had not run at all since 17 Sep 12:01 UTC — so every device that ever reported looked offline at once. The user approved all three changes below; the 35 open alerts were deleted so they can be re-evaluated.
+
+**Files:** `packages/db/src/queries/{fleet,devices,device,alerts}.ts`, `packages/core` (a small pure helper), `apps/worker/src/jobs/alerts-evaluate.ts` (+ tests), `apps/web/src/components/toner.ts` + the pages that use the label, `apps/web/src/app/(app)/{page,alerts/page,devices/[id]/page}.tsx`.
+
+**1. Rename the concept.** Everywhere a user can see it, "Offline" becomes **"No meter reading"** (stat card: *No meter reading · in the last 24h*; device status line: *No meter reading · 31h*; alerts page title and row text). The query field names may stay as they are, but add a doc comment on each saying what it really means. Keep the URL filter value `offline` so existing links work, and label the tab "No meter reading".
+
+**2. Detect a fleet-wide collection outage.**
+- New query `getCollectionStatus(db)` → `{ newestReadingAt: Date | null; devicesExpectingReadings: number; devicesStale: number; outage: boolean }`. `outage` is true when **every** device that has ever reported is stale (`devicesStale === devicesExpectingReadings && devicesExpectingReadings > 0`).
+- Fleet overview: when `outage`, show a full-width amber banner above the cards — "No meter readings received since {date}. DRMS collects counters about once a day; this affects every device, so it looks like a collection problem rather than a device problem." The "No meter reading" stat card then shows "— (collection stopped)" instead of a count of devices.
+- Alerts page: the same banner, above the tabs.
+- **The worker must not open per-device alerts during an outage.** In `evaluateOfflineAlerts`, compute the same outage condition first; when it holds, skip opening (still clear alerts for devices that reported). Return `skippedDueToOutage: true` in the evaluation, and include it in the job stats. Existing open alerts are left alone.
+- Tests: an all-stale fleet opens nothing and reports the outage; a mixed fleet (some fresh, some stale) opens alerts as before; the transition from outage to normal opens the genuinely stale ones on the next run.
+
+**3. Last alarm as a second signal of life.**
+- `DeviceRow`/`DeviceDetail` gain `lastAlarmAt` (max `device_alarms.received_time` per device — the alarm feed refreshes every ~27 minutes, so a recent alarm proves the device is talking to CSRC even with no meter reading).
+- Device page: show "Last alarm: {relative time}" in the record card, and in the offline banner add "but an alarm arrived {relative time}, so the device is reaching CSRC" when `lastAlarmAt` is within 24 h.
+- Devices list: when a device has no recent meter reading **but** a recent alarm, the status line reads "No meter reading · reaching CSRC" in amber rather than red.
+- Keep it cheap: one grouped aggregate joined like the snapshot pivot, not a per-row query.
+
+- [ ] **Step 1:** `getCollectionStatus` + the outage rule in `evaluateOfflineAlerts` (TDD, both directions of the transition).
+- [ ] **Step 2:** `lastAlarmAt` in the queries (TDD).
+- [ ] **Step 3:** the renames and the banner across the pages.
+- [ ] **Step 4:** `npm test`, typecheck, lint, `next build`.
+- [ ] **Step 5: Manual check** against the live DB — today the fleet is in a genuine outage, so the banner must appear, the stat card must not claim 35 devices are offline, and a worker run must open **no** alerts. Report what you saw.
+- [ ] **Step 6:** commit.
+
+
+---
+
+### Task 9B: Full test pass before deploy
+
+Nothing new is built here. This is a deliberate, written-up test of the whole Foundation against real data, run before the stack is containerised. Two parts, both required by the user.
+
+**Output:** `docs/TEST-REPORT-2026-09-18.md`, committed. Every check gets a line: what was run, what was expected, what happened, pass/fail. Failures become findings for the controller to rule on, not silent fixes — fix only what is clearly broken and small, and list anything larger.
+
+**Part A — end-to-end worker run (real APIs, read-only against DRMS/Vantage)**
+1. Start the worker (`npm run dev -w @mps/worker`). Confirm it migrates, marks stale runs, seeds nothing unexpected, and logs `[worker] ready`.
+2. Trigger each job once via `apps/worker/scripts/send-job.ts`, in this order, waiting for each: `vantage-pull` (full), `drms-pull`, `link-run`, `drms-alarms`, `drms-snapshot`.
+3. For each: record `sync_runs.status`, duration and `stats`. Nothing may be `failed`. Explain every `partial`.
+4. Verify afterwards with SQL counts only (no customer names in the report): devices by DRMS status, Vantage equipment, active links by method, open issues by type, snapshots, counter names, alarms by category, open/cleared alerts.
+5. Re-run `drms-pull` and `drms-alarms` a second time and confirm they're idempotent (no duplicate alarms; `markedMissing` stays 0; alert counts stable).
+6. Confirm the queue schedules exist with the expected crons and timezone, then **stop the worker** and confirm no node process is left listening.
+
+**Part B — page-by-page UI walkthrough (real data)**
+Run `npm run dev -w @mps/web`. Sign in as admin. Walk every page and every action, recording what you saw:
+- Login: wrong password rejected; signed-out access to each route redirects; sign-out works.
+- Fleet overview: every number cross-checked against a direct SQL count. The toner health bar adds up. The preview's ordering is sensible.
+- Devices: search by serial, by customer, and a term with no matches; each filter tab; pagination including the last page and an out-of-range page.
+- Device detail: one device with counters (cross-check toner and meters against SQL), one without, one with alarms of several categories, one offline, one unlinked, one with a customer mismatch. The alarms toggle. The raw-data block as admin.
+- Link issues: each tab and its count; search in the link picker; ignore then reopen one issue; link a device by hand **only if a genuinely correct pairing exists** — otherwise use a deliberately wrong pair, verify, then undo it and say so.
+- Alerts: with at least one alert present (insert one if the worker hasn't opened any, then remove it); acknowledge it; check the tab counts.
+- Admin: create an operator; **sign in as that operator in a separate browser context** and confirm every admin page redirects and a direct action POST is refused; set a counter category; "Set defaults"; trigger `link-run` and see the run appear. Delete the test user afterwards.
+- Check the browser console on every page: no errors.
+4. Note anything that looks wrong, ugly or confusing against the mockups, even if it isn't a bug.
+
+**Rules:** never read or print `.env`; no customer names in the report (counts, serials and DRMS ids are fine); leave the database as you found it apart from changes that are genuinely correct (say which); never call DRMS `EquipmentRequest/*`.
+
+- [ ] **Step 1:** Part A, writing results as you go.
+- [ ] **Step 2:** Part B, same.
+- [ ] **Step 3:** summarise: what works, what's broken, what's ugly. Commit the report.
+
+
+---
+
 ### Task 10: Docker images, compose stack, Portainer deploy
+
+> **Deferred (user, 2026-09-18):** the deploy now happens **after** the remaining sub-projects, not at the end of Part 2. Finish Part 2 (9C, 9B), then sub-project 3 (replenishment and real Vantage orders), then the rest, and deploy when the app is doing what the user wants.
 
 **Files:**
 - Create: `Dockerfile.web`, `Dockerfile.worker`, `.dockerignore`, `docker-compose.yml`, `docs/DEPLOY.md`
@@ -600,3 +764,111 @@ volumes: { pgdata: {} }
 3. Worker: `evaluateOfflineAlerts` runs as part of drms-pull, which is now hourly. `drms-alarms` runs every 30 min, dedupes on rerun, and the device page shows waste/parts/toner alarms. `sync_runs.stats` shows `alertsOpened` / `alertsCleared`.
 4. `npm run build -w @mps/web` succeeds.
 5. Deploy on the server through Portainer using `docs/DEPLOY.md`; the first sync is triggered from Admin → Jobs.
+
+---
+
+### Task 9D: Mono devices have no colour cartridges
+
+**Why:** the fleet is roughly half mono. A `bizhub 301i` currently renders three empty
+Cyan/Magenta/Yellow bars, is counted in "Needs toner", and contributes phantom cartridges
+to the fleet toner health bar. Left alone, sub-project 3 would propose colour toner for a
+machine that has none.
+
+**The rule** (recorded in the spec under "Added requirements — 2026-09-18"): a device is
+colour when its model name carries `C` in front of the model number (`bizhub C3350i`,
+`C458`), a `+` after the range name (`ineo+308` — how Develop marks colour), or `MF`.
+Everything else is mono. An unknown or empty model name counts as mono.
+
+Verified against the live fleet: every model that has ever reported a Cyan, Magenta or
+Yellow toner level matches a marker, and no model without one ever has. `bizhub 4050i`,
+`bizhub 301i` and `bizhub 4701i` have counter snapshots with no CMY levels at all.
+
+**Already done (uncommitted, do not rewrite):** `packages/core/src/models.ts` with
+`isColourModel` / `isMonoModel`, its test file, and the export from
+`packages/core/src/index.ts`. That helper is the single source of truth for the rule — do
+not re-express it as a regex anywhere else in TypeScript.
+
+**Files:**
+- Modify: `packages/db/src/schema.ts` — add `isColour` to `drmsEquipment`
+- Create: a drizzle migration adding the column, with a one-time backfill
+- Modify: `apps/worker/src/jobs/drms-pull.ts` — set `isColour` on upsert from `isColourModel(modelName)`
+- Modify: `packages/db/src/queries/shared.ts` — `counterPivotSubquery` nulls CMY for mono devices
+- Modify: `apps/web/src/components/toner.ts` — channels per device
+- Modify: `apps/web/src/components/device-table.tsx`, `toner-tile.tsx`, `toner-bar.tsx`, the device detail page — render only the channels a device has
+- Test: alongside each
+
+**Steps:**
+
+- [ ] **Step 1: `is_colour` column.** Add `isColour: boolean('is_colour').notNull().default(false)`
+  to `drmsEquipment` in `packages/db/src/schema.ts`. Generate the migration with
+  `npm run db:generate -w @mps/db` (check the script name in `packages/db/package.json`).
+  Hand-add a one-time backfill statement to the generated SQL so the 836 existing rows are
+  correct before the next pull:
+  ```sql
+  UPDATE "drms_equipment" SET "is_colour" = true
+  WHERE "model_name" ~ '(\+|MF|(^|[^A-Za-z])C[[:space:]]*[0-9])';
+  ```
+  This SQL is a one-off backfill, not a second source of truth: every later write comes
+  from `isColourModel`.
+
+- [ ] **Step 2: set it on pull.** In `apps/worker/src/jobs/drms-pull.ts`, map
+  `isColour: isColourModel(<the model name being upserted>)` in the same place the other
+  columns are mapped, and include it in the upsert's update set so a model-name correction
+  in DRMS flows through. Add a test: pulling a device named `bizhub 301i` stores
+  `isColour` false, `bizhub C301i` stores true, and re-pulling a device whose model name
+  changed from mono to colour updates the flag.
+
+- [ ] **Step 3: mono devices have no CMY in SQL.** In `packages/db/src/queries/shared.ts`,
+  `counterPivotSubquery` currently reads only the counter tables. Join `drms_equipment` on
+  the device id and wrap the three colour pivots so they return null for a mono device —
+  e.g. `case when <is_colour> then <pivot> end` — leaving `black` and the three meters
+  untouched. Everything downstream (`getFleetSummary`'s needsToner/criticalToner,
+  `getTonerHealth`, the devices list) then fixes itself with no further change; confirm by
+  reading those call sites that none of them reach past the pivot for a colour level.
+  Tests (PGlite): a mono device with a CyanTonerLevel row in its snapshot contributes
+  nothing to `getTonerHealth`'s cartridge count and is not in `getFleetSummary().needsToner`
+  even at 0% cyan; the same device at 4% black still counts as critical; a colour device is
+  unaffected.
+
+- [ ] **Step 4: render only the channels a device has.** `apps/web/src/components/toner.ts:21`
+  exports `TONER_CHANNELS` (cyan, magenta, yellow, black) and `tonerLevels(row)` at `:28`.
+  Add `tonerChannels(row)` returning all four for a colour device and black only for a
+  mono one, and make `tonerLevels` use it — that alone fixes `deviceStatusLabel` (`:102`),
+  `tonerHealth` (`:121`) and `attentionRank` (`:140`).
+  Then switch each render site that maps `TONER_CHANNELS` for one device:
+  - `apps/web/src/components/toner-bar.tsx:47` `TonerBars` — hardcoded `grid-cols-4`; a mono
+    row must render one black bar, and the black bar must stay in the same column position
+    it occupies today so the table still reads straight down the page. Decide how (keep the
+    4-column grid and place black in the last cell, or pass the channel list) and say why in
+    a comment.
+  - `apps/web/src/components/toner-bar.tsx:58` `TonerLegend` — the C/M/Y/K key above the
+    table is fleet-wide, not per device, so leave it alone. Note that in a comment so the
+    next reader doesn't "fix" it.
+  - `apps/web/src/app/(app)/devices/[id]/page.tsx:188` `hasCounters` and `:227` the
+    `lg:grid-cols-4` tile grid — a mono device shows one tile, and `hasCounters` must not
+    look at CMY or a mono device with healthy black would fall into the empty state.
+  The row types need the flag: add `isColour: boolean` to `DeviceRow`
+  (`packages/db/src/queries/devices.ts:6`, selected at `:51-75`, mapped at `:113`) and to
+  the detail row (`packages/db/src/queries/device.ts:55,115`).
+  Tests: `tonerChannels` returns 1 channel vs 4; `deviceStatusLabel` for a mono device with
+  null cyan and healthy black says "Online", not "No counters"; `tonerHealth` counts one
+  cartridge for a mono device.
+
+- [ ] **Step 4B: hide the Colour meter column on mono devices.** A mono device has no
+  `Full Color:Total`, so the device page's Colour meter and its history column render as em
+  dashes for ever. In `apps/web/src/components/device-detail.ts:131` the `CHANNELS` tuple
+  binds `black`/`colour`/`scan`; `counterHistoryRows()` (`:145`) merges the three series,
+  `apps/web/src/components/counter-table.tsx:44` renders the headers and `:67` the cells,
+  and `apps/web/src/app/(app)/devices/[id]/page.tsx:252` renders the three Meter tiles.
+  Drop the colour channel — tile, table column and delta — for a mono device. Keep Black and
+  Scan. Test: `counterHistoryRows` for a mono device has no colour column, and the colour
+  delta is not computed.
+
+- [ ] **Step 5: verify against real data.** `npm test`, `npx tsc --noEmit`, `npm run lint`.
+  Then report (do not run yourself — the controller has the credentials): the SQL to
+  confirm no mono device appears in the needs-toner set.
+
+- [ ] **Step 6: commit** each step separately, conventional commits.
+
+**Out of scope:** per-device threshold settings, the `auto_replenish` flag and a manual
+mono/colour override all belong to sub-project 3. Do not add a settings table here.

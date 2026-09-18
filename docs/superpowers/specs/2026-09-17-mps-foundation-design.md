@@ -224,3 +224,54 @@ Targeted, read-only follow-up (`scripts/phase0-probe2.ts`) resolving the four co
 - CSRC collects across Europe during the morning, so DRMS counters for UK devices land late morning at the earliest.
 - `SNAPSHOT_CRON` default changed from `0 6 * * *` to **`30 13 * * *`** (13:30 Europe/London) so the nightly snapshot reads counters collected that day.
 - The snapshot's "already fetched today" resume boundary is UTC midnight, which still works with an afternoon run.
+
+### Replenishment settings (decided 2026-09-18, for sub-project 3)
+- **Thresholds cascade**: global default (CMY 10%, K 15%) → customer → device. The UI shows which level a device's value came from.
+- **Two triggers**: our own percentage thresholds from the nightly snapshot, and DRMS alarms (`TN-*` near empty/empty, which already carry KM's CSRC alarm rules — those rules are not readable through the web service, only their effect).
+- **Auto-replenishment flag**: default on, cascade default → customer → device. Some customers are on toner-inclusive contracts but order manually, and **Vantage has no field for this** (its `ServiceLevel` values — "All Toner Inclusive Mth/Qtr", "Toner excl.", "Black Foc Colour Charge…" — describe who pays, not whether we auto-replenish). A device with the flag off is still monitored (meters, alarms, offline alerts) but never counts towards "Needs toner" and never produces an order proposal; it appears in a "Manual replenishment" view when low, with a badge on its device page.
+- **Review queue**: every proposal (from either trigger) lands in an operator queue showing the toner level, the last order for that colour, any open orders, site stock (sub-project 4) and which rule fired. Approve / edit quantity / reject. Only approved proposals create **real** Vantage sales orders.
+
+### Bulk settings (user, 2026-09-18)
+Per-device settings must be editable in bulk — nobody is opening 800 device pages.
+
+- **Selection** lives on the devices list: a checkbox per row, a select-all-on-this-page box, and a "select all N matching this filter/search" link so a filtered set (e.g. one customer, or everything needing toner) can be acted on in one go. The current selection count is always visible.
+- **Bulk actions bar** appears when anything is selected:
+  - **Thresholds** — set black and/or CMY percentages (e.g. CMY 15%), or per individual colour; "reset to inherited" clears the device override so the customer or global value applies again.
+  - **Auto-replenishment** — on/off.
+  - **Alerts** — no-meter-reading alerts on/off per device (some machines are known-intermittent and shouldn't nag).
+  - Later sub-projects add their own bulk actions (site stock levels in 4, notification recipients in 5) — the bar is built to take more.
+- **Confirmation step** before anything is written: "Set CMY threshold to 15% on 42 devices" with the list expandable, and a warning when the selection spans more than one customer.
+- **Writes are one transaction** and are audited: each settings row records who changed it and when, and the device page shows "CMY 15% — set by <user>, <date>" beside inherited values.
+- **Customer-level editing** is available from the customer view (or from a bulk selection of that customer's devices), so a whole site can be changed without touching each machine.
+- Bulk actions obey the same permissions as single edits: any signed-in user can change settings, and only admins manage users.
+
+## Added requirements — 2026-09-18 (mono devices, toner order queue)
+
+### Mono vs colour devices
+A device is colour when its model name carries a colour marker, and mono otherwise:
+- `C` in front of the model number (`bizhub C3350i`, `C458`, `C308`)
+- `+` after the range name, which is how Develop marks colour (`ineo+308`, `ineo+3350i`)
+- `MF` on the ranges that use it
+
+Everything else is mono: `bizhub 301i`, `bizhub 300i`, `bizhub 4050i`, `bizhub 4051i`,
+`bizhub 4700i`, `bizhub 4701i`, `bizhub 751i`, `287`.
+
+Verified against the fleet on 2026-09-18: every model that has ever reported a Cyan,
+Magenta or Yellow toner level matches a marker, and no model without one ever has.
+`bizhub 4050i`, `bizhub 301i` and `bizhub 4701i` all have counter snapshots with no CMY
+levels at all.
+
+An unknown or empty model name counts as mono. Hiding CMY on a colour device is a
+cosmetic loss; raising low-toner alerts for cartridges a mono device does not have would
+put toner on a sales order that nobody can fit.
+
+Implementation: `isColourModel` / `isMonoModel` in `packages/core/src/models.ts`.
+Mono devices must not show CMY toner bars, must never count toward "needs toner" or the
+fleet toner health bar on a colour cartridge, must not get CMY thresholds in the
+replenishment settings, and must not sync a colour meter.
+
+### "Needs toner" tile destination
+The Fleet overview "Needs toner" tile opens the **toner order queue** — the list of
+machines that need a sales order raised, with the operator review actions — not a
+filtered device list. The queue is built in sub-project 3 (replenishment). Until then the
+tile links to `/devices?filter=needs-toner`.
