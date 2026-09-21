@@ -276,13 +276,24 @@ function byRecency(a: QueueDevice, b: QueueDevice): number {
   return latest(b) - latest(a) || a.drmsId.localeCompare(b.drmsId);
 }
 
+/**
+ * A `failed` order still needs a person only while one of its proposals is still `failed`. Once
+ * they have all been rejected (or retried) the row stays `failed` as history, but drops out of
+ * *In progress* and `attentionOrders`.
+ */
+function failedAwaitingDecision(): SQL {
+  const o = replenishmentOrders;
+  return sql`(${o.status} = 'failed' and exists (select 1 from ${replenishmentProposals} fp where fp.order_id = ${o.id} and fp.status = 'failed'))`;
+}
+
 const daysBefore = (now: Date, days: number) => new Date(now.getTime() - days * 86_400_000);
 
 /**
  * One tab of the toner-order queue, grouped by device.
  *
  * - *review*: devices with a `pending` proposal (only the pending ones shown);
- * - *in-progress*: orders `queued|submitting|uncertain|failed` and their proposals;
+ * - *in-progress*: orders `queued|submitting|uncertain`, or `failed` with a proposal still `failed`,
+ *   and their proposals;
  * - *ordered*: orders `submitted` in the last {@link ORDERED_TAB_DAYS} days;
  * - *rejected*: proposals `rejected|superseded` in the last {@link REJECTED_TAB_DAYS} days.
  *
@@ -306,7 +317,7 @@ export async function listReplenishmentQueue(
   } else {
     const where =
       args.tab === 'in-progress'
-        ? inArray(o.status, ['queued', 'submitting', 'uncertain', 'failed'])
+        ? sql`(${inArray(o.status, ['queued', 'submitting', 'uncertain'])} or ${failedAwaitingDecision()})`
         : and(eq(o.status, 'submitted'), gte(o.submittedAt, daysBefore(now, ORDERED_TAB_DAYS)));
     const orders = await selectOrders(db, where);
     const proposals = orders.length === 0 ? [] : await selectProposals(db, inArray(p.orderId, orders.map((x) => x.id)));
@@ -324,7 +335,7 @@ export interface ReplenishmentStats {
   onOrderDevices: number;
   /** Our orders in flight: `queued|submitting|uncertain`, or `submitted` and not yet completed in Vantage. */
   openMpsOrders: number;
-  /** Orders a person has to look at: `failed` + `uncertain`. */
+  /** Orders a person has to look at: `uncertain`, plus `failed` ones with a proposal still `failed`. */
   attentionOrders: number;
   /** Cartridges on orders that reached Vantage this calendar quarter (UTC). */
   cartridgesThisQuarter: number;
@@ -347,7 +358,7 @@ export async function getReplenishmentStats(db: Db, now: Date = new Date()): Pro
     .select({
       onOrderDevices: sql<number>`count(distinct ${o.drmsEquipmentId}) filter (where ${open})`,
       openMpsOrders: sql<number>`count(*) filter (where ${open})`,
-      attentionOrders: sql<number>`count(*) filter (where ${o.status} in ('failed', 'uncertain'))`,
+      attentionOrders: sql<number>`count(*) filter (where ${o.status} = 'uncertain' or ${failedAwaitingDecision()})`,
     })
     .from(o)
     .leftJoin(vantageSalesOrders, eq(vantageSalesOrders.vantageId, o.vantageSalesOrderId));

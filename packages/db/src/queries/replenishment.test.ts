@@ -235,6 +235,38 @@ describe('replenishment queue', () => {
     expect(o).toMatchObject({ status: 'failed', error: 'Vantage said no' });
   });
 
+  it('rejects a failed order\'s proposals, which takes the order out of in-progress and attention', async () => {
+    const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 1 }, { proposalId: cyan, quantity: 1 }], userId, now: NOW });
+    await setOrderStatus(orderId, 'failed', { error: 'Vantage said no' });
+    expect((await getReplenishmentStats(t.db, NOW)).attentionOrders).toBe(1);
+
+    // One of two rejected: the order still has a failed proposal, so it still needs a person.
+    await rejectProposals(t.db, { proposalIds: [black], userId, now: NOW });
+    expect((await listReplenishmentQueue(t.db, { tab: 'in-progress', now: NOW })).map((d) => d.drmsId)).toEqual(['d1']);
+    expect((await getReplenishmentStats(t.db, NOW)).attentionOrders).toBe(1);
+
+    expect(await rejectProposals(t.db, { proposalIds: [cyan], userId, note: 'not wanted', now: NOW })).toEqual({ rejected: 1 });
+    const ps = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.orderId, orderId));
+    expect(ps.map((p) => p.status)).toEqual(['rejected', 'rejected']);
+    const [o] = await t.db.select().from(replenishmentOrders).where(eq(replenishmentOrders.id, orderId));
+    expect(o!.status).toBe('failed');
+    expect(await listReplenishmentQueue(t.db, { tab: 'in-progress', now: NOW })).toEqual([]);
+    expect((await getReplenishmentStats(t.db, NOW)).attentionOrders).toBe(0);
+    const rejected = await listReplenishmentQueue(t.db, { tab: 'rejected', now: NOW });
+    expect(rejected.find((d) => d.drmsId === 'd1')!.proposals.map((p) => [p.colour, p.status])).toEqual([['black', 'rejected'], ['cyan', 'rejected']]);
+    await expect(retryOrder(t.db, { orderId, userId })).rejects.toMatchObject({ code: 'bad_state' });
+
+    // Already rejected: not rejectable again.
+    await expect(rejectProposals(t.db, { proposalIds: [cyan], userId })).rejects.toMatchObject({ code: 'not_pending' });
+    const audits = await t.db.select().from(auditLog);
+    expect(audits.map((a) => a.action)).toEqual(['proposal.approve', 'proposal.reject', 'proposal.reject']);
+  });
+
+  it('will not reject an approved proposal', async () => {
+    await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 1 }], userId });
+    await expect(rejectProposals(t.db, { proposalIds: [black], userId })).rejects.toMatchObject({ code: 'not_pending' });
+  });
+
   it('lists a device page: live proposals and its orders', async () => {
     const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 1 }], userId });
     const r = await listDeviceReplenishment(t.db, 'd1');

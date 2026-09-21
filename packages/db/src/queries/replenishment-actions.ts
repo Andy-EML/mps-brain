@@ -115,7 +115,11 @@ export async function approveProposals(
   });
 }
 
-/** Says no to pending proposals (any devices), all or nothing. Suppresses re-proposing for a while. */
+/**
+ * Says no to proposals (any devices), all or nothing. Accepts `pending` ones and `failed` ones —
+ * Vantage refused the order and the operator does not want it retried; the order row stays
+ * `failed` as history. Suppresses re-proposing for a while.
+ */
 export async function rejectProposals(
   db: Db,
   args: { proposalIds: number[]; userId: number; note?: string; now?: Date },
@@ -130,7 +134,7 @@ export async function rejectProposals(
     const done = await tx
       .update(p)
       .set({ status: 'rejected', decidedBy: args.userId, decidedAt: now, note })
-      .where(and(inArray(p.id, ids), eq(p.status, 'pending')))
+      .where(and(inArray(p.id, ids), inArray(p.status, ['pending', 'failed'])))
       .returning({ id: p.id });
     if (done.length !== ids.length) throw new ReplenishmentError(STALE, 'not_pending');
     await tx.insert(auditLog).values({
