@@ -192,3 +192,18 @@ since. The user wants to react as machines *start* to go offline.
   linking to the page; sidebar item with the newly-silent count as its badge.
 - Registering more devices is what strengthens the signal: a Registered device's daily counters
   make silence certain within a day.
+
+**Correction (user, same day): DRMS has no heartbeat for a Discovered device.** BSRIA's and CB
+Heslop's machines have never had a DRMS alarm on record, yet they check in on CSRC every day — "no
+alarm" only means no alarm reached DRMS. So:
+- A device is **silent** (and listed as needing reconnection) **only if it has ever reported a meter
+  reading** (`last_counter_received_time is not null`) and its last contact is older than 14 days.
+  For those devices last contact is the newest of the meter reading and any alarm.
+- Devices with **no meter reading ever** are never called silent or offline. They appear on the same
+  page in a separate tab, **"Not monitored yet"**, grouped as *Registered, waiting for first reading*
+  and *Not registered in DRMS* (register them to monitor them), with their DRMS status, first
+  connection and any last alarm shown for information.
+- The `install_only` pattern is dropped; the `signal` field is dropped (every silent device is
+  counter-based). Filter tabs: *Newly silent (14–30 days) · Long silent (over 30 days) · Not
+  monitored yet*.
+- The Fleet overview tile and sidebar badge count **silent** devices only.

@@ -2335,6 +2335,18 @@ git commit -m "feat(web): default and per-customer replenishment settings"
 Added 2026-09-21 at the user's request; runs **after Task 13 and before Task 14**. Spec: the
 "Added requirement: Needs reconnecting" section of the design doc. Read it first.
 
+> **AMENDED the same day — the spec's "Correction" paragraph overrides the rules below where they
+> differ.** DRMS has no heartbeat for Discovered devices, so: a device is *silent* only if it has
+> EVER reported a meter reading and its last contact (newest of meter reading and alarms) is older
+> than 14 days. Devices with no meter reading ever go to a separate **Not monitored yet** tab
+> (sub-grouped *Registered, waiting for first reading* / *Not registered in DRMS*), never called
+> offline. Drop `install_only` / `pattern` / `signal`; filters become `'new' | 'long' | 'unmonitored'`
+> (plus `'all'` = new + long); `ReconnectRow` gains `hasMeterReadings: boolean`; `getReconnectCounts`
+> returns `{ silent, newlySilent, longSilent, unmonitored }`; tile and badge count silent devices
+> only. Adjust the Step 1 tests accordingly (e.g. the "only InitialConnectionTime in 2023" device is
+> `unmonitored`, not silent; a device with a counter 40 days ago and a DRMS alarm 5 days ago is NOT
+> silent).
+
 **Files:**
 - Create: `packages/db/src/queries/reconnect.ts` + `reconnect.test.ts`; export from `queries/index.ts`
 - Create: `apps/web/src/app/(app)/reconnect/page.tsx`, `apps/web/src/app/(app)/reconnect/export/route.ts` (CSV), `apps/web/src/lib/csv.ts` + `csv.test.ts`
