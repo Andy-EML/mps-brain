@@ -192,12 +192,16 @@ describe('replenishment queue', () => {
 
   it('resolves an uncertain order either way and retries a failed one', async () => {
     const a = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 1 }], userId });
-    await expect(resolveOrder(t.db, { orderId: a.orderId, outcome: 'ordered', userId })).rejects.toMatchObject({ code: 'bad_state' });
+    await expect(resolveOrder(t.db, { orderId: a.orderId, outcome: 'ordered', reference: 'SO1', userId })).rejects.toMatchObject({ code: 'bad_state' });
     await expect(retryOrder(t.db, { orderId: a.orderId, userId })).rejects.toMatchObject({ code: 'bad_state' });
-    await expect(resolveOrder(t.db, { orderId: 9999, outcome: 'ordered', userId })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(resolveOrder(t.db, { orderId: 9999, outcome: 'ordered', reference: 'SO1', userId })).rejects.toMatchObject({ code: 'not_found' });
 
     await setOrderStatus(a.orderId, 'uncertain');
     expect((await getReplenishmentStats(t.db)).attentionOrders).toBe(1);
+    // Marking it ordered needs the reference the operator found in Vantage.
+    await expect(resolveOrder(t.db, { orderId: a.orderId, outcome: 'ordered', userId })).rejects.toMatchObject({ code: 'bad_state' });
+    await expect(resolveOrder(t.db, { orderId: a.orderId, outcome: 'ordered', reference: '   ', userId })).rejects.toMatchObject({ code: 'bad_state' });
+    expect((await t.db.select().from(replenishmentOrders).where(eq(replenishmentOrders.id, a.orderId)))[0]!.status).toBe('uncertain');
     await resolveOrder(t.db, { orderId: a.orderId, outcome: 'ordered', reference: ' SO123 ', userId, now: NOW });
     const [oa] = await t.db.select().from(replenishmentOrders).where(eq(replenishmentOrders.id, a.orderId));
     expect(oa).toMatchObject({ status: 'submitted', vantageReference: 'SO123', resolvedBy: userId, resolvedAt: NOW, submittedAt: NOW });
@@ -260,6 +264,18 @@ describe('replenishment queue', () => {
     await expect(rejectProposals(t.db, { proposalIds: [cyan], userId })).rejects.toMatchObject({ code: 'not_pending' });
     const audits = await t.db.select().from(auditLog);
     expect(audits.map((a) => a.action)).toEqual(['proposal.approve', 'proposal.reject', 'proposal.reject']);
+  });
+
+  it('retries only the colours still failed, rebuilding the request body', async () => {
+    const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 2 }, { proposalId: cyan, quantity: 3 }], userId });
+    await setOrderStatus(orderId, 'failed', { error: 'Vantage said no' });
+    await rejectProposals(t.db, { proposalIds: [black], userId });
+    await retryOrder(t.db, { orderId, userId });
+    const [o] = await t.db.select().from(replenishmentOrders).where(eq(replenishmentOrders.id, orderId));
+    expect(o).toMatchObject({ status: 'queued', error: null });
+    expect(o!.request).toEqual({ components: [{ Type: 2, RequestedQuantity: 3 }] });
+    const ps = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.orderId, orderId));
+    expect(Object.fromEntries(ps.map((p) => [p.colour, p.status]))).toEqual({ black: 'rejected', cyan: 'approved' });
   });
 
   it('will not reject an approved proposal', async () => {

@@ -1,4 +1,4 @@
-import { CONSUMABLE_TYPE, REPLENISH_COLOURS } from '@mps/core';
+import { CONSUMABLE_TYPE, REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Db } from '../client';
 import { auditLog, deviceLinks, replenishmentOrders, replenishmentProposals } from '../schema';
@@ -30,6 +30,14 @@ export class ReplenishmentError extends Error {
 export const MAX_ORDER_QUANTITY = 20;
 
 const STALE = 'Some of these have already been decided — refresh the page and try again.';
+
+/** The `CreateConsumableOrder` body for these cartridges, components in K, C, M, Y, waste order. */
+function orderRequest(lines: { colour: ReplenishColour; quantity: number }[]) {
+  const components = [...lines]
+    .sort((a, b) => REPLENISH_COLOURS.indexOf(a.colour) - REPLENISH_COLOURS.indexOf(b.colour))
+    .map((l) => ({ Type: CONSUMABLE_TYPE[l.colour], RequestedQuantity: l.quantity }));
+  return { components };
+}
 
 export interface ApproveItem {
   proposalId: number;
@@ -74,9 +82,7 @@ export async function approveProposals(
     if (!link) throw new ReplenishmentError('This device is no longer linked to Vantage equipment, so it cannot be ordered for.', 'unlinked');
 
     const colourOf = new Map(rows.map((r) => [r.id, r.colour]));
-    const components = [...items]
-      .sort((a, b) => REPLENISH_COLOURS.indexOf(colourOf.get(a.proposalId)!) - REPLENISH_COLOURS.indexOf(colourOf.get(b.proposalId)!))
-      .map((i) => ({ Type: CONSUMABLE_TYPE[colourOf.get(i.proposalId)!], RequestedQuantity: i.quantity }));
+    const request = orderRequest(items.map((i) => ({ colour: colourOf.get(i.proposalId)!, quantity: i.quantity })));
 
     const [order] = await tx
       .insert(replenishmentOrders)
@@ -84,7 +90,7 @@ export async function approveProposals(
         drmsEquipmentId: args.drmsId,
         vantageEquipmentId: link.vantageEquipmentId,
         status: 'queued',
-        request: { components },
+        request,
         createdBy: args.userId,
         createdAt: now,
       })
@@ -171,6 +177,10 @@ export async function resolveOrder(
 ): Promise<void> {
   const now = args.now ?? new Date();
   const reference = args.reference?.trim() || null;
+  // The operator has just found the order in Vantage, so they can say which one it is.
+  if (args.outcome === 'ordered' && !reference) {
+    throw new ReplenishmentError('Enter the Vantage order reference you found for this order.', 'bad_state');
+  }
   await db.transaction(async (tx) => {
     const order = await loadOrder(tx, args.orderId);
     if (order.status !== 'uncertain') throw new ReplenishmentError('Only an order whose outcome is unknown can be resolved.', 'bad_state');
@@ -181,7 +191,7 @@ export async function resolveOrder(
       .update(o)
       .set(
         ordered
-          ? { status: 'submitted', vantageReference: reference ?? order.vantageReference, submittedAt: order.submittedAt ?? now, resolvedBy: args.userId, resolvedAt: now }
+          ? { status: 'submitted', vantageReference: reference, submittedAt: order.submittedAt ?? now, resolvedBy: args.userId, resolvedAt: now }
           : { status: 'failed', error: order.error ?? 'Marked as not placed in Vantage by an operator.', resolvedBy: args.userId, resolvedAt: now },
       )
       .where(and(eq(o.id, args.orderId), eq(o.status, 'uncertain')))
@@ -204,8 +214,9 @@ export async function resolveOrder(
 }
 
 /**
- * Puts a `failed` order back in the queue as it was (same request body); the submit job sends it
- * again. Refused when the engine has since raised a new live proposal for one of its colours —
+ * Puts a `failed` order back in the queue; the submit job sends it again. The request body is
+ * rebuilt from the proposals still `failed` (a colour rejected since would otherwise be POSTed).
+ * Refused when the engine has since raised a new live proposal for one of its colours —
  * a failed proposal is not "live", so that can happen — because re-approving would give the
  * device two live proposals for one colour.
  */
@@ -216,7 +227,7 @@ export async function retryOrder(db: Db, args: { orderId: number; userId: number
     if (order.status !== 'failed') throw new ReplenishmentError('Only a failed order can be retried.', 'bad_state');
 
     const p = replenishmentProposals;
-    const failed = await tx.select({ colour: p.colour }).from(p).where(and(eq(p.orderId, args.orderId), eq(p.status, 'failed')));
+    const failed = await tx.select({ colour: p.colour, quantity: p.quantity }).from(p).where(and(eq(p.orderId, args.orderId), eq(p.status, 'failed')));
     if (failed.length === 0) throw new ReplenishmentError('This order has nothing left to retry.', 'bad_state');
     const [clash] = await tx
       .select({ colour: p.colour })
@@ -229,7 +240,7 @@ export async function retryOrder(db: Db, args: { orderId: number; userId: number
     const o = replenishmentOrders;
     const done = await tx
       .update(o)
-      .set({ status: 'queued', error: null })
+      .set({ status: 'queued', error: null, request: orderRequest(failed) })
       .where(and(eq(o.id, args.orderId), eq(o.status, 'failed')))
       .returning({ id: o.id });
     if (done.length === 0) throw new ReplenishmentError(STALE, 'bad_state');
