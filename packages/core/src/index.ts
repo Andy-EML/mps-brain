@@ -6,3 +6,4 @@ export * from './alarms';
 export * from './collection';
 export * from './orders';
 export * from './models';
+export * from './replenishment';
