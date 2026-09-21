@@ -2330,6 +2330,43 @@ git commit -m "feat(web): default and per-customer replenishment settings"
 
 ---
 
+### Task 15 (opus): "Needs reconnecting": machines that stopped talking to CSRC
+
+Added 2026-09-21 at the user's request; runs **after Task 13 and before Task 14**. Spec: the
+"Added requirement: Needs reconnecting" section of the design doc. Read it first.
+
+**Files:**
+- Create: `packages/db/src/queries/reconnect.ts` + `reconnect.test.ts`; export from `queries/index.ts`
+- Create: `apps/web/src/app/(app)/reconnect/page.tsx`, `apps/web/src/app/(app)/reconnect/export/route.ts` (CSV), `apps/web/src/lib/csv.ts` + `csv.test.ts`
+- Modify: `apps/web/src/app/(app)/page.tsx` (tile), `apps/web/src/components/app-sidebar.tsx`, `apps/web/src/lib/nav-counts.ts`, `apps/web/src/app/(app)/layout.tsx`
+
+**Interfaces:**
+- Produces: `RECONNECT_DAYS = 14`; `type ReconnectPattern = 'install_only' | 'went_quiet'`; `type ReconnectSignal = 'counters' | 'alarms'`; `type ReconnectFilter = 'all' | 'new' | 'long' | 'install'`;
+  `interface ReconnectRow { drmsId: string; serial: string | null; name: string | null; model: string | null; drmsStatus: string | null; customerName: string | null; customerReference: string | null; location: string | null; assetNumber: string | null; vantageEquipmentId: number; lastContactAt: Date | null; daysSilent: number | null; pattern: ReconnectPattern; signal: ReconnectSignal; firstConnectedAt: Date | null }`;
+  `listReconnect(db, { filter?: ReconnectFilter; search?: string; limit?: number; offset?: number; now?: Date; days?: number }): Promise<{ rows: ReconnectRow[]; total: number }>`;
+  `getReconnectCounts(db, { now?: Date; days?: number }): Promise<{ total: number; newlySilent: number; longSilent: number; installOnly: number }>`.
+
+Rules (all in SQL, one shared last-contact expression used by both functions):
+- Last contact = `greatest(last_counter_received_time, raw LastAlarmReceivedTime, newest device_alarms.received_time, raw InitialConnectionTime)`. DRMS dates in `raw` are UTC `YYYY-MM-DD HH:mm:ss` strings (treat as UTC; empty string = null). Use `lastAlarmSubquery` from shared.ts for our own alarms.
+- Included: active device link, `vantage_equipment.deleted_date is null`, `upper(status) <> 'DELETED'`, `missing_since is null`, and (last contact is null OR last contact < now − days).
+- `pattern` = `install_only` when there is no counter ever, no DRMS LastAlarmReceivedTime and no device_alarms row; else `went_quiet`. `signal` = `counters` when last_counter_received_time is not null, else `alarms`.
+- Filters: `new` = silent 14–30 days inclusive; `long` = over 30 days (or no contact date); `install` = pattern install_only; `all` = everything included.
+- Order: last contact **descending** (most recently silent first), nulls last, then customer name, serial.
+
+- [ ] **Step 1: Failing tests** (`reconnect.test.ts`, PGlite, fixed `now`): counter 20 days ago → included, `new`, signal `counters`; counter 3 days ago → excluded; only InitialConnectionTime in 2023 → `install_only`, `long`; DRMS LastAlarmReceivedTime 40 days ago and no counters → `went_quiet`, `alarms`, `long`; a recent `device_alarms` row rescues a device whose raw dates are old → excluded; unlinked device → excluded; Deleted status → excluded; ordering most-recently-silent first; `getReconnectCounts` agrees with the filters; search matches customer name and serial.
+- [ ] **Step 2: Run → FAIL. Step 3: Implement. Step 4: Run** `npx vitest run packages/db` → PASS; typecheck + lint.
+- [ ] **Step 5: Page** `/reconnect` ("Needs reconnecting"): `requireUser()` first; `PageHeader` subtitle "Machines on a Vantage contract that CSRC hasn't heard from for 14 days or more, newest first."; `FilterTabs` (All · Newly silent · Long silent · Only connected at install, with counts); `SearchInput`; table: customer (+ reference), location, device name/model, serial (mono), DRMS status, last contact (date + "N days ago"), a pattern badge ("Connected at install only" / "Went quiet"), a muted signal note ("from meter readings" / "from alarms only, less certain"), link to `/devices/[drmsId]`; `Pagination` at 50; one info line explaining the two signals. **Export CSV** link → `/reconnect/export?filter=…&search=…`.
+- [ ] **Step 6: CSV export.** `apps/web/src/lib/csv.ts`: pure `toCsv(headers: string[], rows: (string | number | null)[][]): string` — UTF-8 BOM, CRLF, quotes/commas/newlines escaped — with unit tests. `reconnect/export/route.ts` (`GET`): check the session the same way `requireUser` does (redirect to /login when signed out), `listReconnect` without a limit, dates `yyyy-mm-dd HH:mm` Europe/London, `Content-Type: text/csv; charset=utf-8`, `Content-Disposition: attachment; filename="needs-reconnecting-YYYY-MM-DD.csv"`.
+- [ ] **Step 7: Fleet tile + sidebar.** Fleet overview gains a "Needs reconnecting" `StatCard` (value = total, sub = "N went quiet in the last 30 days", tone warn when newlySilent > 0) linking to `/reconnect`. Sidebar: `NavLink href="/reconnect" label="Needs reconnecting"` (lucide `WifiOff`) with badge = newlySilent, tone warn; `getNavCounts` gains `newlySilent` from `getReconnectCounts` (keep it cheap: one query).
+- [ ] **Step 8: Verify**: tests, typecheck, lint, `npm run build -w @mps/web`. Commit:
+
+```bash
+git add packages/db/src/queries/reconnect.ts packages/db/src/queries/reconnect.test.ts packages/db/src/queries/index.ts "apps/web/src/app/(app)/reconnect" apps/web/src/lib/csv.ts apps/web/src/lib/csv.test.ts "apps/web/src/app/(app)/page.tsx" apps/web/src/components/app-sidebar.tsx apps/web/src/lib/nav-counts.ts "apps/web/src/app/(app)/layout.tsx"
+git commit -m "feat: needs-reconnecting list of machines that went quiet on CSRC"
+```
+
+---
+
 ### Task 14: Full test pass, live enablement with the user, handoff
 
 **Files:**

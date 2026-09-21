@@ -168,3 +168,27 @@ compatible consumable), delivery address selection (Vantage's ship-to).
 Unit tests for the engine and settings cascade; PGlite tests for every query, action and job with
 fake clients; one live, user-approved Vantage order before enabling the kill switch; a full test
 pass written up as `docs/TEST-REPORT-*.md` at the end.
+
+## Added requirement (2026-09-21, user): "Needs reconnecting"
+
+Machines drop off CSRC and nobody notices: CSRC doesn't make it visible, and the app's only alert
+("No meter reading", 24 h) covers Registered devices that have reported counters. Example: Frimley C
+of E Junior School's four machines first connected on install day (4 Aug 2023) and have sent nothing
+since. The user wants to react as machines *start* to go offline.
+
+- **Last contact** per DRMS device = the newest of `last_counter_received_time`, DRMS
+  `LastAlarmReceivedTime` (from `raw`), our newest `device_alarms.received_time`, and DRMS
+  `InitialConnectionTime` (so a machine that only ever connected at install still has a date).
+- **Needs reconnecting** = linked to Vantage equipment (active link, equipment not deleted), DRMS
+  status not Deleted, not missing, last contact older than **14 days** (`RECONNECT_DAYS`, a named
+  constant; the user said "14 days at least"). A device with no contact date at all is included.
+- **Pattern**: `install_only` (no alarm and no counter ever) or `went_quiet`. **Signal**: `counters`
+  when the device has ever reported a counter (a strong daily heartbeat), else `alarms` (weak: a
+  healthy machine can go weeks without an alarm), shown so an operator knows how sure the list is.
+- Ordered **most recently silent first** (newly dropped off at the top). Filter tabs *All · Newly
+  silent (14–30 days) · Long silent (over 30 days) · Only connected at install*; search by
+  customer/serial; **Export CSV** of the current view.
+- Fleet overview tile "Needs reconnecting" (count; sub-line "N went quiet in the last 30 days")
+  linking to the page; sidebar item with the newly-silent count as its badge.
+- Registering more devices is what strengthens the signal: a Registered device's daily counters
+  make silence certain within a day.
