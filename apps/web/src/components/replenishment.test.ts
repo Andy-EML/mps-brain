@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { colourLabel, orderStatusTone, sourceLabel, triggerLabel } from './replenishment';
+import { colourLabel, orderStatusTone, settingOrigin, sourceLabel, triggerLabel } from './replenishment';
 
 describe('colourLabel', () => {
   it('names each consumable', () => {
@@ -47,5 +47,30 @@ describe('orderStatusTone', () => {
     expect(orderStatusTone('queued')).toBe('warn');
     expect(orderStatusTone('submitting')).toBe('warn');
     expect(orderStatusTone('submitted')).toBe('ok');
+  });
+});
+
+describe('settingOrigin', () => {
+  // 30 Jun 2026 23:30 UTC is already 1 July in London (BST).
+  const at = new Date('2026-06-30T23:30:00Z');
+  const rows = { deviceRow: { updatedAt: at, updatedBy: 'admin' }, customerRow: { updatedAt: at, updatedBy: 'jo' } };
+
+  it('says who set a device override and when, in London time', () => {
+    expect(settingOrigin('device', rows)).toBe('set on this device by admin, 1 Jul 2026');
+  });
+
+  it('names the customer setting and who set it', () => {
+    expect(settingOrigin('customer', rows)).toBe('customer setting · by jo, 1 Jul 2026');
+  });
+
+  it('says default for the global value', () => {
+    expect(settingOrigin('default', rows)).toBe('default');
+  });
+
+  it('still reads when the user or the row is gone', () => {
+    const orphan = { deviceRow: { updatedAt: at, updatedBy: null }, customerRow: null };
+    expect(settingOrigin('device', orphan)).toBe('set on this device, 1 Jul 2026');
+    expect(settingOrigin('customer', orphan)).toBe('customer setting');
+    expect(settingOrigin('device', { deviceRow: null, customerRow: null })).toBe('set on this device');
   });
 });

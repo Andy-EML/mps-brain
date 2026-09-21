@@ -1,7 +1,9 @@
 import type { ReplenishColour } from '@mps/core';
 import type { OrderStatus, ProposalTrigger } from '@mps/db';
-import type { SettingSource } from '@mps/db/queries';
+import type { EffectiveSettings, SettingSource } from '@mps/db/queries';
 import type { Tone } from '@/components/toner';
+// Relative, not `@/lib/format`: Vitest has no `@/` alias and this module is unit-tested.
+import { formatDate } from '../lib/format';
 
 /**
  * Pure display helpers for the toner-order queue (`/orders`). Free of JSX so they can be
@@ -41,6 +43,27 @@ export function triggerLabel(p: TriggerFields): string {
 /** Where the effective threshold was set: `customer setting`. */
 export function sourceLabel(source: SettingSource): string {
   return `${source} setting`;
+}
+
+/**
+ * Where an effective setting on the device page came from, with who set it and when: `default`,
+ * `customer setting · by jo, 3 Aug 2026`, `set on this device by admin, 21 Aug 2026`. The who/when
+ * is the settings row's, so it is when that row last changed, not necessarily this one field.
+ */
+export function settingOrigin(
+  source: SettingSource,
+  rows: Pick<EffectiveSettings, 'deviceRow' | 'customerRow'>,
+): string {
+  if (source === 'default') return 'default';
+  const row = source === 'device' ? rows.deviceRow : rows.customerRow;
+  if (source === 'device') {
+    const who = row?.updatedBy ? ` by ${row.updatedBy}` : '';
+    const when = row ? `, ${formatDate(row.updatedAt)}` : '';
+    return `set on this device${who}${when}`;
+  }
+  if (!row) return 'customer setting';
+  const by = [row.updatedBy ? `by ${row.updatedBy}` : null, formatDate(row.updatedAt)].filter(Boolean).join(', ');
+  return `customer setting · ${by}`;
 }
 
 const ORDER_TONES: Record<OrderStatus, Tone> = {

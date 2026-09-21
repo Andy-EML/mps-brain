@@ -3,9 +3,11 @@ import { notFound } from 'next/navigation';
 import {
   getCounterHistory,
   getDevice,
+  getDeviceSettings,
   listAlerts,
   listDeviceAlarms,
   listDeviceOrders,
+  listDeviceReplenishment,
   type AlertRow,
   type DeviceOrders,
 } from '@mps/db/queries';
@@ -18,6 +20,7 @@ import { DetailCard, DetailRow } from '@/components/detail-card';
 import { counterHistoryRows, groupAlarms, meterChannels, rawString } from '@/components/device-detail';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
+import { ReplenishmentCard } from '@/components/replenishment-card';
 import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
@@ -50,6 +53,12 @@ const LINK_METHOD: Record<string, string> = {
   erp_id: 'ERP id match',
   serial: 'Serial match',
   manual: 'Linked by hand',
+};
+
+/** `?settingsError=` codes from the Edit dialog's action (`SettingsErrorCode`), as sentences. */
+const SETTINGS_ERRORS: Record<string, string> = {
+  invalid_threshold: 'A threshold is a whole percentage from 0 to 100.',
+  empty_patch: 'Nothing was changed — pick Inherit or a new value for at least one setting.',
 };
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -154,6 +163,10 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const { id } = await params;
   const query = await searchParams;
   const showAllAlarms = first(query.alarms) === 'all';
+  const settingsErrorCode = first(query.settingsError);
+  const settingsError = settingsErrorCode
+    ? (SETTINGS_ERRORS[settingsErrorCode] ?? 'The settings were not saved. Refresh the page and try again.')
+    : null;
 
   const db = getDb();
   const detail = await getDevice(db, id);
@@ -163,7 +176,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   // The meters this device has: a mono device never reports `Full Color:Total`, so the page does
   // not ask for it either — nothing downstream can then put an all-em-dash Colour column back.
   const meters = meterChannels(detail.device.isColour);
-  const [history, alarms, alerts, orders] = await Promise.all([
+  const [history, alarms, alerts, orders, settings, replenishment] = await Promise.all([
     getCounterHistory(db, id, meters.map((m) => m.counter), HISTORY_DAYS),
     listDeviceAlarms(db, id, { limit: ALARM_LIMIT }),
     listAlerts(db, { drmsId: id }),
@@ -171,6 +184,8 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
     vantageEquipmentId == null
       ? Promise.resolve(NO_ORDERS)
       : listDeviceOrders(db, vantageEquipmentId, { limit: ORDER_LIMIT }),
+    getDeviceSettings(db, id),
+    listDeviceReplenishment(db, id),
   ]);
 
   const { device, record, link } = detail;
@@ -220,7 +235,19 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
         />
       ) : null}
 
-      <PageHeader title={name} badge={<ToneBadge tone={status.tone}>{status.text}</ToneBadge>} subtitle={subtitle} />
+      <PageHeader
+        title={name}
+        badge={
+          <>
+            <ToneBadge tone={status.tone}>{status.text}</ToneBadge>
+            {/* Still monitored, but never counts towards "Needs toner" or raises a proposal. */}
+            {settings && !settings.autoReplenish.value ? (
+              <ToneBadge tone="muted">Manual replenishment</ToneBadge>
+            ) : null}
+          </>
+        }
+        subtitle={subtitle}
+      />
 
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="grid min-w-0 gap-4">
@@ -352,6 +379,17 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
         </div>
 
         <div className="grid gap-4">
+          {settings ? (
+            <ReplenishmentCard
+              drmsId={device.drmsId}
+              isColour={device.isColour}
+              settings={settings}
+              proposals={replenishment.proposals}
+              orders={replenishment.orders}
+              error={settingsError}
+            />
+          ) : null}
+
           <DetailCard
             title="Links"
             action={
