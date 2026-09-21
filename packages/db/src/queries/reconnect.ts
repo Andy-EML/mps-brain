@@ -60,14 +60,22 @@ export interface ReconnectCounts {
 
 const DAY_MS = 86_400_000;
 
+/** `YYYY-MM-DD HH:mm:ss` (or a `T` separator) with every field in range, years 1000–9999. */
+const DRMS_DATE_SHAPE =
+  '^[1-9][0-9]{3}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[ T]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]';
+
 /**
  * A DRMS date out of `drms_equipment.raw`. DRMS sends UTC as `YYYY-MM-DD HH:mm:ss`, sometimes an
- * empty string. Anything that doesn't start with that shape is read as null rather than cast, so
- * one odd value can't make the whole page's query fail.
+ * empty string. The cast can never throw — one odd value must not fail the page (or, through the
+ * sidebar badge, every page): the regex rejects out-of-range fields (`0000-00-00 00:00:00`,
+ * `2026-13-40 25:00:00`), and a day past the end of its month (`2026-02-31`) is checked against
+ * that month's length, worked out from the already-valid year and month. The CASEs are nested
+ * because Postgres does not promise to evaluate the two halves of an AND in order.
  */
 function rawUtc(key: string): SQL<Date | null> {
   const value = sql`(${drmsEquipment.raw} ->> ${key})`;
-  return sql<Date | null>`case when ${value} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}' then substr(${value}, 1, 19)::timestamp at time zone 'UTC' end`;
+  const monthLength = sql`extract(day from ((substr(${value}, 1, 7) || '-01')::date + interval '1 month' - interval '1 day'))`;
+  return sql<Date | null>`case when ${value} ~ ${sql.raw(`'${DRMS_DATE_SHAPE}'`)} then case when substr(${value}, 9, 2)::int <= ${monthLength} then substr(${value}, 1, 19)::timestamp at time zone 'UTC' end end`;
 }
 
 function at(date: Date): SQL {

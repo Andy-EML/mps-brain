@@ -31,4 +31,18 @@ describe('toCsv', () => {
   it('keeps non-ASCII text as is', () => {
     expect(toCsv(['c'], [['Café “Ltd”']])).toBe(BOM + 'c\r\nCafé “Ltd”\r\n');
   });
+
+  it('defuses text a spreadsheet would run as a formula, but leaves numbers alone', () => {
+    const csv = toCsv(
+      ['v'],
+      [['=SUM(1)'], ['-Closed-'], ['@x'], ['+44 1234'], ['\tTab'], [-5], ['=a,b']],
+    );
+    expect(csv).toBe(
+      BOM + "v\r\n'=SUM(1)\r\n'-Closed-\r\n'@x\r\n'+44 1234\r\n'\tTab\r\n-5\r\n\"'=a,b\"\r\n",
+    );
+  });
+
+  it('defuses a leading carriage return too, then quotes it', () => {
+    expect(toCsv(['v'], [['\rx']])).toBe(BOM + 'v\r\n"\'\rx"\r\n');
+  });
 });

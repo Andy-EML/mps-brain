@@ -50,7 +50,9 @@ export async function GET(request: Request) {
       r.serial,
       r.drmsStatus,
       r.hasMeterReadings ? 'Silent' : monitoringGroupLabel(r.registeredInDrms),
-      formatIsoDateTime(r.lastContactAt),
+      // Only a device with meter readings has a last contact worth quoting; for the rest it is
+      // just the last alarm, which has its own column.
+      r.hasMeterReadings ? formatIsoDateTime(r.lastContactAt) : '',
       r.daysSilent,
       formatIsoDateTime(r.lastAlarmAt),
       formatIsoDateTime(r.firstConnectedAt),

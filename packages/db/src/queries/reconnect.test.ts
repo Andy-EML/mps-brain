@@ -258,3 +258,98 @@ describe('needs reconnecting', () => {
       expect((await listReconnect(t.db, { filter, now: NOW })).total).toBe(n);
   });
 });
+
+describe('needs reconnecting: the correction rule and DRMS dates', () => {
+  let t: TestDb;
+
+  beforeEach(async () => {
+    nextVantageId = 1;
+    t = await createTestDb();
+    await seed(t, [
+      // Never a meter reading: an old alarm (DRMS's or ours) does not make a device "silent".
+      {
+        id: 'oldDrmsAlarm',
+        customer: 'Old DRMS Alarm',
+        raw: { LastAlarmReceivedTime: drmsDate(daysAgo(40)) },
+      },
+      { id: 'oldOurAlarm', customer: 'Old Our Alarm' },
+      { id: 'pre', customer: 'Pre Ltd', status: 'PreRegistered' },
+      // Impossible DRMS dates read as null; they neither throw nor count as contact.
+      {
+        id: 'zeros',
+        customer: 'Zeros',
+        counterDaysAgo: 100,
+        raw: { LastAlarmReceivedTime: '0000-00-00 00:00:00' },
+      },
+      {
+        id: 'outOfRange',
+        customer: 'Out Of Range',
+        counterDaysAgo: 100,
+        raw: { LastAlarmReceivedTime: '2026-13-40 25:00:00' },
+      },
+      {
+        id: 'feb31',
+        customer: 'Feb Thirty-One',
+        counterDaysAgo: 100,
+        raw: { LastAlarmReceivedTime: '2026-02-31 10:00:00' },
+      },
+      // ISO-style 'T' separator parses.
+      {
+        id: 'tSeparated',
+        customer: 'T Separated',
+        counterDaysAgo: 100,
+        raw: { LastAlarmReceivedTime: drmsDate(daysAgo(20)).replace(' ', 'T') },
+      },
+    ]);
+    await t.db
+      .insert(deviceAlarms)
+      .values({
+        alarmId: 'old',
+        drmsEquipmentId: 'oldOurAlarm',
+        receivedTime: daysAgo(40),
+        raw: {},
+      });
+  });
+  afterEach(async () => {
+    await t.close();
+  });
+
+  it('puts a device with no meter reading under "not monitored" whatever its alarms say', async () => {
+    const silent = ids((await listReconnect(t.db, { now: NOW })).rows);
+    expect(silent).not.toContain('oldDrmsAlarm');
+    expect(silent).not.toContain('oldOurAlarm');
+    const { rows } = await listReconnect(t.db, { filter: 'unmonitored', now: NOW });
+    expect(rows.find((r) => r.drmsId === 'oldDrmsAlarm')).toMatchObject({
+      daysSilent: null,
+      lastAlarmAt: daysAgo(40),
+    });
+    expect(rows.find((r) => r.drmsId === 'oldOurAlarm')).toMatchObject({
+      daysSilent: null,
+      lastAlarmAt: daysAgo(40),
+    });
+  });
+
+  it('counts PreRegistered as registered in DRMS', async () => {
+    const { rows } = await listReconnect(t.db, { filter: 'unmonitored', now: NOW });
+    expect(rows.find((r) => r.drmsId === 'pre')?.registeredInDrms).toBe(true);
+  });
+
+  it('reads impossible DRMS dates as null', async () => {
+    const { rows } = await listReconnect(t.db, { now: NOW });
+    for (const id of ['zeros', 'outOfRange', 'feb31']) {
+      expect(rows.find((r) => r.drmsId === id)).toMatchObject({
+        lastAlarmAt: null,
+        daysSilent: 100,
+      });
+    }
+  });
+
+  it('parses a T-separated DRMS date', async () => {
+    const { rows } = await listReconnect(t.db, { now: NOW });
+    expect(rows.find((r) => r.drmsId === 'tSeparated')).toMatchObject({
+      lastAlarmAt: daysAgo(20),
+      lastContactAt: daysAgo(20),
+      daysSilent: 20,
+    });
+  });
+});
