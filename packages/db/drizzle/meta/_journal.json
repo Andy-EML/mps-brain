@@ -57,6 +57,13 @@
       "when": 1789989109654,
       "tag": "0007_replenishment",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790003163673,
+      "tag": "0008_drms_registrations",
+      "breakpoints": true
     }
   ]
 }

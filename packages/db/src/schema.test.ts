@@ -11,6 +11,7 @@ import {
   deviceAlerts,
   deviceLinks,
   drmsEquipment,
+  drmsRegistrations,
   linkIssues,
   replenishmentProposals,
   replenishmentSettings,
@@ -179,5 +180,31 @@ describe('replenishment schema', () => {
     await expect(t.db.insert(replenishmentProposals).values({ ...base, status: 'approved' })).rejects.toThrow();
     await t.db.insert(replenishmentProposals).values({ ...base, status: 'rejected' });
     await t.db.insert(replenishmentProposals).values({ ...base, colour: 'black', status: 'pending' });
+  });
+});
+
+describe('drms_registrations schema', () => {
+  let t: TestDb;
+  beforeEach(async () => {
+    t = await createTestDb();
+  });
+  afterEach(() => t.close());
+
+  it('allows one live row (awaiting approval, waiting or approved) per device, and any history', async () => {
+    await t.db.insert(drmsEquipment).values({ drmsId: 'r1', raw: {} });
+    const base = { drmsEquipmentId: 'r1', serial: 'A7PU021012345' };
+    await t.db.insert(drmsRegistrations).values({ ...base, status: 'failed' });
+    await t.db.insert(drmsRegistrations).values({ ...base, status: 'rejected' });
+    await t.db.insert(drmsRegistrations).values({ ...base, status: 'waiting' });
+    await expect(t.db.insert(drmsRegistrations).values({ ...base, status: 'awaiting_approval' })).rejects.toThrow();
+    await expect(t.db.insert(drmsRegistrations).values({ ...base, status: 'approved' })).rejects.toThrow();
+    await t.db.insert(drmsRegistrations).values({ ...base, status: 'registered' });
+  });
+
+  it('rejects an unknown status', async () => {
+    await t.db.insert(drmsEquipment).values({ drmsId: 'r2', raw: {} });
+    await expect(
+      t.db.insert(drmsRegistrations).values({ drmsEquipmentId: 'r2', status: 'ready' as 'waiting' }),
+    ).rejects.toThrow();
   });
 });

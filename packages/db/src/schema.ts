@@ -484,3 +484,66 @@ export const replenishmentProposals = pgTable(
     check('replenishment_proposals_quantity', sql`quantity between 1 and 20`),
   ],
 );
+
+export type RegistrationStatus = 'awaiting_approval' | 'waiting' | 'approved' | 'registered' | 'failed' | 'rejected';
+export const REGISTRATION_STATUSES = ['awaiting_approval', 'waiting', 'approved', 'registered', 'failed', 'rejected'] as const;
+
+/**
+ * The DRMS registration queue and its log (spec: "auto-register new machines in DRMS", REVISED).
+ *
+ * `drms-registration-scan` keeps one live `awaiting_approval` or `waiting` row per Discovered device
+ * (upserted every night); a person approves (`approved`) or rejects it; `drms-registration-submit`
+ * sends approved rows to DRMS one at a time and records `registered` or `failed`. Every attempt is
+ * a row: a retry of a failed registration is a new `approved` row with `retry_requested_*` set,
+ * and the failed one stays as history.
+ */
+export const drmsRegistrations = pgTable(
+  'drms_registrations',
+  {
+    id: serial('id').primaryKey(),
+    drmsEquipmentId: text('drms_equipment_id')
+      .notNull()
+      .references(() => drmsEquipment.drmsId),
+    serial: text('serial'),
+    deviceName: text('device_name'),
+    /** The customer DRMS holds for the device (`CustomerName`); what is sent to DRMS. */
+    drmsCustomerName: text('drms_customer_name'),
+    vantageEquipmentId: integer('vantage_equipment_id'),
+    vantageCustomerId: integer('vantage_customer_id'),
+    vantageCustomerName: text('vantage_customer_name'),
+    status: text('status', { enum: REGISTRATION_STATUSES }).notNull(),
+    /** Why a row is `waiting` (the rule not met yet). */
+    reason: text('reason'),
+    customerMatch: text('customer_match', { enum: ['match', 'mismatch', 'no_shared_words'] }),
+    /** Exactly the `EquipmentRequest/Register` body sent (or to be sent once approved). */
+    request: jsonb('request'),
+    /** The DRMS equipment request id. Once set, the row is only ever polled — never re-sent. */
+    requestId: text('request_id'),
+    /** The last DRMS answer: the register response, then the final `EquipmentRequest/{id}`. */
+    response: jsonb('response'),
+    drmsStatusAfter: text('drms_status_after'),
+    error: text('error'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    /** When the scan last evaluated a live row. */
+    checkedAt: ts('checked_at').notNull().defaultNow(),
+    decidedBy: integer('decided_by').references(() => users.id),
+    decidedAt: ts('decided_at'),
+    note: text('note'),
+    /** Set just before the POST; with no `request_id` it marks a send whose outcome is unknown. */
+    submittedAt: ts('submitted_at'),
+    finishedAt: ts('finished_at'),
+    retryRequestedBy: integer('retry_requested_by').references(() => users.id),
+    retryRequestedAt: ts('retry_requested_at'),
+  },
+  (t) => [
+    uniqueIndex('drms_registrations_live_uq')
+      .on(t.drmsEquipmentId)
+      .where(sql`status in ('awaiting_approval', 'waiting', 'approved')`),
+    index('drms_registrations_status_idx').on(t.status, t.createdAt),
+    index('drms_registrations_device_idx').on(t.drmsEquipmentId, t.id),
+    check(
+      'drms_registrations_status',
+      sql`status in ('awaiting_approval', 'waiting', 'approved', 'registered', 'failed', 'rejected')`,
+    ),
+  ],
+);
