@@ -2379,6 +2379,39 @@ git commit -m "feat: needs-reconnecting list of machines that went quiet on CSRC
 
 ---
 
+### Task 16 (opus): auto-register new CSRC machines in DRMS
+
+Added 2026-09-21 at the user's request; runs **after Task 15 and before Task 14**. Spec: "Added
+requirement: auto-register new machines in DRMS" in the design doc — binding, **including its
+"REVISED" block: an approval queue, no automatic sending, no kill switch.**
+
+> **Revision (user):** the nightly `drms-auto-register` job (rename: `drms-registration-scan`)
+> only evaluates and upserts `awaiting_approval` / `waiting` rows. A second job,
+> `drms-registration-submit` (queued by the web app on approval, plus a 10-minute sweep), sends
+> `approved` rows one at a time with the pause and cap, then records `registered` / `failed`.
+> Web: `approveRegistrations(db, { ids, userId })`, `rejectRegistrations`, `unrejectRegistration`,
+> `requestRetry` — all audited; bulk approve from a ticked selection; CSV export of the log
+> (reuse `apps/web/src/lib/csv.ts` with its formula-injection guard). Drop
+> `DRMS_AUTO_REGISTER_ENABLED`, `ready` and the dry-run wording from the lines below. Reference
+implementation of the exact DRMS calls and payload: `F:\dev\API Docs Etc\DRMS registration batches\register.mjs`
+and `select-batch.mjs` (read-only reference; do not run them).
+
+**Files:**
+- Modify: `packages/drms/src/client.ts` (+ test) — `getEquipment(id)`, `registerEquipment(payload): Promise<string>` (DRMS returns the request id as a **bare JSON string**), `getEquipmentRequest(id)`; POST not retried; 429 → `RateLimitError`.
+- Modify: `packages/vantage/src/client.ts` (+ test) — `findEquipmentBySerial(serial)` returning equipment with Customer and contracts expanded exactly as `select-batch.mjs` does (read-only).
+- Modify: `packages/core/src/…` — pure `autoRegisterEligibility(drmsRecord, vantageMatches, excludeRegex)` → `{ ok: true, payload, customerMatch } | { ok: false, reason }` and `customerMatch(drmsName, vantageName)` (port of select-batch's rules) + tests covering every rule.
+- Modify: `packages/db/src/schema.ts` + migration `0008_drms_registrations.sql` — `drms_registrations` (id, drms_equipment_id, serial, vantage_equipment_id, status `ready|waiting|registered|failed`, reason, customer_match, request jsonb, request_id, response jsonb, drms_status_after, error, created_at, submitted_at, finished_at, retry_requested_by/at). One live row per device for `waiting`/`ready` (upserted each run).
+- Create: `apps/worker/src/jobs/drms-auto-register.ts` (+ test with fake DRMS/Vantage clients) — queue `drms-auto-register`, schedule `30 3 * * *` Europe/London, env `DRMS_AUTO_REGISTER_ENABLED` (false), `AUTO_REGISTER_PAUSE_SECONDS` (90), `AUTO_REGISTER_MAX_PER_RUN` (40), `AUTO_REGISTER_EXCLUDE` (`tfc group`); `app_state.drms_auto_register_enabled`; wire queue options, handlers, main, admin-jobs card (external: true).
+- Create: `packages/db/src/queries/registrations.ts` (+ test) — list by tab, counts, `requestRetry(db, { registrationId, userId })` (audited).
+- Create: `apps/web/src/app/(app)/registrations/page.tsx` + `actions.ts`; sidebar link.
+- Modify: `CLAUDE.md` — replace "DRMS is read-only" with the new rule (only `EquipmentRequest/Register` + polling, only from `drms-auto-register`, sequential, never re-sent).
+
+**Behaviour to test in the job:** switch off → evaluates, writes `ready`/`waiting`, sends nothing; switch on → registers `ready` devices one at a time with the pause (inject a fake sleep), up to the cap; pre-check read failure → skip, nothing sent; Register rejected → `failed` with the message; poll ends `ProcessedSuccessful` → `registered` + DRMS status after; poll ends with ErrorMessage (e.g. Backbone deadlock) → `failed`; 429 → run stops, remaining untouched; a row with a request id is polled, never re-sent; a retry-requested failed device (DRMS status Deleted) is re-registered; customer mismatch registers and is flagged.
+
+- [ ] Steps: TDD each layer (core rules → clients → schema → job → queries → page), then `npx vitest run` for the touched packages, `npm run typecheck`, `npm run lint`, `npm run build -w @mps/web`. Commit per layer. No live DRMS/Vantage calls; no dev server.
+
+---
+
 ### Task 14: Full test pass, live enablement with the user, handoff
 
 **Files:**

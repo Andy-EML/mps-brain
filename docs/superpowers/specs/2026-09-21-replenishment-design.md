@@ -207,3 +207,56 @@ alarm" only means no alarm reached DRMS. So:
   counter-based). Filter tabs: *Newly silent (14–30 days) · Long silent (over 30 days) · Not
   monitored yet*.
 - The Fleet overview tile and sidebar badge count **silent** devices only.
+
+## Added requirement (2026-09-21, user): auto-register new machines in DRMS
+
+> **REVISED by the user the same day: approval queue, not automatic.** The nightly job only
+> *discovers and checks*; machines that pass the rules go to **Awaiting approval**. Nothing is sent to
+> DRMS until a person approves (per row or a ticked selection). Approved rows are registered by the
+> worker one at a time with the pause below. Rejected rows leave the queue and are not proposed again
+> unless un-rejected. **No kill switch** — approval is the gate. Every attempt is logged (request,
+> response, result, DRMS status after) and every approve/reject/retry is audited; the page has a CSV
+> export of the log. Tabs: *Awaiting approval · Waiting · Registered · Failed · Rejected*; sidebar badge
+> = awaiting approval. Customer mismatches are flagged in the queue (the user decides at approval).
+> Statuses become `awaiting_approval | waiting | approved | registered | failed | rejected`. Where the
+> text below says "automatically", "dry run", `ready` or the kill switch, this revision wins.
+
+When an engineer connects a new machine to CSRC it appears in DRMS as **Discovered** (our hourly
+`drms-pull` sees it). Registering it by hand is what we did all day on 2026-09-21; the user wants a
+routine so every new machine is registered — and therefore monitored with daily meter readings —
+without anyone remembering to do it. **This lifts the Foundation rule "DRMS is read-only"** for
+exactly one call family: `EquipmentRequest/Register` and polling `EquipmentRequest/{id}`.
+
+Rules (the ones settled with the user while registering ~550 devices by hand):
+- DRMS status **Discovered**, not missing; `CommunicationType = CSRC_HTTP` on `COM_GB502`/`COM_GB503`;
+  has CsrcId, CsrcProductId, a 13-character serial and a `CUST…` customer code; DRMS `ErpId` empty or
+  equal to the serial (a different ErpId means someone else set it — leave it).
+- Name not refurb/unsold/awaiting/demo/loan; not an excluded customer (configurable regex, default
+  `tfc group` — Primaflow TFC Group; Abacus Direct is now allowed).
+- **Exactly one** Vantage equipment with that serial (not deleted), with a customer and an **active
+  contract** (status 1, not on hold, not cancelled, not deleted) — checked live against Vantage per
+  candidate, read-only, as the batch selector does.
+- **No check-in rule** — DRMS has no heartbeat for Discovered devices.
+- **Customer mismatches are registered automatically** (user decision) and flagged on the page.
+- `EquipmentErpId` = the Vantage `Equipment.Id`; the other fields from DRMS's own record, exactly as
+  `register.mjs` sends them.
+
+Safety (learnt the hard way): **one registration at a time, never in parallel**; a pause between
+registrations (`AUTO_REGISTER_PAUSE_SECONDS`, default **90** — the DRMS backbone deadlocks under a
+steady stream); a cap per run (`AUTO_REGISTER_MAX_PER_RUN`, default **40**); poll each request every
+30 s for up to 20 min; **never re-send** a request that has an id; a 429 or auth error stops the run;
+a DRMS pre-check read that fails (e.g. HTTP 500) skips the device without sending anything.
+
+Outcomes, one row per attempt in `drms_registrations`: `registered` · `failed` (DRMS error text,
+e.g. a Backbone deadlock that leaves the device Deleted) · `waiting` (a rule not yet met — no Vantage
+match yet, no active contract…, re-checked every run, reason shown). A failed device can be retried
+from the page (re-registration of a device DRMS set to Deleted worked on 2026-09-21).
+
+Schedule: daily at **03:30** Europe/London (after the 02:00 Vantage pull and its link run), plus
+*Run now* on the Jobs page. Kill switch `DRMS_AUTO_REGISTER_ENABLED` (default **false**): while off the
+job still evaluates and records `waiting`/would-register rows as a dry run (status `ready`), but
+sends nothing. Mirrored to `app_state.drms_auto_register_enabled` for the page banner.
+
+UI: **Registrations** page (`/registrations`): tabs *Registered · Ready (dry run) · Waiting · Failed*,
+with serial, device name, Vantage customer, customer-match flag, reason/DRMS message, dates; *Retry*
+on failed rows; banner when the switch is off. Linked from Admin → Jobs and the sidebar.
