@@ -126,7 +126,13 @@ export async function runDrmsSnapshot(deps: DrmsSnapshotDeps): Promise<JobResult
         if (!counters) stats.empty++;
         else if (await saveSnapshot(db, drmsId, counters, now())) stats.inserted++;
         else stats.unchanged++;
-        await db.update(drmsEquipment).set({ lastSnapshotFetchAt: now() }).where(eq(drmsEquipment.drmsId, drmsId));
+        // Only a reading received today settles the device for the day. Empty devices (Discovered,
+        // or registered after DRMS's overnight collection) and yesterday's reading are asked again
+        // on a later run the same day, so a morning manual run doesn't hide the afternoon's data.
+        const received = counters ? parseApiDate(counters.ReceivedTime) : null;
+        if (received && received >= dayStart) {
+          await db.update(drmsEquipment).set({ lastSnapshotFetchAt: now() }).where(eq(drmsEquipment.drmsId, drmsId));
+        }
       } catch (err) {
         if (err instanceof RateLimitError || err instanceof AuthError) {
           stopError ??= err;

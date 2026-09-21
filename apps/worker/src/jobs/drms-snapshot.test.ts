@@ -124,15 +124,38 @@ describe('runDrmsSnapshot', () => {
     expect(retry.stats).toMatchObject({ devices: 1, inserted: 1 });
   });
 
-  it('counts a device with no counters as empty, stores nothing, and skips it on a same-day rerun', async () => {
+  it('counts a device with no counters as empty, stores nothing, and asks again on a same-day rerun', async () => {
     const drms = { latestCounters: async (id: string) => (id === 'd5' ? null : counters(`${id}-c1`)) };
     const result = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T06:00:00Z'), concurrency: 1 });
     expect(result).toMatchObject({ status: 'success', stats: { devices: 3, inserted: 2, empty: 1 } });
     expect(await t.db.select().from(counterSnapshots).where(eq(counterSnapshots.drmsEquipmentId, 'd5'))).toEqual([]);
     const [d5] = await t.db.select().from(drmsEquipment).where(eq(drmsEquipment.drmsId, 'd5'));
-    expect(d5?.lastSnapshotFetchAt?.toISOString()).toBe('2026-09-17T06:00:00.000Z');
+    expect(d5?.lastSnapshotFetchAt).toBeNull();
 
-    const sameDay = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T09:00:00Z'), concurrency: 1 });
-    expect(sameDay.stats.devices).toBe(0);
+    // A device registered after the morning run gets counters later the same day.
+    const later = { latestCounters: async (id: string) => counters(`${id}-c1`) };
+    const sameDay = await runDrmsSnapshot({ db: t.db, drms: later, now: day('2026-09-17T13:30:00Z'), concurrency: 1 });
+    expect(sameDay.stats).toMatchObject({ devices: 1, inserted: 1 });
+  });
+
+  it('keeps asking a device whose latest reading is from before today, until today\'s arrives', async () => {
+    const reading = (counterId: string, receivedTime: string): DrmsLatestCounters => ({ ...counters(counterId), ReceivedTime: receivedTime });
+    let current = (id: string) => reading(`${id}-old`, '2026-09-16 01:30:00');
+    const drms = { latestCounters: async (id: string) => current(id) };
+
+    const morning = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T07:00:00Z'), concurrency: 1 });
+    expect(morning.stats).toMatchObject({ devices: 3, inserted: 3 });
+    const [d1] = await t.db.select().from(drmsEquipment).where(eq(drmsEquipment.drmsId, 'd1'));
+    expect(d1?.lastSnapshotFetchAt).toBeNull();
+
+    const stillOld = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T10:00:00Z'), concurrency: 1 });
+    expect(stillOld.stats).toMatchObject({ devices: 3, inserted: 0, unchanged: 3 });
+
+    current = (id) => reading(`${id}-new`, '2026-09-17 09:45:00');
+    const afternoon = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T13:30:00Z'), concurrency: 1 });
+    expect(afternoon.stats).toMatchObject({ devices: 3, inserted: 3 });
+
+    const rerun = await runDrmsSnapshot({ db: t.db, drms, now: day('2026-09-17T15:00:00Z'), concurrency: 1 });
+    expect(rerun.stats.devices).toBe(0);
   });
 });
