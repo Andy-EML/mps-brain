@@ -1,7 +1,8 @@
 import { and, asc, count, eq, ilike, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
-import { counterPivotSubquery, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
+import { effectiveSettingsSubquery } from './settings';
+import { belowThreshold, counterPivotSubquery, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
 export interface DeviceRow {
   drmsId: string;
@@ -41,7 +42,7 @@ export interface DeviceRow {
 
 export interface DeviceListOptions {
   search?: string;
-  filter?: 'all' | 'needs-toner' | 'offline' | 'unlinked';
+  filter?: 'all' | 'needs-toner' | 'manual' | 'offline' | 'unlinked';
   /**
    * `'urgent'` orders critical toner first, then low toner, then offline, then unlinked, then
    * everything else — the fleet overview's "most urgent first" preview. Ties break on device name
@@ -139,6 +140,7 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
   const cutoff = offlineCutoff();
   const pivot = counterPivotSubquery(db);
   const alarms = lastAlarmSubquery(db);
+  const eff = effectiveSettingsSubquery(db);
 
   const conds = [];
   if (o.search) {
@@ -153,7 +155,9 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
     );
   }
   if (o.filter === 'needs-toner') {
-    conds.push(or(lt(pivot.black, 20), lt(pivot.cyan, 20), lt(pivot.magenta, 20), lt(pivot.yellow, 20)));
+    conds.push(and(belowThreshold(pivot, eff), eq(eff.autoReplenish, true)));
+  } else if (o.filter === 'manual') {
+    conds.push(and(belowThreshold(pivot, eff), eq(eff.autoReplenish, false)));
   } else if (o.filter === 'offline') {
     conds.push(and(isNotNull(drmsEquipment.lastCounterReceivedTime), lt(drmsEquipment.lastCounterReceivedTime, cutoff)));
   } else if (o.filter === 'unlinked') {
@@ -186,6 +190,9 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
     .leftJoin(pivot, eq(pivot.drmsId, drmsEquipment.drmsId))
     // Already grouped to one row per device, so this cannot multiply rows (or the count below).
     .leftJoin(alarms, eq(alarms.drmsId, drmsEquipment.drmsId))
+    // Left join, not inner: every DRMS device has an effective-settings row, but a missing one
+    // should still return the device rather than drop it, just without matching needs-toner/manual.
+    .leftJoin(eff, eq(eff.drmsId, drmsEquipment.drmsId))
     .where(where)
     .orderBy(...orderBy)
     .limit(limit)
@@ -197,6 +204,7 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
     .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
     .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
     .leftJoin(pivot, eq(pivot.drmsId, drmsEquipment.drmsId))
+    .leftJoin(eff, eq(eff.drmsId, drmsEquipment.drmsId))
     .where(where);
 
   const [rows, [totalRow]] = await Promise.all([rowsQuery, countQuery]);

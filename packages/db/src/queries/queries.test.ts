@@ -20,6 +20,7 @@ import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms, list
 import { listDevices } from './devices';
 import { getCollectionStatus, getConsumableWarnings, getCustomerCount, getFleetSummary, getTonerHealth } from './fleet';
 import { getIssueCounts, listIssues, searchVantageEquipment } from './issues';
+import { updateDeviceSettings } from './settings';
 
 // Frozen "now" for the whole suite: seedDemoFixture's hoursAgo()/daysAgo() helpers and the query
 // layer's own Date.now() calls (offlineCutoff, etc.) both read this, so every timestamp
@@ -74,8 +75,10 @@ describe('queries', () => {
         .insert(counterSnapshots)
         .values({ drmsEquipmentId: 'LOW1', counterId: 'low-c1', receivedTime: new Date(), raw: {} })
         .returning({ id: counterSnapshots.id });
+      // 12%: below the default black threshold (15, so the cascade counts it as needing toner)
+      // but at or above the fixed 5% critical cutoff, i.e. this device's own "low" tier.
       await t.db.insert(counterValues).values([
-        { snapshotId: snap!.id, name: 'BlackTonerLevel', value: 18 },
+        { snapshotId: snap!.id, name: 'BlackTonerLevel', value: 12 },
         { snapshotId: snap!.id, name: 'CyanTonerLevel', value: 90 },
       ]);
 
@@ -304,6 +307,88 @@ describe('queries', () => {
 
       const { rows } = await listDevices(t.db);
       expect(rows.find((r) => r.drmsId === 'MONO1')?.meters).toEqual({ black: 14_000, colour: null, scan: 12 });
+    });
+  });
+
+  describe('needs-toner cascade', () => {
+    /** A colour device with just the given toner levels, none of the shared fixture's other noise. */
+    async function seedColourDevice(drmsId: string, levels: Record<string, number>) {
+      await t.db.insert(drmsEquipment).values({
+        drmsId,
+        serial: `SN-${drmsId}`,
+        modelName: 'bizhub C301i',
+        isColour: true,
+        status: 'Registered',
+        customerName: `${drmsId} Ltd`,
+        lastCounterReceivedTime: new Date(),
+        raw: {},
+      });
+      const [snap] = await t.db
+        .insert(counterSnapshots)
+        .values({ drmsEquipmentId: drmsId, counterId: `${drmsId}-c1`, receivedTime: new Date(), raw: {} })
+        .returning({ id: counterSnapshots.id });
+      await t.db
+        .insert(counterValues)
+        .values(Object.entries(levels).map(([name, value]) => ({ snapshotId: snap!.id, name, value })));
+    }
+
+    it('is below the default black threshold (15) at 14% and shows up in needs-toner', async () => {
+      await seedColourDevice('CDEV', { BlackTonerLevel: 14, CyanTonerLevel: 90, MagentaTonerLevel: 90, YellowTonerLevel: 90 });
+
+      const { rows } = await listDevices(t.db, { filter: 'needs-toner' });
+      expect(rows.map((r) => r.drmsId)).toContain('CDEV');
+    });
+
+    it('is at or above every effective threshold at 16%/12% and is absent from needs-toner', async () => {
+      await seedColourDevice('CDEV', { BlackTonerLevel: 16, CyanTonerLevel: 12, MagentaTonerLevel: 90, YellowTonerLevel: 90 });
+
+      const { rows } = await listDevices(t.db, { filter: 'needs-toner' });
+      expect(rows.map((r) => r.drmsId)).not.toContain('CDEV');
+    });
+
+    it('moves a below-threshold device to the manual filter once auto-replenish is off', async () => {
+      await seedColourDevice('CDEV', { BlackTonerLevel: 14, CyanTonerLevel: 90, MagentaTonerLevel: 90, YellowTonerLevel: 90 });
+      await updateDeviceSettings(t.db, { drmsIds: ['CDEV'], patch: { autoReplenish: false }, userId: f.user.id });
+
+      const needsToner = await listDevices(t.db, { filter: 'needs-toner' });
+      expect(needsToner.rows.map((r) => r.drmsId)).not.toContain('CDEV');
+
+      const manual = await listDevices(t.db, { filter: 'manual' });
+      expect(manual.rows.map((r) => r.drmsId)).toEqual(['CDEV']);
+
+      const summary = await getFleetSummary(t.db);
+      expect(summary.manualLow).toBe(1);
+    });
+
+    it('leaves a mono device with nulled CMY out of both needs-toner and manual, even with auto-replenish off', async () => {
+      await t.db.insert(drmsEquipment).values({
+        drmsId: 'MDEV',
+        serial: 'SN-MDEV',
+        modelName: 'bizhub 301i',
+        isColour: false,
+        status: 'Registered',
+        customerName: 'MDEV Ltd',
+        lastCounterReceivedTime: new Date(),
+        raw: {},
+      });
+      const [snap] = await t.db
+        .insert(counterSnapshots)
+        .values({ drmsEquipmentId: 'MDEV', counterId: 'MDEV-c1', receivedTime: new Date(), raw: {} })
+        .returning({ id: counterSnapshots.id });
+      // DRMS still sends a Cyan reading for a mono device sometimes; the pivot nulls it regardless.
+      await t.db
+        .insert(counterValues)
+        .values([
+          { snapshotId: snap!.id, name: 'BlackTonerLevel', value: 50 },
+          { snapshotId: snap!.id, name: 'CyanTonerLevel', value: 0 },
+        ]);
+      await updateDeviceSettings(t.db, { drmsIds: ['MDEV'], patch: { autoReplenish: false }, userId: f.user.id });
+
+      const needsToner = await listDevices(t.db, { filter: 'needs-toner' });
+      expect(needsToner.rows.map((r) => r.drmsId)).not.toContain('MDEV');
+
+      const manual = await listDevices(t.db, { filter: 'manual' });
+      expect(manual.rows.map((r) => r.drmsId)).not.toContain('MDEV');
     });
   });
 

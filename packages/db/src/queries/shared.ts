@@ -1,6 +1,7 @@
-import { eq, max, sql } from 'drizzle-orm';
+import { eq, max, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../client';
 import { counterSnapshots, counterValues, deviceAlarms, drmsEquipment } from '../schema';
+import type { effectiveSettingsSubquery } from './settings';
 
 /** Counter names this project cares about (see CLAUDE.md / global-constraints for the real values). */
 export const TONER_NAMES = {
@@ -105,6 +106,23 @@ export function lastAlarmSubquery(db: Db) {
     .from(deviceAlarms)
     .groupBy(deviceAlarms.drmsEquipmentId)
     .as('last_alarm');
+}
+
+/**
+ * True when any cartridge the device has is strictly below its effective threshold for that
+ * colour — THE "needs toner" test, shared by the fleet summary and the devices-list `needs-toner`
+ * / `manual` filters (paired with `eff.autoReplenish`). `urgencyRank`'s ordering keeps its own
+ * fixed 5%/20% display scale, unrelated to this. Null-safe on both sides: a colour pivot column
+ * that's null (no cartridge — see `colourPivot` above — or simply no reading yet) never matches,
+ * and neither does an `effectiveSettingsSubquery` row that failed to join (every DRMS device has
+ * one in practice, but a left join is what the caller uses, so this stays correct even if that
+ * ever isn't true).
+ */
+export function belowThreshold(
+  pivot: ReturnType<typeof counterPivotSubquery>,
+  eff: ReturnType<typeof effectiveSettingsSubquery>,
+): SQL {
+  return sql`(${pivot.black} < ${eff.thresholdBlack} or ${pivot.cyan} < ${eff.thresholdCyan} or ${pivot.magenta} < ${eff.thresholdMagenta} or ${pivot.yellow} < ${eff.thresholdYellow})`;
 }
 
 export function toNumberOrNull(v: unknown): number | null {

@@ -1,4 +1,5 @@
-import { deviceAlerts, drmsEquipment } from '@mps/db';
+import { deviceAlerts, drmsEquipment, users } from '@mps/db';
+import { updateDeviceSettings } from '@mps/db/queries';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { asc, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -113,6 +114,50 @@ describe('evaluateOfflineAlerts', () => {
     expect(result).toEqual({ opened: 0, cleared: 0, open: 1, skippedDueToOutage: false });
     const [alert] = await t.db.select().from(deviceAlerts).where(eq(deviceAlerts.drmsEquipmentId, 'D1'));
     expect(alert?.clearedAt).toBeNull();
+  });
+
+  describe('per-device alerts switch', () => {
+    async function userId(): Promise<number> {
+      const [u] = await t.db.insert(users).values({ username: `op-${Math.random()}`, passwordHash: 'x' }).returning();
+      if (!u) throw new Error('failed to insert user');
+      return u.id;
+    }
+
+    it('does not open an alert for a stale device with alerts switched off', async () => {
+      await seedWithAnchor([{ drmsId: 'D1', lastCounterReceivedTime: hoursAgo(30) }]);
+      await updateDeviceSettings(t.db, { drmsIds: ['D1'], patch: { alertsEnabled: false }, userId: await userId() });
+
+      const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+
+      expect(result).toEqual({ opened: 0, cleared: 0, open: 0, skippedDueToOutage: false });
+      expect(await t.db.select().from(deviceAlerts)).toHaveLength(0);
+    });
+
+    it('clears an already-open alert once alerts are switched off for that device, tagging the reason', async () => {
+      await seedWithAnchor([{ drmsId: 'D1', lastCounterReceivedTime: hoursAgo(30) }]);
+      await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+
+      await updateDeviceSettings(t.db, { drmsIds: ['D1'], patch: { alertsEnabled: false }, userId: await userId() });
+      const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+
+      expect(result).toEqual({ opened: 0, cleared: 1, open: 0, skippedDueToOutage: false });
+      const [alert] = await t.db.select().from(deviceAlerts).where(eq(deviceAlerts.drmsEquipmentId, 'D1'));
+      expect(alert?.clearedAt?.toISOString()).toBe(NOW.toISOString());
+      expect(alert?.details).toMatchObject({ clearedReason: 'alerts switched off' });
+    });
+
+    it('does not reopen the alert on a later run while alerts stay off', async () => {
+      await seedWithAnchor([{ drmsId: 'D1', lastCounterReceivedTime: hoursAgo(30) }]);
+      await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+      await updateDeviceSettings(t.db, { drmsIds: ['D1'], patch: { alertsEnabled: false }, userId: await userId() });
+      await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+
+      const later = new Date(NOW.getTime() + 48 * 3_600_000);
+      await anchorReportsAt(later);
+      const result = await evaluateOfflineAlerts(t.db, { now: later, thresholdHours: 24 });
+
+      expect(result).toEqual({ opened: 0, cleared: 0, open: 0, skippedDueToOutage: false });
+    });
   });
 
   describe('fleet-wide collection outage', () => {

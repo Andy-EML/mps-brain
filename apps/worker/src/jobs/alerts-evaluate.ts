@@ -1,8 +1,10 @@
 import { isCollectionOutage } from '@mps/core';
 import { deviceAlerts, drmsEquipment, type Db } from '@mps/db';
+import { effectiveSettingsSubquery } from '@mps/db/queries';
 import { and, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 
 const OFFLINE_TYPE = 'offline';
+const ALERTS_OFF_REASON = 'alerts switched off';
 
 export interface AlertEvaluation {
   opened: number;
@@ -33,11 +35,19 @@ export interface AlertEvaluation {
 export async function evaluateOfflineAlerts(db: Db, opts: { now: Date; thresholdHours: number }): Promise<AlertEvaluation> {
   const { now, thresholdHours } = opts;
   const cutoff = new Date(now.getTime() - thresholdHours * 3_600_000);
+  const eff = effectiveSettingsSubquery(db);
+
+  // Devices whose effective alerts switch (the settings cascade) is on — the only ones this job
+  // ever opens, or leaves a stale-based alert open for. A device switched off drops out of
+  // `stale`/`fresh` entirely; what happens to an alert that was already open on one is handled
+  // separately below, since switching the flag off has to clear it even between runs.
+  const alertsOnIds = db.select({ drmsId: eff.drmsId }).from(eff).where(eq(eff.alertsEnabled, true));
 
   const candidateFilter = and(
     isNull(drmsEquipment.missingSince),
     sql`upper(${drmsEquipment.status}) <> 'DELETED'`,
     isNotNull(drmsEquipment.lastCounterReceivedTime),
+    inArray(drmsEquipment.drmsId, alertsOnIds),
   );
 
   const stale = await db
@@ -92,10 +102,39 @@ export async function evaluateOfflineAlerts(db: Db, opts: { now: Date; threshold
       );
   }
 
+  // A device whose alerts switch is off keeps no open offline alert, whatever its counters say —
+  // it never went through `candidateFilter` above, so this is the only place that clears one.
+  // Runs regardless of the outage guard: the switch is a per-device decision, not a statement
+  // about collection.
+  const alertsOff = await db
+    .select({ drmsId: deviceAlerts.drmsEquipmentId })
+    .from(deviceAlerts)
+    .innerJoin(eff, eq(eff.drmsId, deviceAlerts.drmsEquipmentId))
+    .where(and(eq(deviceAlerts.type, OFFLINE_TYPE), isNull(deviceAlerts.clearedAt), eq(eff.alertsEnabled, false)));
+
+  if (alertsOff.length > 0) {
+    await db
+      .update(deviceAlerts)
+      .set({
+        clearedAt: now,
+        details: sql`${deviceAlerts.details} || ${JSON.stringify({ clearedReason: ALERTS_OFF_REASON })}::jsonb`,
+      })
+      .where(
+        and(
+          eq(deviceAlerts.type, OFFLINE_TYPE),
+          isNull(deviceAlerts.clearedAt),
+          inArray(
+            deviceAlerts.drmsEquipmentId,
+            alertsOff.map((a) => a.drmsId),
+          ),
+        ),
+      );
+  }
+
   const [{ n } = { n: 0 }] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(deviceAlerts)
     .where(and(eq(deviceAlerts.type, OFFLINE_TYPE), isNull(deviceAlerts.clearedAt)));
 
-  return { opened: toOpen.length, cleared: toClear.length, open: n, skippedDueToOutage };
+  return { opened: toOpen.length, cleared: toClear.length + alertsOff.length, open: n, skippedDueToOutage };
 }

@@ -5,6 +5,7 @@ import {
   getCustomerCount,
   getFleetSummary,
   getIssueCounts,
+  getReplenishmentStats,
   getTonerHealth,
   listDevices,
 } from '@mps/db/queries';
@@ -30,7 +31,7 @@ export default async function FleetOverviewPage() {
   const db = getDb();
   const now = new Date();
 
-  const [summary, health, customers, issueCounts, preview, warnings, collection] = await Promise.all([
+  const [summary, health, customers, issueCounts, preview, warnings, collection, replenishment] = await Promise.all([
     getFleetSummary(db),
     getTonerHealth(db),
     getCustomerCount(db),
@@ -38,6 +39,7 @@ export default async function FleetOverviewPage() {
     listDevices(db, { limit: PREVIEW_ROWS, sort: 'urgent' }),
     getConsumableWarnings(db),
     getCollectionStatus(db),
+    getReplenishmentStats(db, now),
   ]);
 
   const warningDevices = new Set(warnings.map((w) => w.drmsId)).size;
@@ -69,7 +71,8 @@ export default async function FleetOverviewPage() {
           label="Needs toner"
           value={formatNumber(summary.needsToner)}
           tone={summary.needsToner > 0 ? 'warn' : 'muted'}
-          sub={`${formatNumber(summary.criticalToner)} critical · ${formatNumber(summary.lowToner)} low`}
+          sub={`${formatNumber(replenishment.awaitingReviewDevices)} awaiting review · ${formatNumber(replenishment.onOrderDevices)} on order`}
+          href="/orders"
         />
         {/* Not "Offline": the number only says DRMS collected no counter set. While collection is
             behind, most of that number is devices the batch has not reached yet — a statement

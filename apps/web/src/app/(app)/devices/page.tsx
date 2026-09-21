@@ -20,6 +20,7 @@ const PAGE_SIZE = 50;
 const FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'needs-toner', label: 'Needs toner' },
+  { value: 'manual', label: 'Manual replenishment' },
   { value: 'offline', label: 'No meter reading' },
   { value: 'unlinked', label: 'Not linked' },
 ] as const satisfies readonly (FilterTab & { value: NonNullable<DeviceListOptions['filter']> })[];
@@ -28,7 +29,8 @@ type Filter = (typeof FILTERS)[number]['value'];
 
 const EMPTY: Record<Filter, string> = {
   all: 'No devices have been synced yet.',
-  'needs-toner': 'No device is under 20% on any cartridge.',
+  'needs-toner': 'No device is below its replenishment threshold.',
+  manual: 'No device with auto-replenishment switched off is below its threshold.',
   offline: 'DRMS has collected a meter reading in the last 24 hours for every device that has ever reported one.',
   unlinked: 'Every DRMS device is linked to Vantage equipment.',
 };

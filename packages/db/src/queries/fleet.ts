@@ -2,13 +2,21 @@ import { isCollectionOutage } from '@mps/core';
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, max, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceAlarms, deviceLinks, drmsEquipment, linkIssues, syncRuns, vantageEquipment } from '../schema';
-import { counterPivotSubquery, offlineCutoff } from './shared';
+import { effectiveSettingsSubquery } from './settings';
+import { belowThreshold, counterPivotSubquery, offlineCutoff } from './shared';
 
 export interface FleetSummary {
   devices: number;
   monitored: number;
   linked: number;
+  /** Below its effective threshold on some cartridge, with auto-replenish on — the cascade rule. */
   needsToner: number;
+  /**
+   * The same "below threshold" test, but with auto-replenish switched off — devices the settings
+   * cascade says need toner but that the "Manual replenishment" devices filter (not the engine)
+   * covers, because nothing here proposes an order for them.
+   */
+  manualLow: number;
   criticalToner: number;
   lowToner: number;
   /**
@@ -36,6 +44,7 @@ function monitoredCondition() {
 export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = {}): Promise<FleetSummary> {
   const cutoff = offlineCutoff(opts.offlineHours);
   const pivot = counterPivotSubquery(db);
+  const eff = effectiveSettingsSubquery(db);
 
   const [[devicesRow], [monitoredRow], [linkedRow], [tonerRow], [offlineRow], [issuesRow], [syncRow]] = await Promise.all([
     db.select({ n: count() }).from(drmsEquipment),
@@ -43,10 +52,16 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
     db.select({ n: count() }).from(deviceLinks).where(isNull(deviceLinks.unlinkedAt)),
     db
       .select({
-        needsToner: sql<number>`count(*) filter (where ${pivot.black} < 20 or ${pivot.cyan} < 20 or ${pivot.magenta} < 20 or ${pivot.yellow} < 20)`,
+        needsToner: sql<number>`count(*) filter (where ${and(belowThreshold(pivot, eff), eq(eff.autoReplenish, true))})`,
+        manualLow: sql<number>`count(*) filter (where ${and(belowThreshold(pivot, eff), eq(eff.autoReplenish, false))})`,
+        // Display-scale tiers (5%/20%), independent of the settings cascade — the toner health
+        // card's own thresholds, not the ordering rule for "needs toner".
         criticalToner: sql<number>`count(*) filter (where ${pivot.black} < 5 or ${pivot.cyan} < 5 or ${pivot.magenta} < 5 or ${pivot.yellow} < 5)`,
       })
-      .from(pivot),
+      // Left join: every DRMS device has an effective-settings row, but a missing one should read
+      // as "not needing toner" rather than dropping the device from the count.
+      .from(pivot)
+      .leftJoin(eff, eq(eff.drmsId, pivot.drmsId)),
     db
       .select({ n: count() })
       .from(drmsEquipment)
@@ -66,6 +81,7 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
     monitored: monitoredRow?.n ?? 0,
     linked: linkedRow?.n ?? 0,
     needsToner,
+    manualLow: Number(tonerRow?.manualLow ?? 0),
     criticalToner,
     // "Low" is the non-critical part of "needs toner" (5%-20%); needsToner already includes critical.
     lowToner: needsToner - criticalToner,
