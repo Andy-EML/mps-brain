@@ -94,7 +94,9 @@ alarms, the per-colour order state and the live/recent proposals.
 6. Threshold wins over alarm when both fire (it carries a level); the alarm is recorded alongside.
 
 `supersede`: a `pending` **threshold** proposal whose current level is back at or above its
-threshold (a cartridge was fitted) becomes `superseded`. Alarm proposals are never auto-superseded.
+threshold (a cartridge was fitted) becomes `superseded`. Alarm proposals are never superseded by a
+level recovering. Switching `auto_replenish` off supersedes **every** pending proposal of that device,
+whatever its trigger — a manual device has no place in the review queue.
 
 ## Settings cascade (SQL, one place)
 
