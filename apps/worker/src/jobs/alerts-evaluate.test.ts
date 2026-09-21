@@ -158,6 +158,28 @@ describe('evaluateOfflineAlerts', () => {
 
       expect(result).toEqual({ opened: 0, cleared: 0, open: 0, skippedDueToOutage: false });
     });
+
+    it('still counts alerts-off devices toward the outage ratio — the guard is about collection, not preference', async () => {
+      // Same shape as "opens nothing while collection is only part-way through the fleet" below
+      // (5 of 35 delivered, 30/35 = 0.857 stale), except the 30 stale devices also have alerts
+      // switched off. If the ratio only looked at alerts-on devices, the denominator would shrink
+      // to the 5 fresh ones (0 stale of 5 = "collection is fine"), and the reason nothing opened
+      // would be a coincidence of the switch rather than the outage guard doing its job.
+      await seedDrms(t.db, [
+        ...Array.from({ length: 5 }, (_, i) => ({ drmsId: `FRESH${i}`, lastCounterReceivedTime: hoursAgo(1) })),
+        ...Array.from({ length: 30 }, (_, i) => ({ drmsId: `STALE${i}`, lastCounterReceivedTime: hoursAgo(30) })),
+      ]);
+      await updateDeviceSettings(t.db, {
+        drmsIds: Array.from({ length: 30 }, (_, i) => `STALE${i}`),
+        patch: { alertsEnabled: false },
+        userId: await userId(),
+      });
+
+      const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+
+      expect(result).toEqual({ opened: 0, cleared: 0, open: 0, skippedDueToOutage: true });
+      expect(await t.db.select().from(deviceAlerts)).toHaveLength(0);
+    });
   });
 
   describe('fleet-wide collection outage', () => {
