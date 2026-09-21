@@ -48,6 +48,8 @@ export interface QueueProposal {
   decidedAt: Date | null;
   decidedBy: string | null;
   note: string | null;
+  /** The MPS order this proposal went into (approved, ordered, failed); null before a decision. */
+  orderId: number | null;
   /** The newest order of this colour on the device's current Vantage equipment, open or not. */
   lastOrder: (OrderRef & { open: boolean }) | null;
   openOrder: OrderRef | null;
@@ -99,6 +101,7 @@ function selectProposals(db: Db, where: SQL | undefined) {
       decidedAt: p.decidedAt,
       decidedBy: decider.username,
       note: p.note,
+      orderId: p.orderId,
     })
     .from(p)
     .leftJoin(decider, eq(decider.id, p.decidedBy))
@@ -238,6 +241,7 @@ async function assemble(db: Db, proposals: ProposalRow[], orders: OrderRow[], no
       decidedAt: p.decidedAt,
       decidedBy: p.decidedBy,
       note: p.note,
+      orderId: p.orderId,
       lastOrder: state?.last ?? null,
       openOrder: state?.open ?? null,
     });

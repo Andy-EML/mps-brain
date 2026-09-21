@@ -18,6 +18,7 @@ export default async function AppLayout({ children }: LayoutProps<'/'>) {
         role={user.role ?? 'operator'}
         openAlerts={counts.openAlerts}
         openIssues={counts.openIssues}
+        awaitingReview={counts.awaitingReview}
       />
       <main className="min-w-0 flex-1">
         <div className="mx-auto w-full max-w-shell px-8 py-8">{children}</div>

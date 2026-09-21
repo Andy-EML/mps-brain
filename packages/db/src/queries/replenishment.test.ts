@@ -153,11 +153,11 @@ describe('replenishment queue', () => {
   });
 
   it('moves an approved device to in-progress and counts stats', async () => {
-    await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 1 }], userId });
+    const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 1 }], userId });
     const ip = await listReplenishmentQueue(t.db, { tab: 'in-progress' });
     expect(ip.map((d) => d.drmsId)).toEqual(['d1']);
     expect(ip[0]!.orders).toEqual([expect.objectContaining({ status: 'queued', createdBy: 'op', vantageReference: null })]);
-    expect(ip[0]!.proposals.map((p) => [p.colour, p.status])).toEqual([['black', 'approved']]);
+    expect(ip[0]!.proposals.map((p) => [p.colour, p.status, p.orderId])).toEqual([['black', 'approved', orderId]]);
     // The approved order is the open one for black now.
     expect(ip[0]!.proposals[0]!.openOrder).toMatchObject({ source: 'mps' });
     expect(await getReplenishmentStats(t.db)).toMatchObject({ awaitingReviewDevices: 2, awaitingReviewProposals: 2, onOrderDevices: 1, openMpsOrders: 1, attentionOrders: 0 });
