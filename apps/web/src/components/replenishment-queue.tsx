@@ -121,7 +121,7 @@ function ReviewForm({ device }: { device: QueueDevice }) {
 }
 
 function ProposalRow({ proposal: p }: { proposal: QueueProposal }) {
-  const [quantity, setQuantity] = useState(Math.min(Math.max(p.quantity, 1), MAX_QUANTITY));
+  const [quantity, setQuantity] = useState(String(clampQuantity(p.quantity)));
   const context = orderContext(p);
   const checkboxId = `proposal-${p.id}`;
   return (
@@ -153,19 +153,28 @@ function ProposalRow({ proposal: p }: { proposal: QueueProposal }) {
   );
 }
 
-/** The mockup's − / 1 / + control. The number input is the value that is posted. */
+function clampQuantity(n: number): number {
+  return Number.isFinite(n) ? Math.min(MAX_QUANTITY, Math.max(1, Math.round(n))) : 1;
+}
+
+/**
+ * The mockup's − / 1 / + control. The number input is the value that is posted. Typing is free
+ * (the field can be cleared and retyped) and is clamped to 1–20 on blur; the server still refuses
+ * anything outside that range with `bad_quantity`.
+ */
 function Stepper({
   id,
-  value,
+  value: draft,
   onChange,
   label,
 }: {
   id: number;
-  value: number;
-  onChange: (n: number) => void;
+  value: string;
+  onChange: (value: string) => void;
   label: string;
 }) {
-  const clamp = (n: number) => Math.min(MAX_QUANTITY, Math.max(1, Math.round(n)));
+  const value = clampQuantity(Number(draft === '' ? 1 : draft));
+  const clamp = (n: number) => String(clampQuantity(n));
   const stepClass =
     'flex size-7 items-center justify-center rounded-md bg-muted text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40';
   return (
@@ -186,11 +195,9 @@ function Stepper({
         min={1}
         max={MAX_QUANTITY}
         step={1}
-        value={value}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          if (Number.isFinite(n)) onChange(clamp(n));
-        }}
+        value={draft}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={() => onChange(clamp(value))}
         className="h-7 w-10 [appearance:textfield] bg-transparent text-center text-sm tabular-nums outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
       />
       <button
@@ -221,6 +228,11 @@ function ReviewButtons({ unlinked }: { unlinked: boolean }) {
       <Input
         name="note"
         maxLength={500}
+        // Enter in a text field submits the form with its *first* button, which here is Approve:
+        // typing a rejection reason and pressing Enter would place an order. Swallow it instead.
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.preventDefault();
+        }}
         placeholder="Reason for rejecting (optional)"
         aria-label="Reason for rejecting"
         className="h-8 w-72 max-w-full"
@@ -262,6 +274,7 @@ function InProgressOrder({ device, order }: { device: QueueDevice; order: QueueO
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <form action={retryOrderAction}>
               <input type="hidden" name="orderId" value={order.id} />
+              <input type="hidden" name="drmsId" value={device.drmsId} />
               <PendingButton label="Retry" pendingLabel="Queueing…" />
             </form>
             <form action={rejectAction} className="flex flex-wrap items-center gap-2">
@@ -293,6 +306,7 @@ function InProgressOrder({ device, order }: { device: QueueDevice; order: QueueO
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <form action={resolveOrderAction} className="flex flex-wrap items-center gap-2">
               <input type="hidden" name="orderId" value={order.id} />
+              <input type="hidden" name="drmsId" value={device.drmsId} />
               <input type="hidden" name="outcome" value="ordered" />
               <Input
                 name="reference"
@@ -306,6 +320,7 @@ function InProgressOrder({ device, order }: { device: QueueDevice; order: QueueO
             </form>
             <form action={resolveOrderAction}>
               <input type="hidden" name="orderId" value={order.id} />
+              <input type="hidden" name="drmsId" value={device.drmsId} />
               <input type="hidden" name="outcome" value="failed" />
               <PendingButton label="It does not" pendingLabel="Saving…" variant="outline" />
             </form>

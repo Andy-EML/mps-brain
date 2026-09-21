@@ -26,6 +26,24 @@ async function run(fn: (userId: number) => Promise<void>, back: string): Promise
   revalidatePath('/');
 }
 
+/** The device page shows this device's proposals and orders; refresh it when the form names one. */
+function revalidateDevice(formData: FormData): void {
+  const drmsId = formData.get('drmsId');
+  if (typeof drmsId === 'string' && drmsId !== '') revalidatePath(`/devices/${drmsId}`);
+}
+
+/** A positive integer id from the form, or null. */
+function idFrom(formData: FormData, key: string): number | null {
+  const n = Number(formData.get(key));
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** Thrown inside `run` so a bad id still goes through `requireUser()` and back as `?error=not_found`. */
+function requireId(id: number | null): number {
+  if (id === null) throw new ReplenishmentError('No such order.', 'not_found');
+  return id;
+}
+
 export async function approveAction(formData: FormData): Promise<void> {
   const drmsId = String(formData.get('drmsId') ?? '');
   const ids = formData.getAll('proposalId').map(Number).filter((n) => Number.isInteger(n) && n > 0);
@@ -34,7 +52,7 @@ export async function approveAction(formData: FormData): Promise<void> {
     await approveProposals(getDb(), { drmsId, items, userId });
     // Task 8 wakes the Vantage order sender here.
   }, '/orders');
-  revalidatePath(`/devices/${drmsId}`);
+  revalidateDevice(formData);
 }
 
 export async function rejectAction(formData: FormData): Promise<void> {
@@ -44,21 +62,25 @@ export async function rejectAction(formData: FormData): Promise<void> {
   await run(async (userId) => {
     await rejectProposals(getDb(), { proposalIds, userId, note });
   }, back);
-  const drmsId = String(formData.get('drmsId') ?? '');
-  if (drmsId) revalidatePath(`/devices/${drmsId}`);
+  revalidateDevice(formData);
 }
 
 export async function resolveOrderAction(formData: FormData): Promise<void> {
-  const orderId = Number(formData.get('orderId'));
+  const orderId = idFrom(formData, 'orderId');
   const outcome = formData.get('outcome') === 'ordered' ? 'ordered' : 'failed';
   const reference = String(formData.get('reference') ?? '').trim().slice(0, 100) || undefined;
-  await run((userId) => resolveOrder(getDb(), { orderId, outcome, reference, userId }), '/orders?tab=in-progress');
+  await run(
+    (userId) => resolveOrder(getDb(), { orderId: requireId(orderId), outcome, reference, userId }),
+    '/orders?tab=in-progress',
+  );
+  revalidateDevice(formData);
 }
 
 export async function retryOrderAction(formData: FormData): Promise<void> {
-  const orderId = Number(formData.get('orderId'));
+  const orderId = idFrom(formData, 'orderId');
   await run(async (userId) => {
-    await retryOrder(getDb(), { orderId, userId });
+    await retryOrder(getDb(), { orderId: requireId(orderId), userId });
     // Task 8 wakes the Vantage order sender here.
   }, '/orders?tab=in-progress');
+  revalidateDevice(formData);
 }
