@@ -5,6 +5,7 @@ import {
   getCustomerCount,
   getFleetSummary,
   getIssueCounts,
+  getReconnectCounts,
   getReplenishmentStats,
   getTonerHealth,
   listDevices,
@@ -31,7 +32,7 @@ export default async function FleetOverviewPage() {
   const db = getDb();
   const now = new Date();
 
-  const [summary, health, customers, issueCounts, preview, warnings, collection, replenishment] = await Promise.all([
+  const [summary, health, customers, issueCounts, preview, warnings, collection, replenishment, reconnect] = await Promise.all([
     getFleetSummary(db),
     getTonerHealth(db),
     getCustomerCount(db),
@@ -40,6 +41,7 @@ export default async function FleetOverviewPage() {
     getConsumableWarnings(db),
     getCollectionStatus(db),
     getReplenishmentStats(db, now),
+    getReconnectCounts(db, { now }),
   ]);
 
   const warningDevices = new Set(warnings.map((w) => w.drmsId)).size;
@@ -61,7 +63,7 @@ export default async function FleetOverviewPage() {
 
       <CollectionOutageBanner status={collection} />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <StatCard
           label="Total devices"
           value={formatNumber(summary.devices)}
@@ -82,6 +84,14 @@ export default async function FleetOverviewPage() {
           value={collection.outage ? '—' : formatNumber(summary.offline)}
           tone={collection.outage ? 'warn' : summary.offline > 0 ? 'critical' : 'muted'}
           sub={collection.outage ? 'collection behind' : 'in the last 24h'}
+        />
+        {/* Silent devices only: a machine that has never sent a meter reading can't be called silent. */}
+        <StatCard
+          label="Needs reconnecting"
+          value={formatNumber(reconnect.silent)}
+          tone={reconnect.newlySilent > 0 ? 'warn' : 'muted'}
+          sub={`${formatNumber(reconnect.newlySilent)} went quiet in the last 30 days`}
+          href="/reconnect"
         />
         <StatCard
           label="Consumable warnings"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatGap } from './format';
+import { formatGap, formatIsoDateTime } from './format';
 
 const NOW = new Date('2026-09-18T12:00:00Z');
 const hoursBefore = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -26,5 +26,19 @@ describe('formatGap', () => {
     expect(formatGap('2026-09-16T12:00:00Z', NOW)).toBe('2 days');
     expect(formatGap(null, NOW)).toBe('—');
     expect(formatGap('not a date', NOW)).toBe('—');
+  });
+});
+
+describe('formatIsoDateTime', () => {
+  it('writes yyyy-mm-dd HH:mm in UK time, for spreadsheets', () => {
+    // British Summer Time: UTC+1.
+    expect(formatIsoDateTime(new Date('2026-09-18T23:30:00Z'))).toBe('2026-09-19 00:30');
+    // Winter: UTC.
+    expect(formatIsoDateTime(new Date('2026-01-05T08:05:00Z'))).toBe('2026-01-05 08:05');
+  });
+
+  it('is empty for nothing', () => {
+    expect(formatIsoDateTime(null)).toBe('');
+    expect(formatIsoDateTime(new Date('nope'))).toBe('');
   });
 });

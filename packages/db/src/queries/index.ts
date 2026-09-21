@@ -10,6 +10,7 @@ export * from './fleet';
 export * from './issue-actions';
 export * from './issues';
 export * from './order-state';
+export * from './reconnect';
 export * from './replenishment';
 export * from './replenishment-actions';
 export * from './settings';
