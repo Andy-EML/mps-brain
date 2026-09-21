@@ -23,7 +23,7 @@ describe('buildHandlers', () => {
       latestCounters: async () => null,
       listAlarms: async () => [],
       testAuth: async () => 'Ok',
-    } as DrmsClient;
+    } as unknown as DrmsClient;
     const handlers = buildHandlers({
       db: t.db,
       drms,
