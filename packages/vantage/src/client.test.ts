@@ -247,4 +247,31 @@ describe('Vantage client', () => {
       expect(posts).toBe(2);
     });
   });
+  describe('findEquipmentBySerial', () => {
+    it('GETs Equipment by serial, not deleted, with Customer and contracts expanded as select-batch did', async () => {
+      const row = { Id: 4321, SerialNumber: 'A7PU021012345' };
+      const { client, calls } = make(({ url }) =>
+        url.pathname.startsWith('/application') ? session('t', '2026-09-17T10:30:00Z') : json({ value: [row] }),
+      );
+      expect(await client.findEquipmentBySerial("A7PU'0210")).toEqual([row]);
+      const get = calls[1]!;
+      expect(get.method).toBe('GET');
+      expect(get.url.pathname).toBe('/Equipment');
+      // Quotes in the serial are doubled for OData.
+      expect(get.url.searchParams.get('$filter')).toBe("(serialnumber eq 'A7PU''0210') and (deleteddate eq null)");
+      expect(get.url.searchParams.get('$select')).toBe('Id,SerialNumber,AssetNumber,CollectionMethod');
+      const c = '$select=Id,Reference,StatusId,ExpiryDate,IsEvergreen,IsOnHold,CancellationDate,DeletedDate';
+      expect(get.url.searchParams.get('$expand')).toBe(
+        `Customer($select=Id,Reference,Name),Meters($select=TypeId;$expand=Charge($select=Id;$expand=Contract(${c}))),ContractCharges($select=Id;$expand=Contract(${c}))`,
+      );
+      expect(get.headers['api-version']).toBe('1.22');
+    });
+
+    it('accepts a bare array and rejects a response without one', async () => {
+      const bare = make(({ url }) => (url.pathname.startsWith('/application') ? session('t', '2026-09-17T10:30:00Z') : json([{ Id: 1 }])));
+      expect(await bare.client.findEquipmentBySerial('S')).toEqual([{ Id: 1 }]);
+      const bad = make(({ url }) => (url.pathname.startsWith('/application') ? session('t', '2026-09-17T10:30:00Z') : json({ nope: 1 })));
+      await expect(bad.client.findEquipmentBySerial('S')).rejects.toBeInstanceOf(ParseError);
+    });
+  });
 });

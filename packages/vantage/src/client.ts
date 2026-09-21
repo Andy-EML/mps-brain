@@ -32,6 +32,16 @@ export interface SalesOrderListOptions extends ListOptions {
  */
 const SALES_ORDER_EXPAND = 'Lines($expand=Item($select=Id,PartNumber,Description)),Type($select=Id,Name)';
 
+/** Contract fields the DRMS registration rules read (`autoRegisterEligibility` in @mps/core). */
+const CONTRACT_SELECT = '$select=Id,Reference,StatusId,ExpiryDate,IsEvergreen,IsOnHold,CancellationDate,DeletedDate';
+/**
+ * Customer plus every contract reachable from the equipment, through its meters' charges and its
+ * contract charges — the exact expand the hand-run batch selector used on 2026-09-21.
+ */
+const REGISTRATION_EXPAND =
+  `Customer($select=Id,Reference,Name),Meters($select=TypeId;$expand=Charge($select=Id;$expand=Contract(${CONTRACT_SELECT})))` +
+  `,ContractCharges($select=Id;$expand=Contract(${CONTRACT_SELECT}))`;
+
 /** Vantage consumable ENUM: 1 Black, 2 Cyan, 3 Magenta, 4 Yellow, 5 Waste, 6 Staples. */
 export type ConsumableType = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -234,6 +244,20 @@ export function createVantageClient(opts: VantageClientOptions) {
         includeDeleted: o.includeDeleted,
         expand: SALES_ORDER_EXPAND,
       }),
+    /**
+     * Read-only: the live Vantage equipment with this serial (not deleted), with its customer and
+     * contracts, for the DRMS registration scan. Not paged — a serial matches a handful at most.
+     */
+    async findEquipmentBySerial(serial: string): Promise<VantageRecord[]> {
+      const body = await get('Equipment', {
+        $filter: `(serialnumber eq '${serial.replace(/'/g, "''")}') and (deleteddate eq null)`,
+        $select: 'Id,SerialNumber,AssetNumber,CollectionMethod',
+        $expand: REGISTRATION_EXPAND,
+      });
+      const items = Array.isArray(body) ? body : getField(body, 'value');
+      if (!Array.isArray(items)) throw new ParseError('Vantage Equipment response has no value array', 200);
+      return items as VantageRecord[];
+    },
     /** Raises a real consumable sales order. Only `vantage-order-submit` may call this. */
     createConsumableOrder: (equipmentId: number, components: ConsumableComponent[]) =>
       post(CONSUMABLE_ORDER_PATH(equipmentId), { components }),

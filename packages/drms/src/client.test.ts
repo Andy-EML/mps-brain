@@ -1,4 +1,4 @@
-import { AuthError, HttpError, RateLimitError } from '@mps/core';
+import { AuthError, HttpError, RateLimitError, UncertainWriteError } from '@mps/core';
 import { describe, expect, it } from 'vitest';
 import { createDrmsClient } from './client';
 import { MethodLimiter, type Clock } from './limiter';
@@ -146,6 +146,83 @@ describe('DRMS client', () => {
       const { fn, calls } = fakeFetch(() => new Response('', { status: 429 }));
       await expect(client(fn).listAlarms({ dateFrom, dateTo })).rejects.toBeInstanceOf(RateLimitError);
       expect(calls).toHaveLength(1);
+    });
+  });
+  describe('registration calls', () => {
+    const payload = { EquipmentErpId: '4321', EquipmentSerialNumber: 'A7PU021012345' };
+
+    it('getEquipment reads one device', async () => {
+      const { fn, calls } = fakeFetch(() => json({ Id: 'a b', Status: 'Discovered', CsrcId: 'X' }));
+      expect(await client(fn).getEquipment('a b')).toMatchObject({ Id: 'a b', Status: 'Discovered', CsrcId: 'X' });
+      expect(calls[0]?.url.pathname).toBe('/api/v8/Equipment/a%20b');
+      expect(calls[0]?.init?.method ?? 'GET').toBe('GET');
+    });
+
+    it('getEquipmentRequest reads the request status and error', async () => {
+      const { fn, calls } = fakeFetch(() => json({ Id: 'r1', Status: 'ProcessedSuccessful', ErrorMessage: null }));
+      expect(await client(fn).getEquipmentRequest('r1')).toMatchObject({ Status: 'ProcessedSuccessful' });
+      expect(calls[0]?.url.pathname).toBe('/api/v8/EquipmentRequest/r1');
+    });
+
+    it('registerEquipment POSTs the payload as JSON and returns the bare-string request id', async () => {
+      const { fn, calls } = fakeFetch(() => json('3f2504e0-4f89-11d3-9a0c-0305e82c3301'));
+      expect(await client(fn).registerEquipment(payload)).toBe('3f2504e0-4f89-11d3-9a0c-0305e82c3301');
+      expect(calls).toHaveLength(1);
+      const [call] = calls;
+      expect(call?.url.pathname).toBe('/api/v8/EquipmentRequest/Register');
+      expect(call?.init?.method).toBe('POST');
+      expect(JSON.parse(String(call?.init?.body))).toEqual(payload);
+      const headers = call?.init?.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer tok');
+      expect(headers['Content-Type']).toBe('application/json');
+      expect(call?.init?.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('also accepts the request id as { Id }', async () => {
+      const { fn } = fakeFetch(() => json({ Id: 'req-9' }));
+      expect(await client(fn).registerEquipment(payload)).toBe('req-9');
+    });
+
+    it('throws HttpError with the body on a 4xx, sending exactly once', async () => {
+      const { fn, calls } = fakeFetch(() => new Response('"Equipment already registered"', { status: 400 }));
+      const err = await client(fn).registerEquipment(payload).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HttpError);
+      expect(err).not.toBeInstanceOf(UncertainWriteError);
+      expect((err as HttpError).body).toContain('already registered');
+      expect(calls).toHaveLength(1);
+    });
+
+    it('treats a 5xx as uncertain and never re-sends', async () => {
+      const { fn, calls } = fakeFetch(() => new Response('boom', { status: 503 }));
+      await expect(client(fn).registerEquipment(payload)).rejects.toBeInstanceOf(UncertainWriteError);
+      expect(calls).toHaveLength(1);
+    });
+
+    it('treats a network failure as uncertain and never re-sends', async () => {
+      const calls: unknown[] = [];
+      const fn = (async () => {
+        calls.push(1);
+        throw new TypeError('fetch failed');
+      }) as unknown as typeof fetch;
+      await expect(client(fn).registerEquipment(payload)).rejects.toBeInstanceOf(UncertainWriteError);
+      expect(calls).toHaveLength(1);
+    });
+
+    it('treats a 2xx without a request id as uncertain', async () => {
+      const { fn } = fakeFetch(() => json({ Something: 'else' }));
+      await expect(client(fn).registerEquipment(payload)).rejects.toBeInstanceOf(UncertainWriteError);
+    });
+
+    it('maps 429 to RateLimitError (blocking the method) and 401 to AuthError, sending once', async () => {
+      const limited = fakeFetch(() => new Response('', { status: 429 }));
+      const c = client(limited.fn);
+      await expect(c.registerEquipment(payload)).rejects.toBeInstanceOf(RateLimitError);
+      await expect(c.registerEquipment(payload)).rejects.toBeInstanceOf(RateLimitError);
+      expect(limited.calls).toHaveLength(1);
+
+      const unauth = fakeFetch(() => new Response('', { status: 401 }));
+      await expect(client(unauth.fn).registerEquipment(payload)).rejects.toBeInstanceOf(AuthError);
+      expect(unauth.calls).toHaveLength(1);
     });
   });
 });

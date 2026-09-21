@@ -59,10 +59,18 @@ export const drmsAlarmsEntrySchema = z.looseObject({
   Alarms: z.array(drmsAlarmSchema).nullish(),
 });
 
+/** `GET EquipmentRequest/{id}`: the outcome of a register request, filled in asynchronously. */
+export const drmsEquipmentRequestSchema = z.looseObject({
+  Id: str,
+  Status: str,
+  ErrorMessage: str,
+});
+
 export type DrmsEquipment = z.infer<typeof drmsEquipmentSchema>;
 export type DrmsCustomer = z.infer<typeof drmsCustomerSchema>;
 export type DrmsCounter = z.infer<typeof drmsCounterSchema>;
 export type DrmsLatestCounters = z.infer<typeof drmsLatestCountersSchema>;
+export type DrmsEquipmentRequest = z.infer<typeof drmsEquipmentRequestSchema>;
 export type DrmsAlarm = z.infer<typeof drmsAlarmSchema>;
 export type DrmsAlarmsEntry = z.infer<typeof drmsAlarmsEntrySchema>;
 /** A single alarm flattened with the equipment `Id` it came from (see `listAlarms`). */
