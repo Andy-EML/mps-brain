@@ -19,6 +19,23 @@ const envSchema = z.object({
   TZ_SCHEDULE: z.string().min(1).default('Europe/London'),
   ADMIN_USERNAME: z.string().min(1).default('admin'),
   ADMIN_PASSWORD: z.string().min(12).optional(),
+  /** DRMS registration (approval queue): seconds between registrations — the backbone deadlocks under a stream. */
+  AUTO_REGISTER_PAUSE_SECONDS: z.coerce.number().int().min(0).default(90),
+  /** DRMS registration: most registrations sent per `drms-registration-submit` run. */
+  AUTO_REGISTER_MAX_PER_RUN: z.coerce.number().int().positive().default(40),
+  /** DRMS registration: customers never proposed (case-insensitive regex on device + customer name). */
+  AUTO_REGISTER_EXCLUDE: z
+    .string()
+    .min(1)
+    .default('tfc group')
+    .refine((s) => {
+      try {
+        new RegExp(s, 'i');
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'AUTO_REGISTER_EXCLUDE must be a valid regular expression'),
 });
 
 export type Env = z.infer<typeof envSchema>;

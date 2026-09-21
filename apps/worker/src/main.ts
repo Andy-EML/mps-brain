@@ -43,6 +43,10 @@ async function main(): Promise<void> {
   await boss.schedule(QUEUES.drmsSnapshot, env.SNAPSHOT_CRON, {}, { tz });
   await boss.schedule(QUEUES.drmsAlarms, env.ALARMS_CRON, {}, { tz });
   await boss.schedule(QUEUES.vantageOrders, env.ORDERS_CRON, {}, { tz });
+  // After the 02:00 Vantage pull and its link run.
+  await boss.schedule(QUEUES.drmsRegistrationScan, '30 3 * * *', {}, { tz });
+  // Sweeps up approved registrations the web app's wake-up missed (and polls unfinished ones).
+  await boss.schedule(QUEUES.drmsRegistrationSubmit, '*/10 * * * *', {}, { tz });
 
   const handlers = buildHandlers({
     db,
@@ -53,6 +57,11 @@ async function main(): Promise<void> {
     queueLinkRun: () => boss.send(QUEUES.linkRun, {}, { startAfter: 120 }),
     queueReplenish: () => boss.send(QUEUES.replenishEvaluate, {}, { startAfter: 30 }),
     offlineAlertHours: env.OFFLINE_ALERT_HOURS,
+    registration: {
+      excludeRegex: new RegExp(env.AUTO_REGISTER_EXCLUDE, 'i'),
+      pauseSeconds: env.AUTO_REGISTER_PAUSE_SECONDS,
+      maxPerRun: env.AUTO_REGISTER_MAX_PER_RUN,
+    },
   });
 
   for (const [name, handler] of Object.entries(handlers) as [QueueName, (d: JobData) => Promise<void>][]) {

@@ -23,11 +23,20 @@ describe('buildHandlers', () => {
       latestCounters: async () => null,
       listAlarms: async () => [],
       testAuth: async () => 'Ok',
+      getEquipment: async () => {
+        throw new Error('no DRMS call expected');
+      },
+      registerEquipment: async () => {
+        throw new Error('no DRMS call expected');
+      },
+      getEquipmentRequest: async () => {
+        throw new Error('no DRMS call expected');
+      },
     } as unknown as DrmsClient;
     const handlers = buildHandlers({
       db: t.db,
       drms,
-      vantage: { ...vantage.client, listSalesOrders: async () => [] } as unknown as VantageClient,
+      vantage: { ...vantage.client, listSalesOrders: async () => [], findEquipmentBySerial: async () => [] } as unknown as VantageClient,
       linkConfig: { erpIdField: 'id', customerErpField: 'reference' },
       tz: 'Europe/London',
       queueLinkRun: async () => {
@@ -69,6 +78,17 @@ describe('buildHandlers', () => {
     await handlers['replenish-evaluate']({});
     const runs = await t.db.select().from(syncRuns).orderBy(syncRuns.id);
     expect(runs.map((r) => [r.job, r.status])).toEqual([['replenish-evaluate', 'success']]);
+  });
+
+  it('runs the registration scan and submit jobs, sending nothing when nothing is approved', async () => {
+    const { handlers } = setup(new Date('2026-09-22T02:30:00Z'));
+    await handlers['drms-registration-scan']({});
+    await handlers['drms-registration-submit']({});
+    const runs = await t.db.select().from(syncRuns).orderBy(syncRuns.id);
+    expect(runs.map((r) => [r.job, r.status])).toEqual([
+      ['drms-registration-scan', 'success'],
+      ['drms-registration-submit', 'success'],
+    ]);
   });
 
   it('forces a full vantage pull on Sundays (London time)', async () => {

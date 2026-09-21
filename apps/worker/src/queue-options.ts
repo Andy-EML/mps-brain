@@ -23,4 +23,7 @@ export const QUEUE_OPTIONS: Record<QueueName, WorkerQueueOptions> = {
   [QUEUES.drmsAlarms]: stately(QUEUES.drmsAlarms, 1800),
   [QUEUES.vantageOrders]: stately(QUEUES.vantageOrders, 3600),
   [QUEUES.replenishEvaluate]: stately(QUEUES.replenishEvaluate, 1800),
+  [QUEUES.drmsRegistrationScan]: stately(QUEUES.drmsRegistrationScan, 3600),
+  // Up to AUTO_REGISTER_MAX_PER_RUN registrations, each with a 90 s pause and up to 20 min of polling.
+  [QUEUES.drmsRegistrationSubmit]: stately(QUEUES.drmsRegistrationSubmit, 6 * 3600),
 };

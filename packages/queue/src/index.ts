@@ -8,6 +8,10 @@ export const QUEUES = {
   drmsAlarms: 'drms-alarms',
   vantageOrders: 'vantage-orders',
   replenishEvaluate: 'replenish-evaluate',
+  /** Nightly: checks Discovered devices and fills the DRMS registration approval queue. */
+  drmsRegistrationScan: 'drms-registration-scan',
+  /** Registers approved devices in DRMS, one at a time. Queued on approval, plus a 10-minute sweep. */
+  drmsRegistrationSubmit: 'drms-registration-submit',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
