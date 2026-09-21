@@ -12,6 +12,8 @@ import {
   deviceLinks,
   drmsEquipment,
   linkIssues,
+  replenishmentProposals,
+  replenishmentSettings,
   vantageEquipment,
 } from './schema';
 import { createTestDb, type TestDb } from './testing';
@@ -132,5 +134,50 @@ describe('schema', () => {
     await setAppState(t.db, 'x', { a: 1 });
     await setAppState(t.db, 'x', { a: 2 });
     expect(await getAppState<{ a: number }>(t.db, 'x')).toEqual({ a: 2 });
+  });
+});
+
+describe('replenishment schema', () => {
+  let t: TestDb;
+  beforeEach(async () => {
+    t = await createTestDb();
+  });
+  afterEach(() => t.close());
+
+  it('seeds exactly one default settings row with the agreed defaults', async () => {
+    const rows = await t.db.select().from(replenishmentSettings);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      scope: 'default', thresholdBlack: 15, thresholdCyan: 10, thresholdMagenta: 10, thresholdYellow: 10,
+      autoReplenish: true, alertsEnabled: true, drmsEquipmentId: null, vantageCustomerId: null,
+    });
+  });
+
+  it('allows one settings row per device and per customer', async () => {
+    await t.db.insert(drmsEquipment).values({ drmsId: 'd1', raw: {} });
+    await t.db.insert(replenishmentSettings).values({ scope: 'device', drmsEquipmentId: 'd1', thresholdBlack: 20 });
+    await expect(
+      t.db.insert(replenishmentSettings).values({ scope: 'device', drmsEquipmentId: 'd1', thresholdBlack: 30 }),
+    ).rejects.toThrow();
+    await t.db.insert(replenishmentSettings).values({ scope: 'customer', vantageCustomerId: 7, autoReplenish: false });
+    await expect(t.db.insert(replenishmentSettings).values({ scope: 'customer', vantageCustomerId: 7 })).rejects.toThrow();
+    await expect(t.db.insert(replenishmentSettings).values({ scope: 'default' })).rejects.toThrow();
+  });
+
+  it('rejects a device row without a device id and a threshold outside 0-100', async () => {
+    await expect(t.db.insert(replenishmentSettings).values({ scope: 'device' })).rejects.toThrow();
+    await t.db.insert(drmsEquipment).values({ drmsId: 'd2', raw: {} });
+    await expect(
+      t.db.insert(replenishmentSettings).values({ scope: 'device', drmsEquipmentId: 'd2', thresholdCyan: 101 }),
+    ).rejects.toThrow();
+  });
+
+  it('allows only one live proposal per device and colour', async () => {
+    await t.db.insert(drmsEquipment).values({ drmsId: 'd3', raw: {} });
+    const base = { drmsEquipmentId: 'd3', colour: 'cyan', trigger: 'threshold' } as const;
+    await t.db.insert(replenishmentProposals).values({ ...base, status: 'pending' });
+    await expect(t.db.insert(replenishmentProposals).values({ ...base, status: 'approved' })).rejects.toThrow();
+    await t.db.insert(replenishmentProposals).values({ ...base, status: 'rejected' });
+    await t.db.insert(replenishmentProposals).values({ ...base, colour: 'black', status: 'pending' });
   });
 });

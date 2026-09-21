@@ -3,6 +3,7 @@ import {
   bigint,
   bigserial,
   boolean,
+  check,
   doublePrecision,
   index,
   integer,
@@ -355,3 +356,131 @@ export const appState = pgTable('app_state', {
   value: jsonb('value'),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 });
+
+export type SettingScope = 'default' | 'customer' | 'device';
+export type ReplenishColour = 'black' | 'cyan' | 'magenta' | 'yellow' | 'waste';
+export type ProposalTrigger = 'threshold' | 'alarm';
+export type ProposalStatus = 'pending' | 'approved' | 'ordered' | 'failed' | 'rejected' | 'superseded';
+export type OrderStatus = 'queued' | 'submitting' | 'submitted' | 'failed' | 'uncertain';
+
+/**
+ * Replenishment settings, cascading default → customer → device. A null column means "inherit";
+ * the single `default` row (seeded by migration 0007) has no nulls. The cascade is resolved in one
+ * place, `effectiveSettingsSubquery` (queries/settings.ts), never re-expressed elsewhere.
+ *
+ * A device's customer is the **Vantage** customer of its linked equipment, so `vantage_customer_id`
+ * is the customer key; an unlinked device skips the customer level.
+ */
+export const replenishmentSettings = pgTable(
+  'replenishment_settings',
+  {
+    id: serial('id').primaryKey(),
+    scope: text('scope', { enum: ['default', 'customer', 'device'] }).notNull(),
+    vantageCustomerId: integer('vantage_customer_id'),
+    drmsEquipmentId: text('drms_equipment_id').references(() => drmsEquipment.drmsId),
+    thresholdBlack: integer('threshold_black'),
+    thresholdCyan: integer('threshold_cyan'),
+    thresholdMagenta: integer('threshold_magenta'),
+    thresholdYellow: integer('threshold_yellow'),
+    autoReplenish: boolean('auto_replenish'),
+    alertsEnabled: boolean('alerts_enabled'),
+    updatedBy: integer('updated_by').references(() => users.id),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('replenishment_settings_default_uq').on(t.scope).where(sql`scope = 'default'`),
+    uniqueIndex('replenishment_settings_customer_uq').on(t.vantageCustomerId).where(sql`scope = 'customer'`),
+    uniqueIndex('replenishment_settings_device_uq').on(t.drmsEquipmentId).where(sql`scope = 'device'`),
+    check(
+      'replenishment_settings_scope_key',
+      sql`(scope = 'default' and vantage_customer_id is null and drms_equipment_id is null)
+       or (scope = 'customer' and vantage_customer_id is not null and drms_equipment_id is null)
+       or (scope = 'device' and drms_equipment_id is not null and vantage_customer_id is null)`,
+    ),
+    check(
+      'replenishment_settings_threshold_range',
+      sql`coalesce(threshold_black, 0) between 0 and 100 and coalesce(threshold_cyan, 0) between 0 and 100
+       and coalesce(threshold_magenta, 0) between 0 and 100 and coalesce(threshold_yellow, 0) between 0 and 100`,
+    ),
+  ],
+);
+
+/** Who changed what. One row per write — a bulk edit of 400 devices is one row listing 400 ids. */
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: serial('id').primaryKey(),
+    at: ts('at').notNull().defaultNow(),
+    userId: integer('user_id').references(() => users.id),
+    action: text('action').notNull(),
+    entity: text('entity').notNull(),
+    entityIds: jsonb('entity_ids').notNull().default([]),
+    details: jsonb('details').notNull().default({}),
+  },
+  (t) => [index('audit_log_entity_at_idx').on(t.entity, t.at)],
+);
+
+/** Sent (or to be sent) to Vantage as one CreateConsumableOrder call: one device, 1..n components. */
+export const replenishmentOrders = pgTable(
+  'replenishment_orders',
+  {
+    id: serial('id').primaryKey(),
+    drmsEquipmentId: text('drms_equipment_id')
+      .notNull()
+      .references(() => drmsEquipment.drmsId),
+    vantageEquipmentId: integer('vantage_equipment_id').notNull(),
+    status: text('status', { enum: ['queued', 'submitting', 'submitted', 'failed', 'uncertain'] }).notNull(),
+    /** Exactly the body POSTed (or about to be). */
+    request: jsonb('request').notNull(),
+    response: jsonb('response'),
+    vantageSalesOrderId: integer('vantage_sales_order_id'),
+    vantageReference: text('vantage_reference'),
+    isOnHold: boolean('is_on_hold'),
+    error: text('error'),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    submittedAt: ts('submitted_at'),
+    /** Set when an operator settles an `uncertain` order by hand. */
+    resolvedBy: integer('resolved_by').references(() => users.id),
+    resolvedAt: ts('resolved_at'),
+  },
+  (t) => [
+    index('replenishment_orders_status_idx').on(t.status),
+    index('replenishment_orders_device_idx').on(t.drmsEquipmentId, t.createdAt),
+  ],
+);
+
+/** One per device + colour per episode; see the status table in the spec. */
+export const replenishmentProposals = pgTable(
+  'replenishment_proposals',
+  {
+    id: serial('id').primaryKey(),
+    drmsEquipmentId: text('drms_equipment_id')
+      .notNull()
+      .references(() => drmsEquipment.drmsId),
+    vantageEquipmentId: integer('vantage_equipment_id'),
+    colour: text('colour', { enum: ['black', 'cyan', 'magenta', 'yellow', 'waste'] }).notNull(),
+    trigger: text('trigger', { enum: ['threshold', 'alarm'] }).notNull(),
+    /** Toner % when proposed; null for waste (DRMS has no waste counter). */
+    level: doublePrecision('level'),
+    threshold: integer('threshold'),
+    alarmId: text('alarm_id'),
+    alarmDescription: text('alarm_description'),
+    quantity: integer('quantity').notNull().default(1),
+    status: text('status', {
+      enum: ['pending', 'approved', 'ordered', 'failed', 'rejected', 'superseded'],
+    }).notNull(),
+    orderId: integer('order_id').references(() => replenishmentOrders.id),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    decidedBy: integer('decided_by').references(() => users.id),
+    decidedAt: ts('decided_at'),
+    note: text('note'),
+  },
+  (t) => [
+    uniqueIndex('replenishment_proposals_live_uq')
+      .on(t.drmsEquipmentId, t.colour)
+      .where(sql`status in ('pending', 'approved')`),
+    index('replenishment_proposals_status_idx').on(t.status, t.createdAt),
+    check('replenishment_proposals_quantity', sql`quantity between 1 and 20`),
+  ],
+);
