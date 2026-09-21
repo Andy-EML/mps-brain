@@ -42,7 +42,7 @@ npm-workspaces TypeScript monorepo, ESM. Packages export `./src/index.ts` direct
 ```
 packages/core     pure logic: field helpers, errors, linking rules, issue reconciliation (no I/O)
 packages/db       Drizzle schema + migrations; subpaths @mps/db/migrate, @mps/db/testing
-packages/drms     DRMS3 v8 read-only client (per-method throttle, 429 cooldown)
+packages/drms     DRMS3 v8 client (per-method throttle, 429 cooldown); reads, plus the one Register POST
 packages/vantage  Vantage OData client (login/reissue, paging, deleted filter)
 packages/queue    pg-boss queue names + createBoss
 apps/worker       pg-boss schedules → jobs in src/jobs/*, each wrapped in withSyncRun
@@ -55,7 +55,7 @@ Job functions take injected deps (`db`, the client, `now`) and return a `JobResu
 
 ## Rules that aren't obvious from the code
 
-- **DRMS is read-only** until a later sub-project says otherwise. No `EquipmentRequest/*` calls.
+- **DRMS is read-only except for one approved write.** The only DRMS write is `POST EquipmentRequest/Register` (plus reading `EquipmentRequest/{id}` and `Equipment/{id}` around it), made **only** by the `drms-registration-submit` worker job, **only** for rows a person approved on `/registrations`. It sends one device at a time with `AUTO_REGISTER_PAUSE_SECONDS` (90) between registrations and at most `AUTO_REGISTER_MAX_PER_RUN` (40) per run, never retries the POST, never re-sends a row that has a request id (it only polls it), records a 5xx/timeout/interrupted send as failed for a person to check, and stops the run on a 429 or auth error. No other `EquipmentRequest/*` call (Edit, Delete) exists; the web app and every other job never write to DRMS. The nightly `drms-registration-scan` only fills the approval queue (it reads our DRMS copy and Vantage).
 - **DRMS rate limits are per method** (2,000/min, 100,000/h). We throttle at 1,000/min. **Never retry a 429**, because retrying extends the block. The cooldown is 10 min.
 - DRMS has no "changed since" filter and no bulk counters endpoint. It collects counters **nightly** and only exposes the latest, which is why we keep our own snapshot history.
 - DRMS auth is a static bearer JWT (no login). Its expiry is saved to `app_state.drms_token_expiry`.
