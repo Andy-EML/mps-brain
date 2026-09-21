@@ -51,6 +51,7 @@ async function main(): Promise<void> {
     linkConfig: { erpIdField: env.LINK_ERP_ID_FIELD, customerErpField: env.LINK_CUSTOMER_ERP_FIELD },
     tz,
     queueLinkRun: () => boss.send(QUEUES.linkRun, {}, { startAfter: 120 }),
+    queueReplenish: () => boss.send(QUEUES.replenishEvaluate, {}, { startAfter: 30 }),
     offlineAlertHours: env.OFFLINE_ALERT_HOURS,
   });
 

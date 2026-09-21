@@ -110,7 +110,7 @@ describe('statLines', () => {
 });
 
 describe('JOB_CARDS', () => {
-  it('covers all six queues and flags the ones that call an external API', () => {
+  it('covers all seven queues and flags the ones that call an external API', () => {
     expect(JOB_CARDS.map((c) => c.queue)).toEqual([
       'vantage-pull',
       'drms-pull',
@@ -118,9 +118,10 @@ describe('JOB_CARDS', () => {
       'drms-snapshot',
       'drms-alarms',
       'vantage-orders',
+      'replenish-evaluate',
     ]);
-    // link-run is the only job that stays inside Postgres, so it is the only one that runs
-    // without a confirmation.
-    expect(JOB_CARDS.filter((c) => !c.external).map((c) => c.queue)).toEqual(['link-run']);
+    // link-run and replenish-evaluate are the jobs that stay inside Postgres, so they are the
+    // only ones that run without a confirmation.
+    expect(JOB_CARDS.filter((c) => !c.external).map((c) => c.queue)).toEqual(['link-run', 'replenish-evaluate']);
   });
 });

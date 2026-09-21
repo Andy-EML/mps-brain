@@ -7,6 +7,7 @@ import { runDrmsAlarms } from './jobs/drms-alarms';
 import { runDrmsPull } from './jobs/drms-pull';
 import { runDrmsSnapshot } from './jobs/drms-snapshot';
 import { runLinkRun } from './jobs/link-run';
+import { runReplenishEvaluate } from './jobs/replenish-evaluate';
 import { runVantageOrders } from './jobs/vantage-orders';
 import { runVantagePull } from './jobs/vantage-pull';
 import { withSyncRun } from './sync-runs';
@@ -19,6 +20,8 @@ export interface HandlerDeps {
   linkConfig: LinkConfig;
   tz: string;
   queueLinkRun: () => Promise<unknown>;
+  /** Queues `replenish-evaluate` after the jobs whose data it reads (snapshot, alarms, orders). */
+  queueReplenish: () => Promise<unknown>;
   now?: () => Date;
   offlineAlertHours?: number;
 }
@@ -26,7 +29,7 @@ export interface HandlerDeps {
 export type JobData = { full?: boolean };
 
 export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobData) => Promise<void>> {
-  const { db, drms, vantage, linkConfig, tz, queueLinkRun } = deps;
+  const { db, drms, vantage, linkConfig, tz, queueLinkRun, queueReplenish } = deps;
   const now = deps.now ?? (() => new Date());
   return {
     [QUEUES.vantagePull]: async (data) => {
@@ -45,13 +48,20 @@ export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobDa
     },
     [QUEUES.drmsSnapshot]: async () => {
       await withSyncRun(db, QUEUES.drmsSnapshot, () => runDrmsSnapshot({ db, drms, now }));
+      await queueReplenish();
     },
     [QUEUES.drmsAlarms]: async () => {
       await withSyncRun(db, QUEUES.drmsAlarms, () => runDrmsAlarms({ db, drms, now }));
+      await queueReplenish();
     },
     [QUEUES.vantageOrders]: async () => {
-      // Read-only: no link run to queue, and nothing is ever written back to Vantage.
+      // Read-only: no link run to queue. Nothing is ever written back to Vantage here — it now
+      // queues the replenishment evaluation once the order lines it reads are up to date.
       await withSyncRun(db, QUEUES.vantageOrders, () => runVantageOrders({ db, vantage, now }));
+      await queueReplenish();
+    },
+    [QUEUES.replenishEvaluate]: async () => {
+      await withSyncRun(db, QUEUES.replenishEvaluate, () => runReplenishEvaluate({ db, now }));
     },
   };
 }

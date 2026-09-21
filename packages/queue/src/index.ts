@@ -7,6 +7,7 @@ export const QUEUES = {
   drmsSnapshot: 'drms-snapshot',
   drmsAlarms: 'drms-alarms',
   vantageOrders: 'vantage-orders',
+  replenishEvaluate: 'replenish-evaluate',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];

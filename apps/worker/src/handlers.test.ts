@@ -16,6 +16,7 @@ describe('buildHandlers', () => {
   function setup(now: Date) {
     const vantage = fakeVantage([], []);
     let linkRunsQueued = 0;
+    let replenishQueued = 0;
     const drms = {
       listEquipment: async () => [drmsDevice('g1')],
       listCustomers: async () => [],
@@ -26,25 +27,32 @@ describe('buildHandlers', () => {
     const handlers = buildHandlers({
       db: t.db,
       drms,
-      vantage: vantage.client as unknown as VantageClient,
+      vantage: { ...vantage.client, listSalesOrders: async () => [] } as unknown as VantageClient,
       linkConfig: { erpIdField: 'id', customerErpField: 'reference' },
       tz: 'Europe/London',
       queueLinkRun: async () => {
         linkRunsQueued++;
       },
+      queueReplenish: async () => {
+        replenishQueued++;
+      },
       now: () => now,
     });
-    return { handlers, vantage, queued: () => linkRunsQueued };
+    return { handlers, vantage, queued: () => linkRunsQueued, replenishQueued: () => replenishQueued };
   }
 
   it('records runs and queues link-run after pulls', async () => {
-    const { handlers, queued } = setup(new Date('2026-09-17T02:00:00Z'));
+    const { handlers, queued, replenishQueued } = setup(new Date('2026-09-17T02:00:00Z'));
     await handlers['drms-pull']({});
     await handlers['vantage-pull']({});
     await handlers['link-run']({});
     await handlers['drms-snapshot']({});
     await handlers['drms-alarms']({});
+    await handlers['vantage-orders']({});
     expect(queued()).toBe(2);
+    // Once each after drms-snapshot, drms-alarms and vantage-orders — the jobs whose data the
+    // evaluation reads.
+    expect(replenishQueued()).toBe(3);
     const runs = await t.db.select().from(syncRuns).orderBy(syncRuns.id);
     expect(runs.map((r) => [r.job, r.status])).toEqual([
       ['drms-pull', 'success'],
@@ -52,7 +60,15 @@ describe('buildHandlers', () => {
       ['link-run', 'success'],
       ['drms-snapshot', 'success'],
       ['drms-alarms', 'success'],
+      ['vantage-orders', 'success'],
     ]);
+  });
+
+  it('runs the replenish-evaluate job', async () => {
+    const { handlers } = setup(new Date('2026-09-17T02:00:00Z'));
+    await handlers['replenish-evaluate']({});
+    const runs = await t.db.select().from(syncRuns).orderBy(syncRuns.id);
+    expect(runs.map((r) => [r.job, r.status])).toEqual([['replenish-evaluate', 'success']]);
   });
 
   it('forces a full vantage pull on Sundays (London time)', async () => {

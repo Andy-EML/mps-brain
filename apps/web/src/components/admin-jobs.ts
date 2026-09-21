@@ -138,8 +138,9 @@ export interface JobCard {
 }
 
 /**
- * The six queues, in the order a person would think about them: the two pulls that bring data in,
- * the linker that joins them up, then the two DRMS collections and the sales-order pull.
+ * The seven queues, in the order a person would think about them: the two pulls that bring data
+ * in, the linker that joins them up, the two DRMS collections and the sales-order pull, then the
+ * replenishment evaluation those three feed.
  */
 export const JOB_CARDS: readonly JobCard[] = [
   {
@@ -186,6 +187,13 @@ export const JOB_CARDS: readonly JobCard[] = [
       'Fetches sales orders and their lines from Vantage, so the device page can show what consumables have already gone out. Read-only — it never raises an order.',
     schedule: 'Daily at 02:40',
     external: true,
+  },
+  {
+    queue: QUEUES.replenishEvaluate,
+    title: 'Replenishment check',
+    description: 'Turns low toner and DRMS consumable alarms into order proposals for review. Postgres only — it never orders anything.',
+    schedule: 'After each snapshot, alarm pull and sales-order pull',
+    external: false,
   },
 ];
 
