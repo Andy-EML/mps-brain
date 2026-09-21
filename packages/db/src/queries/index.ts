@@ -2,6 +2,7 @@ export * from './admin';
 export * from './admin-actions';
 export * from './alert-actions';
 export * from './alerts';
+export * from './customers';
 export * from './device';
 export * from './device-selection';
 export * from './devices';

@@ -1,4 +1,4 @@
-import { Bell, LayoutGrid, Link2Off, LogOut, Printer, Settings, ShoppingCart } from 'lucide-react';
+import { Bell, LayoutGrid, Link2Off, LogOut, Printer, Settings, ShoppingCart, SlidersHorizontal } from 'lucide-react';
 import { signOut } from '@/app/(app)/actions';
 import { NavLink } from '@/components/nav-link';
 import { Wordmark } from '@/components/wordmark';
@@ -28,6 +28,7 @@ export function AppSidebar({ username, role, openAlerts, openIssues, awaitingRev
         <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
         <NavLink href="/alerts" label="Alerts" icon={<Bell />} count={openAlerts} tone="critical" />
         <NavLink href="/issues" label="Link issues" icon={<Link2Off />} count={openIssues} tone="warn" />
+        <NavLink href="/settings/replenishment" label="Settings" icon={<SlidersHorizontal />} />
         {role === 'admin' ? <NavLink href="/admin" label="Admin" icon={<Settings />} /> : null}
       </nav>
 

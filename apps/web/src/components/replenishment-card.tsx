@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { EffectiveSettings, QueueOrder, QueueProposal } from '@mps/db/queries';
+import type { EffectiveSettings, QueueOrder, QueueProposal, SettingSource } from '@mps/db/queries';
 import { updateDeviceSettingsAction } from '@/app/(app)/devices/[id]/actions';
 import { colourLabel, orderStatusLabel, orderStatusTone, settingOrigin, triggerLabel } from '@/components/replenishment';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
@@ -38,6 +38,10 @@ function orderHref(order: QueueOrder): string {
  */
 export function ReplenishmentCard({ drmsId, isColour, settings, proposals, orders, error }: ReplenishmentCardProps) {
   const colours = isColour ? COLOURS : (['black'] as const);
+  // A value that comes from the customer links to that customer's row on the settings page.
+  const customerHref =
+    settings.vantageCustomerId === null ? undefined : `/settings/replenishment#customer-${settings.vantageCustomerId}`;
+  const hrefFor = (source: SettingSource) => (source === 'customer' ? customerHref : undefined);
 
   const initial: Partial<Record<SettingsField, SettingsHint>> = {
     autoReplenish: { value: settings.autoReplenish.value, origin: settingOrigin(settings.autoReplenish.source, settings) },
@@ -76,17 +80,20 @@ export function ReplenishmentCard({ drmsId, isColour, settings, proposals, order
             label={`${colourLabel(c)} threshold`}
             value={`${settings.thresholds[c].value}%`}
             origin={initial[c]?.origin}
+            originHref={hrefFor(settings.thresholds[c].source)}
           />
         ))}
         <SettingRow
           label="Auto-replenish"
           value={settings.autoReplenish.value ? 'On' : 'Off'}
           origin={initial.autoReplenish?.origin}
+          originHref={hrefFor(settings.autoReplenish.source)}
         />
         <SettingRow
           label="No-meter-reading alerts"
           value={settings.alertsEnabled.value ? 'On' : 'Off'}
           origin={initial.alertsEnabled?.origin}
+          originHref={hrefFor(settings.alertsEnabled.source)}
         />
       </dl>
 
@@ -141,14 +148,20 @@ export function ReplenishmentCard({ drmsId, isColour, settings, proposals, order
   );
 }
 
-/** A label/value line with the value's origin in muted text beneath it. */
-function SettingRow({ label, value, origin }: { label: string; value: string; origin?: string }) {
+/** A label/value line with the value's origin in muted text beneath it, a link when it has somewhere to go. */
+function SettingRow({ label, value, origin, originHref }: { label: string; value: string; origin?: string; originHref?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-line/70 py-2 last:border-0">
       <dt className="shrink-0 text-[13px] text-muted-foreground">{label}</dt>
       <dd className="min-w-0 text-right">
         <span className="text-[13px] font-medium tabular">{value}</span>
-        {origin ? <span className="block text-[12px] text-muted-foreground">{origin}</span> : null}
+        {origin && originHref ? (
+          <Link href={originHref} className="block text-[12px] text-muted-foreground hover:text-brand hover:underline">
+            {origin}
+          </Link>
+        ) : origin ? (
+          <span className="block text-[12px] text-muted-foreground">{origin}</span>
+        ) : null}
       </dd>
     </div>
   );

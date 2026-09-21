@@ -104,7 +104,6 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
-  const shown = fields.filter((f) => isColour || !CMY.includes(f));
 
   async function submit(formData: FormData) {
     // A known error comes back as a redirect, which rejects this await and leaves the dialog open
@@ -112,12 +111,7 @@ export function SettingsDialog({
     // wants the dialog left open).
     if ((await action(formData)) === false) return;
     setOpen(false);
-    // Drop a stale error from an earlier attempt so the page stops showing it.
-    const url = new URL(window.location.href);
-    if (url.searchParams.has('settingsError')) {
-      url.searchParams.delete('settingsError');
-      router.replace(`${url.pathname}${url.search}`, { scroll: false });
-    }
+    clearSettingsError(router);
   }
 
   return (
@@ -144,29 +138,63 @@ export function SettingsDialog({
             )),
           )}
 
-          <div className="flex flex-col divide-y divide-line/70">
-            {shown.map((field) =>
-              isThreshold(field) ? (
-                <ThresholdField key={field} colour={field} hint={initial?.[field]} allowInherit={allowInherit} />
-              ) : (
-                <FlagField key={field} field={field} hint={initial?.[field]} allowInherit={allowInherit} />
-              ),
-            )}
-          </div>
+          <SettingsFields fields={fields} initial={initial} allowInherit={allowInherit} isColour={isColour} />
 
-          {error ? (
-            <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </p>
-          ) : null}
+          <SettingsFormError error={error} />
 
           <DialogFooter>
-            <SubmitButton label={submitLabel} pendingLabel={pendingLabel} />
+            <SettingsSubmitButton label={submitLabel} pendingLabel={pendingLabel} />
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * After a successful save: drop a stale `?settingsError=` from an earlier attempt so the page stops
+ * showing it (and `settingsFor=`, which `/settings/replenishment` adds to say which of its dialogs
+ * the error belongs to). Shared with that page's add-customer-override dialog.
+ */
+export function clearSettingsError(router: ReturnType<typeof useRouter>) {
+  const url = new URL(window.location.href);
+  if (url.searchParams.has('settingsError') || url.searchParams.has('settingsFor')) {
+    url.searchParams.delete('settingsError');
+    url.searchParams.delete('settingsFor');
+    router.replace(`${url.pathname}${url.search}`, { scroll: false });
+  }
+}
+
+/**
+ * The field rows alone, for a form that is not this dialog (the add-customer-override dialog puts
+ * a customer picker in front of them). Posts the same names `parseSettingsForm` reads.
+ */
+export function SettingsFields({
+  fields,
+  initial,
+  allowInherit,
+  isColour,
+}: Pick<SettingsDialogProps, 'fields' | 'initial' | 'allowInherit' | 'isColour'>) {
+  const shown = fields.filter((f) => isColour || !CMY.includes(f));
+  return (
+    <div className="flex flex-col divide-y divide-line/70">
+      {shown.map((field) =>
+        isThreshold(field) ? (
+          <ThresholdField key={field} colour={field} hint={initial?.[field]} allowInherit={allowInherit} />
+        ) : (
+          <FlagField key={field} field={field} hint={initial?.[field]} allowInherit={allowInherit} />
+        ),
+      )}
+    </div>
+  );
+}
+
+export function SettingsFormError({ error }: { error?: string | null }) {
+  return error ? (
+    <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+      {error}
+    </p>
+  ) : null;
 }
 
 function FieldShell({
@@ -269,7 +297,7 @@ function FlagField({
   );
 }
 
-function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel: string }) {
+export function SettingsSubmitButton({ label, pendingLabel }: { label: string; pendingLabel: string }) {
   const { pending } = useFormStatus();
   return (
     <Button type="submit" disabled={pending} className="bg-brand hover:bg-brand/90">

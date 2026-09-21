@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { auditLog, deviceLinks, drmsEquipment, replenishmentSettings, users, vantageCustomers, vantageEquipment } from '../schema';
@@ -223,6 +223,51 @@ export async function getDeviceSettings(db: Db, drmsId: string): Promise<Effecti
     vantageCustomerId: r.vantageCustomerId,
     deviceRow,
     customerRow,
+  };
+}
+
+export interface DefaultSettings {
+  thresholdBlack: number;
+  thresholdCyan: number;
+  thresholdMagenta: number;
+  thresholdYellow: number;
+  autoReplenish: boolean;
+  alertsEnabled: boolean;
+  /** The newest `entity = 'default'` audit row; null while the seeded values are untouched. */
+  lastChange: { at: Date; by: string | null } | null;
+}
+
+/** The default row (no nulls — the migration seeds it) and who last changed it, from the audit log. */
+export async function getDefaultSettings(db: Db): Promise<DefaultSettings> {
+  const [[row], [change]] = await Promise.all([
+    db
+      .select({
+        thresholdBlack: replenishmentSettings.thresholdBlack,
+        thresholdCyan: replenishmentSettings.thresholdCyan,
+        thresholdMagenta: replenishmentSettings.thresholdMagenta,
+        thresholdYellow: replenishmentSettings.thresholdYellow,
+        autoReplenish: replenishmentSettings.autoReplenish,
+        alertsEnabled: replenishmentSettings.alertsEnabled,
+      })
+      .from(replenishmentSettings)
+      .where(eq(replenishmentSettings.scope, 'default')),
+    db
+      .select({ at: auditLog.at, by: users.username })
+      .from(auditLog)
+      .leftJoin(users, eq(users.id, auditLog.userId))
+      .where(and(eq(auditLog.entity, 'default'), eq(auditLog.action, 'settings.update')))
+      .orderBy(desc(auditLog.at), desc(auditLog.id))
+      .limit(1),
+  ]);
+  if (!row) throw new Error('The default replenishment settings row is missing (the migration seeds it).');
+  return {
+    thresholdBlack: row.thresholdBlack!,
+    thresholdCyan: row.thresholdCyan!,
+    thresholdMagenta: row.thresholdMagenta!,
+    thresholdYellow: row.thresholdYellow!,
+    autoReplenish: row.autoReplenish!,
+    alertsEnabled: row.alertsEnabled!,
+    lastChange: change ?? null,
   };
 }
 

@@ -5,6 +5,7 @@ import { createTestDb, type TestDb } from '../testing';
 import {
   SettingsError,
   effectiveSettingsSubquery,
+  getDefaultSettings,
   getDeviceSettings,
   listCustomerSettings,
   updateCustomerSettings,
@@ -115,5 +116,19 @@ describe('replenishment settings', () => {
     await updateCustomerSettings(t.db, { vantageCustomerId: 7, patch: { autoReplenish: false }, userId });
     const rows = await listCustomerSettings(t.db);
     expect(rows).toEqual([expect.objectContaining({ vantageCustomerId: 7, customerName: 'Acme', deviceCount: 2, autoReplenish: false, updatedBy: 'op' })]);
+  });
+
+  it('reads the default row with its latest change from the audit log', async () => {
+    let d = await getDefaultSettings(t.db);
+    expect(d).toEqual({
+      thresholdBlack: 15, thresholdCyan: 10, thresholdMagenta: 10, thresholdYellow: 10,
+      autoReplenish: true, alertsEnabled: true, lastChange: null,
+    });
+    await updateDefaultSettings(t.db, { patch: { thresholdBlack: 12 }, userId, now: new Date('2026-09-20T09:00:00Z') });
+    // A customer write is newer, but it is not a change to the defaults.
+    await updateCustomerSettings(t.db, { vantageCustomerId: 7, patch: { thresholdCyan: 25 }, userId, now: new Date('2026-09-21T09:00:00Z') });
+    d = await getDefaultSettings(t.db);
+    expect(d.thresholdBlack).toBe(12);
+    expect(d.lastChange).toEqual({ at: new Date('2026-09-20T09:00:00Z'), by: 'op' });
   });
 });
