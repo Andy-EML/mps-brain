@@ -1,6 +1,7 @@
+import Link from 'next/link';
 import { getAppStateValue, listQueueSchedules, listSyncRuns } from '@mps/db/queries';
 import { AdminNav } from '@/components/admin-nav';
-import { JOB_CARDS, scheduleLabel, tokenExpiry } from '@/components/admin-jobs';
+import { JOB_CARDS, apiName, scheduleLabel, tokenExpiry } from '@/components/admin-jobs';
 import { JobRunTable } from '@/components/job-run-table';
 import { JobTriggerButton } from '@/components/job-trigger-button';
 import { PageHeader } from '@/components/page-header';
@@ -73,12 +74,17 @@ export default async function AdminJobsPage() {
                   queue={card.queue}
                   confirm={
                     card.external
-                      ? `Run ${card.title} now? It calls the live ${card.queue.startsWith('vantage') ? 'Vantage' : 'DRMS'} API.`
+                      ? `Run ${card.title} now? It calls the live ${apiName(card)} API.`
                       : undefined
                   }
                 />
               </div>
               <p className="mt-2 text-[13px] text-muted-foreground">{card.description}</p>
+              {card.link ? (
+                <Link href={card.link.href} className="mt-1 text-[13px] font-medium text-brand hover:underline">
+                  {card.link.label}
+                </Link>
+              ) : null}
               <p className="mt-auto pt-2 text-xs text-muted-foreground">Normally: {scheduleLabel(card, crons)}</p>
             </div>
           ))}

@@ -8,6 +8,8 @@ import { drmsEquipment, drmsRegistrations, users, type RegistrationStatus } from
  * log. Read-only; the decisions live in `./registration-actions`.
  */
 
+export type { RegistrationStatus };
+
 export type RegistrationTab = 'awaiting' | 'waiting' | 'registered' | 'failed' | 'rejected';
 export const REGISTRATION_TABS: readonly RegistrationTab[] = ['awaiting', 'waiting', 'registered', 'failed', 'rejected'];
 

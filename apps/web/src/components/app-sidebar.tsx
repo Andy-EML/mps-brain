@@ -1,5 +1,6 @@
 import {
   Bell,
+  ClipboardCheck,
   LayoutGrid,
   Link2Off,
   LogOut,
@@ -25,7 +26,15 @@ function initials(username: string): string {
   return letters.toUpperCase();
 }
 
-export function AppSidebar({ username, role, openAlerts, openIssues, awaitingReview, newlySilent }: AppSidebarProps) {
+export function AppSidebar({
+  username,
+  role,
+  openAlerts,
+  openIssues,
+  awaitingReview,
+  newlySilent,
+  awaitingRegistration,
+}: AppSidebarProps) {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-sidebar">
       <div className="px-5 pt-6 pb-5">
@@ -37,6 +46,13 @@ export function AppSidebar({ username, role, openAlerts, openIssues, awaitingRev
         <NavLink href="/devices" label="Devices" icon={<Printer />} />
         <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
         <NavLink href="/reconnect" label="Needs reconnecting" icon={<WifiOff />} count={newlySilent} tone="warn" />
+        <NavLink
+          href="/registrations"
+          label="DRMS registrations"
+          icon={<ClipboardCheck />}
+          count={awaitingRegistration}
+          tone="warn"
+        />
         <NavLink href="/alerts" label="Alerts" icon={<Bell />} count={openAlerts} tone="critical" />
         <NavLink href="/issues" label="Link issues" icon={<Link2Off />} count={openIssues} tone="warn" />
         <NavLink href="/settings/replenishment" label="Settings" icon={<SlidersHorizontal />} />

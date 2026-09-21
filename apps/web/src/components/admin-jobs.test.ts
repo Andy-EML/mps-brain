@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { JOB_CARDS, formatDuration, runTone, statLines, tokenExpiry } from './admin-jobs';
+import { JOB_CARDS, apiName, formatDuration, runTone, statLines, tokenExpiry } from './admin-jobs';
 
 const NOW = new Date('2026-09-18T12:00:00Z');
 const days = (n: number) => new Date(NOW.getTime() + n * 86_400_000);
@@ -110,7 +110,7 @@ describe('statLines', () => {
 });
 
 describe('JOB_CARDS', () => {
-  it('covers all seven queues and flags the ones that call an external API', () => {
+  it('covers all nine queues and flags the ones that call an external API', () => {
     expect(JOB_CARDS.map((c) => c.queue)).toEqual([
       'vantage-pull',
       'drms-pull',
@@ -119,9 +119,25 @@ describe('JOB_CARDS', () => {
       'drms-alarms',
       'vantage-orders',
       'replenish-evaluate',
+      'drms-registration-scan',
+      'drms-registration-submit',
     ]);
     // link-run and replenish-evaluate are the jobs that stay inside Postgres, so they are the
     // only ones that run without a confirmation.
     expect(JOB_CARDS.filter((c) => !c.external).map((c) => c.queue)).toEqual(['link-run', 'replenish-evaluate']);
+  });
+
+  it('names the API each external job calls, and links the registration jobs to their queue', () => {
+    const api = Object.fromEntries(JOB_CARDS.filter((c) => c.external).map((c) => [c.queue, apiName(c)]));
+    expect(api).toMatchObject({
+      'vantage-pull': 'Vantage',
+      'drms-pull': 'DRMS',
+      // The scan only reads Vantage; the submit job is the one that writes to DRMS.
+      'drms-registration-scan': 'Vantage',
+      'drms-registration-submit': 'DRMS',
+    });
+    for (const q of ['drms-registration-scan', 'drms-registration-submit']) {
+      expect(JOB_CARDS.find((c) => c.queue === q)?.link).toEqual({ href: '/registrations', label: 'Open DRMS registrations' });
+    }
   });
 });

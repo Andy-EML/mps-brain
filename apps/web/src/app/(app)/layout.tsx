@@ -20,6 +20,7 @@ export default async function AppLayout({ children }: LayoutProps<'/'>) {
         openIssues={counts.openIssues}
         awaitingReview={counts.awaitingReview}
         newlySilent={counts.newlySilent}
+        awaitingRegistration={counts.awaitingRegistration}
       />
       <main className="min-w-0 flex-1">
         <div className="mx-auto w-full max-w-shell px-8 py-8">{children}</div>

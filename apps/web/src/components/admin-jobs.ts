@@ -135,12 +135,21 @@ export interface JobCard {
   scheduleNote?: string;
   /** True when the job calls DRMS or Vantage — those runs ask for confirmation first. */
   external: boolean;
+  /** The API an external job calls, when its queue name does not say (default: from the prefix). */
+  api?: 'Vantage' | 'DRMS';
+  /** A page where the job's results are worked on. */
+  link?: { href: string; label: string };
+}
+
+/** Which live API "Run now" warns about for an external job. */
+export function apiName(card: JobCard): 'Vantage' | 'DRMS' {
+  return card.api ?? (card.queue.startsWith('vantage') ? 'Vantage' : 'DRMS');
 }
 
 /**
- * The seven queues, in the order a person would think about them: the two pulls that bring data
- * in, the linker that joins them up, the two DRMS collections and the sales-order pull, then the
- * replenishment evaluation those three feed.
+ * The nine queues, in the order a person would think about them: the two pulls that bring data
+ * in, the linker that joins them up, the two DRMS collections and the sales-order pull, the
+ * replenishment evaluation those three feed, then the DRMS registration scan and sender.
  */
 export const JOB_CARDS: readonly JobCard[] = [
   {
@@ -194,6 +203,25 @@ export const JOB_CARDS: readonly JobCard[] = [
     description: 'Turns low toner and DRMS consumable alarms into order proposals for review. Postgres only — it never orders anything.',
     schedule: 'After each snapshot, alarm pull and sales-order pull',
     external: false,
+  },
+  {
+    queue: QUEUES.drmsRegistrationScan,
+    title: 'DRMS registration scan',
+    description:
+      'Checks machines newly connected to CSRC (Discovered in DRMS) against the registration rules, looking each one up in Vantage, and puts eligible ones in the approval queue. Registers nothing.',
+    schedule: 'Daily at 03:30',
+    external: true,
+    api: 'Vantage',
+    link: { href: '/registrations', label: 'Open DRMS registrations' },
+  },
+  {
+    queue: QUEUES.drmsRegistrationSubmit,
+    title: 'DRMS registration sender',
+    description:
+      'Registers approved machines in DRMS, one at a time with a pause between them, and records each result. Sends only what a person has approved.',
+    schedule: 'Every 10 minutes, and straight after an approval',
+    external: true,
+    link: { href: '/registrations', label: 'Open DRMS registrations' },
   },
 ];
 
