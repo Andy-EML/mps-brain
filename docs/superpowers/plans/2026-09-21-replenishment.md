@@ -2412,6 +2412,40 @@ and `select-batch.mjs` (read-only reference; do not run them).
 
 ---
 
+### Task 17 (opus): usability fixes from the user's first look + "ordered in Vantage" reset
+
+Added 2026-09-21 (user + controller browser check); runs **after Task 16, before Task 14**.
+
+1. **Machine names.** Toner orders queue, device page title/breadcrumb and the Needs reconnecting
+   table show the DRMS *product* name ("bizhub C300i_Ver22"). Show the DRMS equipment **Name** from
+   `drms_equipment.raw->>'Name'` (e.g. "Hazell & Jefferies Downstairs C450i") when it adds information
+   (reuse `deviceNameAddsInfo` in apps/web/src/components/toner.ts), else the customer name + model —
+   match what the Devices list already does. Add a `displayName` to the relevant query rows rather
+   than re-deriving in each component.
+2. **Copy serial.** Everywhere a serial is shown (device page header, queue cards, devices list,
+   reconnect table, registrations page), make it a button that copies to the clipboard with a small
+   "Copied" confirmation (client component `CopyText`, keyboard accessible, `aria-label`).
+3. **Approve / reject on the device page.** The Replenishment card's "Toner proposals" section gets
+   the same controls as the queue for that device (checkbox + quantity per colour, Approve selected,
+   Reject selected + reason) — reuse the queue's form component and server actions; revalidate both
+   pages.
+4. **Reset when an order appears in Vantage.** In `replenish-evaluate`, a `pending` proposal is
+   superseded with note `ordered in Vantage (SO…)` when `getOrderStates` shows an **open Vantage order
+   (source 'vantage') for that device + colour dated on/after the proposal's `createdAt` day**, or one
+   completed after it was created. Test both, plus: an older open order does not supersede. Because
+   Vantage orders are pulled nightly, change the `vantage-orders` schedule default `ORDERS_CRON` to
+   hourly (`20 * * * *`) — it is incremental (modified-since) and already queues `replenish-evaluate`.
+5. **Sidebar label.** "Needs reconnecting" is truncated — widen the sidebar slightly or use the label
+   "Reconnect" with the full name as the page title and `title` tooltip.
+6. **Toner orders banner.** Live ordering is deferred (roadmap). Replace the kill-switch banner text
+   with: "Orders are not sent to Vantage yet — approving records the decision so the queue stays
+   tidy. Raise the order in Vantage as usual." (Keep the app_state check so it disappears if sending
+   is ever enabled.)
+
+Tests for 1 (query field), 4 (job), and any pure helpers; typecheck, lint, web build.
+
+---
+
 ### Task 14: Full test pass, live enablement with the user, handoff
 
 **Files:**
