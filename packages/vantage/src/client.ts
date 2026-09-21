@@ -1,4 +1,4 @@
-import { AuthError, HttpError, ParseError, getField, getNumber, getString, parseApiDate } from '@mps/core';
+import { AuthError, HttpError, ParseError, UncertainWriteError, errorMessage, getField, getNumber, getString, parseApiDate } from '@mps/core';
 
 export interface VantageClientOptions {
   baseUrl: string;
@@ -31,6 +31,25 @@ export interface SalesOrderListOptions extends ListOptions {
  * or `Equipment deal`, and the item select keeps the payload to the three fields the UI shows.
  */
 const SALES_ORDER_EXPAND = 'Lines($expand=Item($select=Id,PartNumber,Description)),Type($select=Id,Name)';
+
+/** Vantage consumable ENUM: 1 Black, 2 Cyan, 3 Magenta, 4 Yellow, 5 Waste, 6 Staples. */
+export type ConsumableType = 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface ConsumableComponent {
+  Type: ConsumableType;
+  /** Omitted: Vantage picks the first compatible consumable of that type. */
+  RequestedPartNumber?: string | null;
+  /** Null/omitted means 1. */
+  RequestedQuantity?: number | null;
+}
+
+export interface ConsumableOrderResponse {
+  status: number;
+  body: unknown;
+}
+
+/** Confirmed live in Task 1 — change here only if the probe says otherwise. */
+export const CONSUMABLE_ORDER_PATH = (equipmentId: number) => `Equipment(${equipmentId})/CreateConsumableOrder`;
 
 /**
  * `SalesOrder.OrderDate` is an `Edm.Date`, not an `Edm.DateTimeOffset`: comparing it to a full
@@ -119,6 +138,46 @@ export function createVantageClient(opts: VantageClientOptions) {
     return parseJson(text, `GET ${path}`, res.status);
   }
 
+  /**
+   * The only write this project makes to Vantage. Deliberately not retried: a POST that timed out
+   * or got a 5xx may already have created an order, so it surfaces as `UncertainWriteError` for a
+   * person to check. A 401 is the one exception — Vantage rejected the token before doing anything,
+   * so re-logging in and sending again cannot duplicate.
+   */
+  async function post(path: string, payload: unknown): Promise<ConsumableOrderResponse> {
+    const send = async () => {
+      try {
+        return await doFetch(`${base}/${path}`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'api-version': opts.apiVersion,
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (err) {
+        throw new UncertainWriteError(`Vantage POST ${path}: no response (${errorMessage(err)})`, null);
+      }
+    };
+    await ensureToken();
+    let res = await send();
+    if (res.status === 401) {
+      token = null;
+      await ensureToken();
+      res = await send();
+      if (res.status === 401) throw new AuthError(`Vantage POST ${path} unauthorised after re-login`, 401);
+    }
+    const text = await res.text();
+    if (res.status >= 500) {
+      throw new UncertainWriteError(`Vantage POST ${path} failed (${res.status})`, res.status, text.slice(0, 500));
+    }
+    if (!res.ok) throw new HttpError(`Vantage POST ${path} failed (${res.status})`, res.status, text.slice(0, 500));
+    return { status: res.status, body: parseJson(text, `POST ${path}`, res.status) };
+  }
+
   async function odataList(
     entity: string,
     o: { filter?: string[]; expand?: string; includeDeleted?: boolean } = {},
@@ -165,7 +224,7 @@ export function createVantageClient(opts: VantageClientOptions) {
         includeDeleted: o.includeDeleted,
         expand: 'Item,Customer',
       }),
-    /** Read-only: this project never creates or edits a Vantage sales order here. */
+    /** Read-only. */
     listSalesOrders: (o: SalesOrderListOptions = {}) =>
       odataList('SalesOrder', {
         filter: [
@@ -175,6 +234,9 @@ export function createVantageClient(opts: VantageClientOptions) {
         includeDeleted: o.includeDeleted,
         expand: SALES_ORDER_EXPAND,
       }),
+    /** Raises a real consumable sales order. Only `vantage-order-submit` may call this. */
+    createConsumableOrder: (equipmentId: number, components: ConsumableComponent[]) =>
+      post(CONSUMABLE_ORDER_PATH(equipmentId), { components }),
   };
 }
 

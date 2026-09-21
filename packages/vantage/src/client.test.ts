@@ -2,7 +2,7 @@ import { AuthError, ParseError } from '@mps/core';
 import { describe, expect, it } from 'vitest';
 import { createVantageClient } from './client';
 
-type Req = { url: URL; method: string; headers: Record<string, string>; signal?: AbortSignal | null };
+type Req = { url: URL; method: string; headers: Record<string, string>; signal?: AbortSignal | null; body?: string };
 type Handler = (req: Req) => Response;
 
 function fakeFetch(handler: Handler) {
@@ -13,6 +13,7 @@ function fakeFetch(handler: Handler) {
       method: init?.method ?? 'GET',
       headers: (init?.headers ?? {}) as Record<string, string>,
       signal: init?.signal,
+      body: init?.body as string | undefined,
     };
     calls.push(req);
     return handler(req);
@@ -189,5 +190,61 @@ describe('Vantage client', () => {
     await expect(client.listCustomers()).rejects.toBeInstanceOf(ParseError);
     const getCalls = f.calls.filter((c) => !c.url.pathname.startsWith('/application'));
     expect(getCalls).toHaveLength(3);
+  });
+
+  describe('createConsumableOrder', () => {
+    const login = (req: Req) => req.url.pathname.endsWith('/application/loginsingle');
+
+    it('POSTs the components with api-version and a bearer token, and returns status + body', async () => {
+      const { client, calls } = make((req) =>
+        login(req) ? session('t1', '2026-09-17T11:00:00Z') : json({ Id: 991, Reference: 'SO991' }, 201),
+      );
+      const res = await client.createConsumableOrder(42, [{ Type: 1, RequestedQuantity: 2 }]);
+      expect(res).toEqual({ status: 201, body: { Id: 991, Reference: 'SO991' } });
+      const post = calls.find((c) => c.method === 'POST' && !login(c))!;
+      expect(post.url.pathname).toBe('/Equipment(42)/CreateConsumableOrder');
+      expect(post.headers['api-version']).toBe('1.22');
+      expect(post.headers.authorization).toBe('Bearer t1');
+      expect(JSON.parse(post.body!)).toEqual({ components: [{ Type: 1, RequestedQuantity: 2 }] });
+    });
+
+    it('accepts a 204 with no body', async () => {
+      const { client } = make((req) => (login(req) ? session('t1', '2026-09-17T11:00:00Z') : new Response(null, { status: 204 })));
+      expect(await client.createConsumableOrder(42, [{ Type: 5 }])).toEqual({ status: 204, body: null });
+    });
+
+    it('throws HttpError on a 4xx and sends exactly one POST', async () => {
+      const { client, calls } = make((req) => (login(req) ? session('t1', '2026-09-17T11:00:00Z') : json({ Message: 'no compatible toner' }, 400)));
+      await expect(client.createConsumableOrder(42, [{ Type: 2 }])).rejects.toMatchObject({ name: 'HttpError', status: 400 });
+      expect(calls.filter((c) => c.method === 'POST' && !login(c))).toHaveLength(1);
+    });
+
+    it('treats a 5xx as uncertain and never re-sends', async () => {
+      const { client, calls } = make((req) => (login(req) ? session('t1', '2026-09-17T11:00:00Z') : json({}, 502)));
+      await expect(client.createConsumableOrder(42, [{ Type: 1 }])).rejects.toMatchObject({ name: 'UncertainWriteError' });
+      expect(calls.filter((c) => c.method === 'POST' && !login(c))).toHaveLength(1);
+    });
+
+    it('treats a network failure as uncertain and never re-sends', async () => {
+      let posts = 0;
+      const { client } = make((req) => {
+        if (login(req)) return session('t1', '2026-09-17T11:00:00Z');
+        posts++;
+        throw new TypeError('fetch failed');
+      });
+      await expect(client.createConsumableOrder(42, [{ Type: 1 }])).rejects.toMatchObject({ name: 'UncertainWriteError' });
+      expect(posts).toBe(1);
+    });
+
+    it('re-logs in and re-sends once after a 401 (the order was not accepted)', async () => {
+      let posts = 0;
+      const { client } = make((req) => {
+        if (login(req)) return session(`t${posts}`, '2026-09-17T11:00:00Z');
+        posts++;
+        return posts === 1 ? json({}, 401) : json({ Id: 5 }, 201);
+      });
+      expect(await client.createConsumableOrder(42, [{ Type: 1 }])).toEqual({ status: 201, body: { Id: 5 } });
+      expect(posts).toBe(2);
+    });
   });
 });

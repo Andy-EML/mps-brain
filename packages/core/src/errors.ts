@@ -22,6 +22,12 @@ export class RateLimitError extends ApiError {
   }
 }
 
+/**
+ * A write whose outcome is unknown: the request may or may not have been applied (timeout,
+ * dropped connection, 5xx). Never retry one — a person has to look at the other system first.
+ */
+export class UncertainWriteError extends ApiError {}
+
 export function errorMessage(err: unknown): string {
   const text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
   return text.slice(0, 1000);
