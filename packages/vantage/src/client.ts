@@ -48,7 +48,7 @@ export interface ConsumableOrderResponse {
   body: unknown;
 }
 
-/** Confirmed live in Task 1 — change here only if the probe says otherwise. */
+/** From the Vantage docs; not yet confirmed live (plan Task 1 Step 7 records the probe result). Change here only if the probe says otherwise. */
 export const CONSUMABLE_ORDER_PATH = (equipmentId: number) => `Equipment(${equipmentId})/CreateConsumableOrder`;
 
 /**
