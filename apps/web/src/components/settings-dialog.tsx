@@ -38,14 +38,19 @@ export interface SettingsDialogProps {
   /** Offer "Inherit" (reset to the level above). False for the default settings. */
   allowInherit: boolean;
   isColour: boolean;
-  /** A server action that reads the form with `parseSettingsForm`. */
-  action: (formData: FormData) => Promise<void>;
-  /** Hidden inputs posted with the form, e.g. `{ drmsId }`. */
-  hidden?: Record<string, string>;
+  /**
+   * Reads the form with `parseSettingsForm`: a server action, or (the devices-list bulk bar) a
+   * client function that moves on to a confirmation step. Resolving `false` keeps the dialog open.
+   */
+  action: (formData: FormData) => Promise<void | boolean>;
+  /** Hidden inputs posted with the form, e.g. `{ drmsId }`; an array posts one input per value. */
+  hidden?: Record<string, string | string[]>;
   /** A sentence for an error the action sent back (`?settingsError=`), shown inside the dialog. */
   error?: string | null;
   triggerLabel?: string;
   submitLabel?: string;
+  /** The submit button's text while the action runs. */
+  pendingLabel?: string;
 }
 
 const LABELS: Record<SettingsField, string> = {
@@ -78,6 +83,10 @@ function hintText(hint: SettingsHint | undefined): string | null {
  * bar and `/settings/replenishment` (customer and default rows). Every field starts on *Keep*, so
  * saving writes only what the operator actually changed; *Inherit* clears the override so the
  * level above applies again. The field names are the ones `parseSettingsForm` reads.
+ *
+ * Errors: a server action sends a `SettingsError` back as a redirect to `?settingsError=<code>`;
+ * the page turns the code into a sentence with `settingsErrorMessage` and passes it in as `error`,
+ * shown inside the dialog. A successful save closes the dialog and drops a stale `settingsError`.
  */
 export function SettingsDialog({
   title,
@@ -91,6 +100,7 @@ export function SettingsDialog({
   error,
   triggerLabel = 'Edit',
   submitLabel = 'Save',
+  pendingLabel = 'Saving…',
 }: SettingsDialogProps) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
@@ -98,8 +108,9 @@ export function SettingsDialog({
 
   async function submit(formData: FormData) {
     // A known error comes back as a redirect, which rejects this await and leaves the dialog open
-    // with the error inside it. Getting here means it saved.
-    await action(formData);
+    // with the error inside it. Getting here means it saved (or, resolving `false`, that the action
+    // wants the dialog left open).
+    if ((await action(formData)) === false) return;
     setOpen(false);
     // Drop a stale error from an earlier attempt so the page stops showing it.
     const url = new URL(window.location.href);
@@ -127,9 +138,11 @@ export function SettingsDialog({
         </DialogHeader>
 
         <form action={submit} className="flex flex-col gap-4">
-          {Object.entries(hidden ?? {}).map(([name, value]) => (
-            <input key={name} type="hidden" name={name} value={value} />
-          ))}
+          {Object.entries(hidden ?? {}).flatMap(([name, value]) =>
+            (Array.isArray(value) ? value : [value]).map((v, i) => (
+              <input key={`${name}-${i}`} type="hidden" name={name} value={v} />
+            )),
+          )}
 
           <div className="flex flex-col divide-y divide-line/70">
             {shown.map((field) =>
@@ -148,7 +161,7 @@ export function SettingsDialog({
           ) : null}
 
           <DialogFooter>
-            <SubmitButton label={submitLabel} />
+            <SubmitButton label={submitLabel} pendingLabel={pendingLabel} />
           </DialogFooter>
         </form>
       </DialogContent>
@@ -256,11 +269,11 @@ function FlagField({
   );
 }
 
-function SubmitButton({ label }: { label: string }) {
+function SubmitButton({ label, pendingLabel }: { label: string; pendingLabel: string }) {
   const { pending } = useFormStatus();
   return (
     <Button type="submit" disabled={pending} className="bg-brand hover:bg-brand/90">
-      {pending ? 'Saving…' : label}
+      {pending ? pendingLabel : label}
     </Button>
   );
 }

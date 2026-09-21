@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { SettingsError } from '@mps/db/queries';
-import { parseSettingsForm } from './settings-form';
+import {
+  describeSettingsPatch,
+  parseSettingsForm,
+  patchTouchesColour,
+  settingsErrorMessage,
+} from './settings-form';
 
 function form(entries: Record<string, string>): FormData {
   const data = new FormData();
@@ -99,5 +104,60 @@ describe('parseSettingsForm', () => {
 
   it('treats an unknown mode as keep rather than writing anything', () => {
     expect(parseSettingsForm(form({ 'threshold-black-mode': 'drop table', autoReplenish: 'yes' }), colour)).toEqual({});
+  });
+});
+
+describe('describeSettingsPatch', () => {
+  it('groups thresholds set to the same value into one phrase', () => {
+    expect(
+      describeSettingsPatch({ thresholdCyan: 15, thresholdMagenta: 15, thresholdYellow: 15 }),
+    ).toBe('Set cyan, magenta and yellow threshold to 15%');
+  });
+
+  it('lists different values, resets and flags in the dialog order', () => {
+    expect(
+      describeSettingsPatch({
+        thresholdBlack: 20,
+        thresholdCyan: null,
+        thresholdMagenta: 12,
+        thresholdYellow: null,
+        autoReplenish: false,
+        alertsEnabled: null,
+      }),
+    ).toBe(
+      'Set black threshold to 20%, set magenta threshold to 12%, reset cyan and yellow threshold to inherited, turn auto-replenish off and reset no-meter-reading alerts to inherited',
+    );
+  });
+
+  it('turns flags on and off', () => {
+    expect(describeSettingsPatch({ autoReplenish: true, alertsEnabled: false })).toBe(
+      'Turn auto-replenish on and turn no-meter-reading alerts off',
+    );
+  });
+
+  it('says so when there is nothing to change', () => {
+    expect(describeSettingsPatch({})).toBe('Change nothing');
+  });
+});
+
+describe('patchTouchesColour', () => {
+  it('is true only when cyan, magenta or yellow is in the patch (a reset counts)', () => {
+    expect(patchTouchesColour({ thresholdBlack: 20, autoReplenish: true })).toBe(false);
+    expect(patchTouchesColour({ thresholdYellow: null })).toBe(true);
+    expect(patchTouchesColour({ thresholdCyan: 10 })).toBe(true);
+  });
+});
+
+describe('settingsErrorMessage', () => {
+  it('has a sentence for every SettingsError code', () => {
+    for (const code of ['invalid_threshold', 'empty_patch', 'default_null', 'no_devices']) {
+      const text = settingsErrorMessage(code);
+      expect(text).not.toBe(settingsErrorMessage('something else'));
+      expect(text.length).toBeGreaterThan(10);
+    }
+  });
+
+  it('falls back to a generic sentence for an unknown code', () => {
+    expect(settingsErrorMessage('drop table')).toMatch(/not saved/);
   });
 });

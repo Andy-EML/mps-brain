@@ -27,6 +27,7 @@ import { TonerTile } from '@/components/toner-tile';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatDateTime, formatNumber, formatRelative, pluralise } from '@/lib/format';
+import { settingsErrorMessage } from '@/lib/settings-form';
 
 export const metadata = { title: 'Device · MPS Dashboard' };
 
@@ -53,12 +54,6 @@ const LINK_METHOD: Record<string, string> = {
   erp_id: 'ERP id match',
   serial: 'Serial match',
   manual: 'Linked by hand',
-};
-
-/** `?settingsError=` codes from the Edit dialog's action (`SettingsErrorCode`), as sentences. */
-const SETTINGS_ERRORS: Record<string, string> = {
-  invalid_threshold: 'A threshold is a whole percentage from 0 to 100.',
-  empty_patch: 'Nothing was changed — pick Inherit or a new value for at least one setting.',
 };
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -164,9 +159,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const query = await searchParams;
   const showAllAlarms = first(query.alarms) === 'all';
   const settingsErrorCode = first(query.settingsError);
-  const settingsError = settingsErrorCode
-    ? (SETTINGS_ERRORS[settingsErrorCode] ?? 'The settings were not saved. Refresh the page and try again.')
-    : null;
+  const settingsError = settingsErrorCode ? settingsErrorMessage(settingsErrorCode) : null;
 
   const db = getDb();
   const detail = await getDevice(db, id);

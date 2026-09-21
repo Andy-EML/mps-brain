@@ -3,6 +3,7 @@ export * from './admin-actions';
 export * from './alert-actions';
 export * from './alerts';
 export * from './device';
+export * from './device-selection';
 export * from './devices';
 export * from './fleet';
 export * from './issue-actions';

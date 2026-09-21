@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { listDevices, type DeviceListOptions } from '@mps/db/queries';
+import { BulkResultToast, BulkSettingsBar, DeviceSelectionProvider } from '@/components/device-selection';
 import { DeviceTable } from '@/components/device-table';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
@@ -10,6 +11,7 @@ import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber, pluralise } from '@/lib/format';
 import { hrefWith } from '@/lib/href';
+import { settingsErrorMessage } from '@/lib/settings-form';
 
 export const metadata = { title: 'Devices · MPS Dashboard' };
 
@@ -66,6 +68,12 @@ export default async function DevicesPage({ searchParams }: PageProps<'/devices'
     const lastPage = Math.ceil(total / PAGE_SIZE);
     redirect(hrefWith('/devices', { search, filter: filterParam, page: lastPage > 1 ? lastPage : undefined }));
   }
+  // What `bulkUpdateSettingsAction` redirected back with; `BulkResultToast` reports and drops it.
+  const updatedParam = Number.parseInt(first(params.updated) ?? '', 10);
+  const updated = Number.isInteger(updatedParam) && updatedParam >= 0 ? updatedParam : undefined;
+  const settingsErrorCode = first(params.settingsError);
+  const settingsError = settingsErrorCode ? settingsErrorMessage(settingsErrorCode) : undefined;
+
   const counted = `${formatNumber(total)} ${pluralise(total, 'device')}`;
   const subtitle = search ? `${counted} matching “${search}”` : counted;
 
@@ -84,28 +92,35 @@ export default async function DevicesPage({ searchParams }: PageProps<'/devices'
         }
       />
 
-      <section className="rounded-xl border border-line bg-card">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-          <FilterTabs basePath="/devices" current={filter} tabs={FILTERS} params={{ search }} />
-          <TonerLegend />
-        </div>
+      {/* Keyed on the view, so changing the search, filter or page starts a fresh selection. */}
+      <DeviceSelectionProvider key={`${search ?? ''}|${filter}|${page}`} pageIds={rows.map((r) => r.drmsId)} total={total}>
+        <BulkResultToast updated={updated} error={settingsError} />
+        <section className="rounded-xl border border-line bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <FilterTabs basePath="/devices" current={filter} tabs={FILTERS} params={{ search }} />
+            <TonerLegend />
+          </div>
 
-        <DeviceTable
-          rows={rows}
-          now={now}
-          emptyMessage={search ? `No devices match “${search}”.` : EMPTY[filter]}
-        />
+          <BulkSettingsBar search={search} filter={filter} page={page} />
 
-        <div className="border-t border-line px-5 py-3.5">
-          <Pagination
-            basePath="/devices"
-            params={{ search, filter: filterParam }}
-            page={page}
-            pageSize={PAGE_SIZE}
-            total={total}
+          <DeviceTable
+            selectable
+            rows={rows}
+            now={now}
+            emptyMessage={search ? `No devices match “${search}”.` : EMPTY[filter]}
           />
-        </div>
-      </section>
+
+          <div className="border-t border-line px-5 py-3.5">
+            <Pagination
+              basePath="/devices"
+              params={{ search, filter: filterParam }}
+              page={page}
+              pageSize={PAGE_SIZE}
+              total={total}
+            />
+          </div>
+        </section>
+      </DeviceSelectionProvider>
     </>
   );
 }

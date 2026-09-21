@@ -1,4 +1,5 @@
 import { and, asc, count, eq, ilike, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
+import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
 import { effectiveSettingsSubquery } from './settings';
@@ -134,12 +135,15 @@ function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
   };
 }
 
-export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ rows: DeviceRow[]; total: number }> {
-  const limit = o.limit ?? 50;
-  const offset = o.offset ?? 0;
+/**
+ * The search and filter half of the devices list: the counter pivot and effective-settings
+ * subqueries it reads, and the WHERE built from them. `listDevices` and `resolveDeviceSelection`
+ * (the bulk bar's "select all matching") both build on this, so the list an operator sees and the
+ * devices a bulk edit reaches can never disagree. Join the subqueries with `joinDeviceList`.
+ */
+export function deviceListConditions(db: Db, o: Pick<DeviceListOptions, 'search' | 'filter'> = {}) {
   const cutoff = offlineCutoff();
   const pivot = counterPivotSubquery(db);
-  const alarms = lastAlarmSubquery(db);
   const eff = effectiveSettingsSubquery(db);
 
   const conds = [];
@@ -164,6 +168,34 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
     conds.push(isNull(deviceLinks.vantageEquipmentId));
   }
   const where = conds.length > 0 ? and(...conds) : undefined;
+  return { cutoff, pivot, eff, where };
+}
+
+/**
+ * The joins `deviceListConditions`' WHERE needs, on a `select(...).from(drmsEquipment).$dynamic()`:
+ * the active link, its Vantage equipment, the counter pivot and the effective settings. Each is at
+ * most one row per device, so none of them can multiply rows (or a count).
+ *
+ * Returned as `T` (a cast): callers select explicit fields, so a join does not change their row
+ * shape, only whether Drizzle's types mark the joined columns nullable, which a caller that reads
+ * one (`vantageCustomerId`) must treat as nullable anyway.
+ */
+export function joinDeviceList<T extends PgSelect>(qb: T, c: ReturnType<typeof deviceListConditions>): T {
+  return qb
+    .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
+    .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
+    .leftJoin(c.pivot, eq(c.pivot.drmsId, drmsEquipment.drmsId))
+    // Left join, not inner: every DRMS device has an effective-settings row, but a missing one
+    // should still return the device rather than drop it, just without matching needs-toner/manual.
+    .leftJoin(c.eff, eq(c.eff.drmsId, drmsEquipment.drmsId)) as unknown as T;
+}
+
+export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ rows: DeviceRow[]; total: number }> {
+  const limit = o.limit ?? 50;
+  const offset = o.offset ?? 0;
+  const conds = deviceListConditions(db, o);
+  const { cutoff, pivot, where } = conds;
+  const alarms = lastAlarmSubquery(db);
 
   // Mirrors `attentionRank` in apps/web/src/components/toner.ts: critical toner first, then low,
   // then offline, then unlinked, then "some data" ahead of "no counters at all". Each WHEN is
@@ -182,30 +214,15 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
   const urgencyTieBreak = sql`lower(coalesce(${drmsEquipment.productName}, ${drmsEquipment.serial}, ${drmsEquipment.drmsId}))`;
   const orderBy = o.sort === 'urgent' ? [urgencyRank, urgencyTieBreak] : [asc(drmsEquipment.drmsId)];
 
-  const rowsQuery = db
-    .select(deviceRowFields(pivot, alarms))
-    .from(drmsEquipment)
-    .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
-    .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
-    .leftJoin(pivot, eq(pivot.drmsId, drmsEquipment.drmsId))
+  const rowsQuery = joinDeviceList(db.select(deviceRowFields(pivot, alarms)).from(drmsEquipment).$dynamic(), conds)
     // Already grouped to one row per device, so this cannot multiply rows (or the count below).
     .leftJoin(alarms, eq(alarms.drmsId, drmsEquipment.drmsId))
-    // Left join, not inner: every DRMS device has an effective-settings row, but a missing one
-    // should still return the device rather than drop it, just without matching needs-toner/manual.
-    .leftJoin(eff, eq(eff.drmsId, drmsEquipment.drmsId))
     .where(where)
     .orderBy(...orderBy)
     .limit(limit)
     .offset(offset);
 
-  const countQuery = db
-    .select({ n: count() })
-    .from(drmsEquipment)
-    .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
-    .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
-    .leftJoin(pivot, eq(pivot.drmsId, drmsEquipment.drmsId))
-    .leftJoin(eff, eq(eff.drmsId, drmsEquipment.drmsId))
-    .where(where);
+  const countQuery = joinDeviceList(db.select({ n: count() }).from(drmsEquipment).$dynamic(), conds).where(where);
 
   const [rows, [totalRow]] = await Promise.all([rowsQuery, countQuery]);
   return { rows: rows.map((r) => toDeviceRow(r as unknown as RawDeviceRow, cutoff)), total: totalRow?.n ?? 0 };

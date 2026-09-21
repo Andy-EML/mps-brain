@@ -1,4 +1,4 @@
-import { SettingsError, type SettingsPatch } from '@mps/db/queries';
+import { SettingsError, type SettingsErrorCode, type SettingsPatch } from '@mps/db/queries';
 
 /**
  * Turns a replenishment-settings form into a `SettingsPatch`. Shared by the device page's Edit
@@ -71,4 +71,79 @@ export function parseSettingsForm(formData: FormData, options: ParseSettingsOpti
   }
 
   return patch;
+}
+
+/**
+ * `?settingsError=<code>` as a sentence. Every settings form's action sends a `SettingsError` back
+ * as its code; the device page and the devices list both turn it into text here. `too_many` is the
+ * bulk action's own: more ids posted than one explicit selection may carry.
+ */
+const SETTINGS_ERRORS: Record<SettingsErrorCode | 'too_many', string> = {
+  invalid_threshold: 'A threshold is a whole percentage from 0 to 100.',
+  empty_patch: 'Nothing was changed — pick Inherit or a new value for at least one setting.',
+  default_null: 'The default settings cannot inherit from anything — give each one a value.',
+  no_devices: 'No devices were selected, so nothing was changed.',
+  too_many: 'That is too many devices to pick one by one — use “Select all matching” instead.',
+};
+
+export function settingsErrorMessage(code: string): string {
+  return (
+    (SETTINGS_ERRORS as Record<string, string>)[code] ??
+    'The settings were not saved. Refresh the page and try again.'
+  );
+}
+
+const FLAG_LABELS: Record<(typeof FLAGS)[number], string> = {
+  autoReplenish: 'auto-replenish',
+  alertsEnabled: 'no-meter-reading alerts',
+};
+
+/** `a`, `a and b`, `a, b and c`. */
+function listOf(items: string[]): string {
+  return items.length <= 1
+    ? (items[0] ?? '')
+    : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+}
+
+/**
+ * A patch as one sentence for the bulk confirmation step: "Set cyan, magenta and yellow threshold
+ * to 15%". Colours set to the same value share a phrase, then resets, then the flags, in the
+ * dialog's order. No trailing full stop, so the caller can add "on 42 devices".
+ */
+export function describeSettingsPatch(patch: SettingsPatch): string {
+  const phrases: string[] = [];
+
+  const setTo = new Map<number, ThresholdColour[]>();
+  const reset: ThresholdColour[] = [];
+  for (const { colour, key } of THRESHOLDS) {
+    const value = patch[key];
+    if (value === undefined) continue;
+    if (value === null) reset.push(colour);
+    else setTo.set(value, [...(setTo.get(value) ?? []), colour]);
+  }
+  for (const [value, colours] of setTo)
+    phrases.push(`set ${listOf(colours)} threshold to ${value}%`);
+  if (reset.length > 0) phrases.push(`reset ${listOf(reset)} threshold to inherited`);
+
+  for (const key of FLAGS) {
+    const value = patch[key];
+    if (value === undefined) continue;
+    phrases.push(
+      value === null
+        ? `reset ${FLAG_LABELS[key]} to inherited`
+        : `turn ${FLAG_LABELS[key]} ${value ? 'on' : 'off'}`,
+    );
+  }
+
+  const sentence = phrases.length > 0 ? listOf(phrases) : 'change nothing';
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+/** Whether the patch writes (or resets) a cyan, magenta or yellow threshold — what mono devices ignore. */
+export function patchTouchesColour(patch: SettingsPatch): boolean {
+  return (
+    patch.thresholdCyan !== undefined ||
+    patch.thresholdMagenta !== undefined ||
+    patch.thresholdYellow !== undefined
+  );
 }

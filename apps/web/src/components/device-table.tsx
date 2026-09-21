@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { DeviceRow } from '@mps/db/queries';
 import { cn } from 'cn';
+import { SelectPageCheckbox, SelectRowCheckbox } from '@/components/device-selection';
 import { StatusDot, TONE_TEXT } from '@/components/status-dot';
 import { deviceNameAddsInfo, deviceStatusLabel } from '@/components/toner';
 import { TonerBars } from '@/components/toner-bar';
@@ -11,6 +12,11 @@ export interface DeviceTableProps {
   now?: Date;
   emptyMessage?: string;
   className?: string;
+  /**
+   * Adds a checkbox column for the devices list's bulk bar. The table must then sit inside a
+   * `DeviceSelectionProvider`, which owns the selection.
+   */
+  selectable?: boolean;
 }
 
 const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
@@ -33,7 +39,13 @@ function deviceSerial(row: DeviceRow): string {
  * column doesn't — for many devices the name *is* the model ("ineo+458_Ver42" beside a Model
  * reading "ineo+458"), which printed the same thing twice in one row.
  */
-export function DeviceTable({ rows, now = new Date(), emptyMessage = 'No devices match this view.', className }: DeviceTableProps) {
+export function DeviceTable({
+  rows,
+  now = new Date(),
+  emptyMessage = 'No devices match this view.',
+  className,
+  selectable = false,
+}: DeviceTableProps) {
   if (rows.length === 0) {
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
   }
@@ -43,6 +55,11 @@ export function DeviceTable({ rows, now = new Date(), emptyMessage = 'No devices
       <table className="w-full min-w-[880px] border-collapse text-left">
         <thead>
           <tr className="border-b border-line">
+            {selectable ? (
+              <th scope="col" className="w-10 py-2.5 pr-0 pl-5">
+                <SelectPageCheckbox />
+              </th>
+            ) : null}
             <th scope="col" className={cn(HEAD, 'w-[28%]')}>
               Device
             </th>
@@ -67,6 +84,11 @@ export function DeviceTable({ rows, now = new Date(), emptyMessage = 'No devices
             const showName = deviceNameAddsInfo(row.name, row.model);
             return (
               <tr key={row.drmsId} className="border-b border-line align-top last:border-0">
+                {selectable ? (
+                  <td className="py-4 pr-0 pl-5">
+                    <SelectRowCheckbox drmsId={row.drmsId} label={`${customerName(row)} ${deviceSerial(row)}`} />
+                  </td>
+                ) : null}
                 <td className="px-5 py-4">
                   <div className="flex gap-2.5">
                     <StatusDot tone={status.tone} className="mt-[7px]" />

@@ -1,0 +1,194 @@
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
+import { inArray } from 'drizzle-orm';
+import { drmsEquipment } from '@mps/db';
+import {
+  describeSelection,
+  resolveDeviceSelection,
+  SettingsError,
+  updateDeviceSettings,
+  type DeviceListOptions,
+} from '@mps/db/queries';
+import { requireUser } from '@/lib/auth';
+import { getDb } from '@/lib/db';
+import { hrefWith } from '@/lib/href';
+import {
+  describeSettingsPatch,
+  parseSettingsForm,
+  patchTouchesColour,
+  settingsErrorMessage,
+} from '@/lib/settings-form';
+
+/**
+ * The devices list's bulk bar: review a settings change over a selection, then apply it. Both call
+ * `requireUser()` first — an action is a public POST endpoint — and take the user id from the
+ * session. Any signed-in user may change settings.
+ *
+ * The selection arrives in one of two modes:
+ * - `ids`: repeated `drmsId` fields, the rows ticked on the current page (capped at 5,000);
+ * - `matching`: "all N matching this view", resolved **here** from `search` + `filter` with
+ *   `resolveDeviceSelection` — the same conditions the list is drawn with. No id list from the
+ *   browser is trusted for this mode, however it arrives.
+ *
+ * The form is parsed as colour (`isColour: true`) whatever the selection holds: a cyan, magenta
+ * or yellow override written to a mono device is harmless — the engine and the UI ignore CMY on
+ * mono — and the review step says how many mono devices will ignore it.
+ */
+
+/** Most ids one explicit selection may post; "select all matching" has no such cap. */
+const MAX_IDS = 5_000;
+
+const FILTERS: readonly NonNullable<DeviceListOptions['filter']>[] = [
+  'all',
+  'needs-toner',
+  'manual',
+  'offline',
+  'unlinked',
+];
+
+class TooManyDevices extends Error {
+  readonly code = 'too_many';
+}
+
+function text(formData: FormData, name: string): string {
+  const value = formData.get(name);
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+interface ListView {
+  search: string | undefined;
+  filter: NonNullable<DeviceListOptions['filter']>;
+  page: number;
+}
+
+/** The list view the bar was used from, validated, so the redirect goes back to exactly it. */
+function listView(formData: FormData): ListView {
+  const requested = text(formData, 'filter');
+  const filter = FILTERS.find((f) => f === requested) ?? 'all';
+  const page = Number.parseInt(text(formData, 'page'), 10);
+  return {
+    search: text(formData, 'search') || undefined,
+    filter,
+    page: Number.isInteger(page) && page > 1 ? page : 1,
+  };
+}
+
+/** `/devices?search=…&filter=…&page=…` plus any extra params; never a URL taken from the form. */
+function listHref(view: ListView, extra: Record<string, string | number>): string {
+  return hrefWith('/devices', {
+    search: view.search,
+    filter: view.filter === 'all' ? undefined : view.filter,
+    page: view.page > 1 ? view.page : undefined,
+    ...extra,
+  });
+}
+
+/** The selected DRMS ids, deduplicated. Explicit ids may include ones that no longer exist. */
+async function selectedIds(formData: FormData, view: ListView): Promise<string[]> {
+  if (text(formData, 'mode') === 'matching') {
+    const { drmsIds } = await resolveDeviceSelection(getDb(), {
+      search: view.search,
+      filter: view.filter,
+    });
+    return drmsIds;
+  }
+  const ids = [
+    ...new Set(
+      formData.getAll('drmsId').filter((v): v is string => typeof v === 'string' && v !== ''),
+    ),
+  ];
+  if (ids.length > MAX_IDS) throw new TooManyDevices();
+  return ids;
+}
+
+export type BulkReview =
+  | {
+      ok: true;
+      /** "Set cyan, magenta and yellow threshold to 15%" — the caller adds "on N devices". */
+      summary: string;
+      count: number;
+      customers: number;
+      mono: number;
+      /** Whether the change writes a cyan/magenta/yellow threshold, which mono devices ignore. */
+      touchesColour: boolean;
+      /** Up to 50 `Customer · serial` lines. */
+      names: string[];
+    }
+  | { ok: false; message: string };
+
+/**
+ * The confirmation step: what the form would change, and on which devices. Writes nothing. A
+ * mistake in the form comes back as a sentence rather than a redirect, so the settings dialog can
+ * stay open with it.
+ */
+export async function reviewBulkSettingsAction(formData: FormData): Promise<BulkReview> {
+  await requireUser();
+  try {
+    const patch = parseSettingsForm(formData, { allowInherit: true, isColour: true });
+    if (Object.keys(patch).length === 0)
+      throw new SettingsError('Nothing to change.', 'empty_patch');
+    const ids = await selectedIds(formData, listView(formData));
+    const selection = await describeSelection(getDb(), ids);
+    if (selection.count === 0) throw new SettingsError('Select at least one device.', 'no_devices');
+    return {
+      ok: true,
+      summary: describeSettingsPatch(patch),
+      count: selection.count,
+      customers: selection.customers,
+      mono: selection.mono,
+      touchesColour: patchTouchesColour(patch),
+      names: selection.names,
+    };
+  } catch (err) {
+    if (err instanceof SettingsError || err instanceof TooManyDevices) {
+      return { ok: false, message: settingsErrorMessage(err.code) };
+    }
+    throw err;
+  }
+}
+
+/**
+ * Applies the reviewed change: one `updateDeviceSettings` call, so one transaction and one audit
+ * row however many devices. Redirects back to the same list view with `?updated=N`, or
+ * `?settingsError=<code>` when the form or the selection is refused.
+ */
+export async function bulkUpdateSettingsAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const view = listView(formData);
+  const db = getDb();
+
+  let updated: number;
+  try {
+    const patch = parseSettingsForm(formData, { allowInherit: true, isColour: true });
+    const ids = await selectedIds(formData, view);
+    // A device deleted since the page was drawn would fail the settings row's foreign key and
+    // take the whole transaction with it; drop it here instead.
+    const existing =
+      ids.length === 0
+        ? []
+        : (
+            await db
+              .select({ drmsId: drmsEquipment.drmsId })
+              .from(drmsEquipment)
+              .where(inArray(drmsEquipment.drmsId, ids))
+          ).map((r) => r.drmsId);
+    ({ updated } = await updateDeviceSettings(db, {
+      drmsIds: existing,
+      patch,
+      userId: user.userId,
+    }));
+  } catch (err) {
+    if (err instanceof SettingsError || err instanceof TooManyDevices)
+      redirect(listHref(view, { settingsError: err.code }));
+    throw err;
+  }
+
+  // The list and every device page under it, and everything that counts "Needs toner" /
+  // "Manual replenishment".
+  revalidatePath('/devices', 'layout');
+  revalidatePath('/orders');
+  revalidatePath('/');
+  redirect(listHref(view, { updated }));
+}
