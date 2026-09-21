@@ -23,6 +23,13 @@ const emptyState = (): Record<ReplenishColour, ColourOrderState> =>
     ColourOrderState
   >;
 
+/** Whether `a` is a newer order date than `b`, treating a null date as the oldest possible. */
+function isNewer(a: Date | null, b: Date | null): boolean {
+  if (a === null) return false;
+  if (b === null) return true;
+  return a.getTime() > b.getTime();
+}
+
 /**
  * Per Vantage equipment and colour: is an order open, when did one last complete, and what was the
  * last order. Feeds the engine's duplicate suppression and the review queue's context column.
@@ -89,7 +96,9 @@ export async function getOrderStates(
         inArray(replenishmentOrders.vantageEquipmentId, vantageEquipmentIds),
         inArray(replenishmentOrders.status, ['queued', 'submitting', 'uncertain', 'submitted']),
       ),
-    );
+    )
+    // Newest in-flight order first, so ties within this loop resolve deterministically.
+    .orderBy(desc(replenishmentOrders.createdAt), desc(replenishmentOrders.id));
 
   for (const o of ours) {
     if (o.pulled !== null) continue; // the Vantage rows above already speak for it
@@ -98,7 +107,12 @@ export async function getOrderStates(
     if (!state) continue;
     const ref: OrderRef = { reference: o.reference, orderDate: o.submittedAt ?? o.createdAt, source: 'mps' };
     state.open ??= ref;
-    state.last ??= { ...ref, open: true };
+    // `last` is the newest order of this colour regardless of source, so a fresh in-flight order
+    // must be able to displace an older completed Vantage one (and vice versa were the loops
+    // reversed) rather than losing to whichever loop ran first.
+    if (!state.last || isNewer(ref.orderDate, state.last.orderDate)) {
+      state.last = { ...ref, open: true };
+    }
   }
   return out;
 }

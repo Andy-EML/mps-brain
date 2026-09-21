@@ -71,4 +71,15 @@ describe('getOrderStates', () => {
     expect(s.black.open).toBeNull();
     expect(s.cyan.open).toMatchObject({ source: 'mps' });
   });
+
+  it('a newer open mps order beats an older completed vantage order for `last`', async () => {
+    await order(6, { eq: 100, completed: d('2026-09-01') }, [{ colour: 'yellow' }]);
+    const [o] = await t.db.insert(replenishmentOrders).values({
+      drmsEquipmentId: 'dev', vantageEquipmentId: 100, status: 'queued', request: {}, createdAt: d('2026-09-21T10:00:00Z'),
+    }).returning();
+    await t.db.insert(replenishmentProposals).values({ drmsEquipmentId: 'dev', colour: 'yellow', trigger: 'threshold', status: 'pending', orderId: o!.id });
+    const s = (await getOrderStates(t.db, [100], NOW)).get(100)!;
+    expect(s.yellow.last).toMatchObject({ source: 'mps', open: true });
+    expect(s.yellow.lastCompletedAt).toEqual(d('2026-09-01'));
+  });
 });
