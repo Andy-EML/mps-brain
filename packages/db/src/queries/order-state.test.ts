@@ -30,12 +30,12 @@ describe('getOrderStates', () => {
     await order(3, { eq: 100, completed: d('2026-08-01'), date: d('2026-07-30') }, [{ colour: 'black' }]);
     const s = (await getOrderStates(t.db, [100, 200], NOW)).get(100)!;
     expect(s.cyan.open).toEqual({ reference: 'SO1', orderDate: d('2026-09-19'), source: 'vantage' });
-    expect(s.black).toEqual({ open: null, lastCompletedAt: d('2026-09-10'), last: { reference: 'SO2', orderDate: d('2026-09-08'), source: 'vantage', open: false } });
-    expect(s.magenta).toEqual({ open: null, lastCompletedAt: null, last: null });
+    expect(s.black).toEqual({ open: null, lastCompletedAt: d('2026-09-10'), lastCompletedReference: 'SO2', last: { reference: 'SO2', orderDate: d('2026-09-08'), source: 'vantage', open: false } });
+    expect(s.magenta).toEqual({ open: null, lastCompletedAt: null, lastCompletedReference: null, last: null });
   });
 
   it('returns an empty state for an id with no orders', async () => {
-    expect((await getOrderStates(t.db, [200], NOW)).get(200)?.waste).toEqual({ open: null, lastCompletedAt: null, last: null });
+    expect((await getOrderStates(t.db, [200], NOW)).get(200)?.waste).toEqual({ open: null, lastCompletedAt: null, lastCompletedReference: null, last: null });
   });
 
   it('ignores deleted orders, returned lines and unclassified lines', async () => {

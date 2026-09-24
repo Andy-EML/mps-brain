@@ -11,9 +11,31 @@ import {
   type TonerColour,
 } from '@mps/core';
 import { deviceAlarms, drmsEquipment, replenishmentProposals, type Db } from '@mps/db';
-import { counterPivotSubquery, effectiveSettingsSubquery, getOrderStates } from '@mps/db/queries';
+import { counterPivotSubquery, effectiveSettingsSubquery, getOrderStates, type ColourOrderState } from '@mps/db/queries';
 import { and, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobResult } from '../sync-runs';
+
+/**
+ * The Vantage order that makes a pending proposal redundant, as its reference (`'SO…'`), or null.
+ * Someone raised it by hand in Vantage: an open order dated on or after the day the proposal was
+ * made, or any order completed after it was made. Vantage order dates are date-only and arrive as
+ * midnight UTC of the London calendar date, so the proposal's London day is compared the same way.
+ * Our own in-flight orders (`source: 'mps'`) never count — they come from an approved proposal.
+ */
+export function orderedInVantage(state: ColourOrderState, proposalCreatedAt: Date): string | null {
+  const open = state.open;
+  if (open?.source === 'vantage' && open.orderDate && open.orderDate >= londonDayAsUtc(proposalCreatedAt)) {
+    return open.reference ?? 'no reference';
+  }
+  if (state.lastCompletedAt && state.lastCompletedAt > proposalCreatedAt) return state.lastCompletedReference ?? 'no reference';
+  return null;
+}
+
+function londonDayAsUtc(at: Date): Date {
+  // en-CA formats as YYYY-MM-DD.
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
+  return new Date(`${day}T00:00:00Z`);
+}
 
 export interface ReplenishEvaluateDeps {
   db: Db;
@@ -76,6 +98,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       status: replenishmentProposals.status,
       trigger: replenishmentProposals.trigger,
       decidedAt: replenishmentProposals.decidedAt,
+      createdAt: replenishmentProposals.createdAt,
     })
     .from(replenishmentProposals)
     .where(
@@ -97,11 +120,14 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       yellow: d.yellow === null ? null : Number(d.yellow),
     };
     const mine = proposalRows.filter((p) => p.drmsId === d.drmsId);
+    const states = d.vantageEquipmentId === null ? undefined : orderStates.get(d.vantageEquipmentId);
 
     // Supersede first, so a recovered channel does not count as "live" below.
     for (const p of mine) {
       if (p.status !== 'pending') continue;
-      if (!d.autoReplenish) toSupersede.push({ id: p.id, note: 'auto-replenish switched off' });
+      const ordered = states ? orderedInVantage(states[p.colour], p.createdAt) : null;
+      if (ordered !== null) toSupersede.push({ id: p.id, note: `ordered in Vantage (${ordered})` });
+      else if (!d.autoReplenish) toSupersede.push({ id: p.id, note: 'auto-replenish switched off' });
       else if (p.trigger === 'threshold' && p.colour !== 'waste' && isRecovered(levels[p.colour], thresholds[p.colour])) {
         toSupersede.push({ id: p.id, note: 'level recovered' });
       }
@@ -109,7 +135,6 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
     const superseded = new Set(toSupersede.map((s) => s.id));
 
     const history: Partial<Record<ReplenishColour, ColourHistory>> = {};
-    const states = d.vantageEquipmentId === null ? undefined : orderStates.get(d.vantageEquipmentId);
     for (const colour of ['black', 'cyan', 'magenta', 'yellow', 'waste'] as const) {
       const live = mine.some((p) => p.colour === colour && (p.status === 'pending' || p.status === 'approved') && !superseded.has(p.id));
       const rejected = mine

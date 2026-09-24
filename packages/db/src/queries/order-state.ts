@@ -13,12 +13,14 @@ export interface ColourOrderState {
   /** The newest open order for this colour, if any. */
   open: OrderRef | null;
   lastCompletedAt: Date | null;
+  /** The reference of the order that completed at `lastCompletedAt`. */
+  lastCompletedReference: string | null;
   /** The newest order of this colour, open or not. */
   last: (OrderRef & { open: boolean }) | null;
 }
 
 const emptyState = (): Record<ReplenishColour, ColourOrderState> =>
-  Object.fromEntries(REPLENISH_COLOURS.map((c) => [c, { open: null, lastCompletedAt: null, last: null }])) as Record<
+  Object.fromEntries(REPLENISH_COLOURS.map((c) => [c, { open: null, lastCompletedAt: null, lastCompletedReference: null, last: null }])) as Record<
     ReplenishColour,
     ColourOrderState
   >;
@@ -74,6 +76,7 @@ export async function getOrderStates(
     if (open) state.open ??= ref;
     else if (!state.lastCompletedAt || (l.completedDate && l.completedDate > state.lastCompletedAt)) {
       state.lastCompletedAt = l.completedDate;
+      state.lastCompletedReference = l.reference;
     }
   }
 

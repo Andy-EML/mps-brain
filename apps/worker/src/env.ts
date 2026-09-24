@@ -13,8 +13,11 @@ const envSchema = z.object({
   SNAPSHOT_CRON: z.string().min(1).default('0 6 * * *'),
   DRMS_PULL_CRON: z.string().min(1).default('15 * * * *'),
   ALARMS_CRON: z.string().min(1).default('*/30 * * * *'),
-  /** Sales-order pull; runs after the nightly Vantage pull at 02:00. */
-  ORDERS_CRON: z.string().min(1).default('40 2 * * *'),
+  /**
+   * Sales-order pull (incremental, modified-since). Hourly so an order raised by hand in Vantage
+   * resets its pending toner proposal the same day — the pull queues `replenish-evaluate`.
+   */
+  ORDERS_CRON: z.string().min(1).default('20 * * * *'),
   OFFLINE_ALERT_HOURS: z.coerce.number().int().positive().default(24),
   TZ_SCHEDULE: z.string().min(1).default('Europe/London'),
   ADMIN_USERNAME: z.string().min(1).default('admin'),

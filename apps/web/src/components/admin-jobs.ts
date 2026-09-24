@@ -194,7 +194,7 @@ export const JOB_CARDS: readonly JobCard[] = [
     title: 'Vantage sales orders',
     description:
       'Fetches sales orders and their lines from Vantage, so the device page can show what consumables have already gone out. Read-only — it never raises an order.',
-    schedule: 'Daily at 02:40',
+    schedule: 'Hourly, at 20 past',
     external: true,
   },
   {

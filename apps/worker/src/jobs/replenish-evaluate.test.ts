@@ -1,12 +1,34 @@
-import { deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, vantageEquipment } from '@mps/db';
+import { deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { updateDeviceSettings } from '@mps/db/queries';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveSnapshot } from './drms-snapshot';
-import { runReplenishEvaluate } from './replenish-evaluate';
+import { orderedInVantage, runReplenishEvaluate } from './replenish-evaluate';
 
 const NOW = new Date('2026-09-21T14:00:00Z');
+
+describe('orderedInVantage', () => {
+  const state = (open: { date: string; source?: 'vantage' | 'mps' } | null, completed: string | null = null) => ({
+    open: open && { reference: 'SO1', orderDate: new Date(open.date), source: open.source ?? ('vantage' as const) },
+    lastCompletedAt: completed ? new Date(completed) : null,
+    lastCompletedReference: completed ? 'SO2' : null,
+    last: null,
+  });
+  // 23:30 UTC on 20 Sep is 00:30 on 21 Sep in London (BST): the proposal's day is the 21st.
+  const created = new Date('2026-09-20T23:30:00Z');
+
+  it("compares an open order's date with the proposal's London day", () => {
+    expect(orderedInVantage(state({ date: '2026-09-21T00:00:00Z' }), created)).toBe('SO1');
+    expect(orderedInVantage(state({ date: '2026-09-20T00:00:00Z' }), created)).toBeNull();
+  });
+
+  it('ignores our own in-flight orders and completions from before the proposal', () => {
+    expect(orderedInVantage(state({ date: '2026-09-22T00:00:00Z', source: 'mps' }), created)).toBeNull();
+    expect(orderedInVantage(state(null, '2026-09-20T23:00:00Z'), created)).toBeNull();
+    expect(orderedInVantage(state(null, '2026-09-21T08:00:00Z'), created)).toBe('SO2');
+  });
+});
 
 describe('runReplenishEvaluate', () => {
   let t: TestDb;
@@ -82,6 +104,49 @@ describe('runReplenishEvaluate', () => {
     expect(r.stats).toMatchObject({ superseded: 1, autoOff: 1 });
     const live = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.status, 'pending'));
     expect(live).toEqual([]);
+  });
+
+  describe('an order appearing in Vantage', () => {
+    // The pending proposal is created at NOW (14:00 UTC on 21 Sep); Vantage order dates are date-only.
+    async function vantageOrder(id: number, o: { date: string; completed?: string }) {
+      await t.db.insert(vantageSalesOrders).values({
+        vantageId: id, reference: `SO${id}`, orderDate: new Date(o.date), completedDate: o.completed ? new Date(o.completed) : null,
+        vantageEquipmentId: 1, raw: {},
+      });
+      await t.db.insert(vantageSalesOrderLines).values({ vantageId: id * 10, salesOrderId: id, colour: 'cyan', raw: {} });
+    }
+    const pendingCyan = async () => {
+      await levels('colour', 'c1', 50, 4);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+    };
+    const LATER = new Date('2026-09-21T15:20:00Z');
+    const cyan = async () =>
+      (await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.colour, 'cyan'))).map((p) => [p.status, p.note]);
+
+    it('supersedes a pending proposal when an open Vantage order is dated on or after its day', async () => {
+      await pendingCyan();
+      await vantageOrder(9, { date: '2026-09-21T00:00:00Z' });
+      const r = await runReplenishEvaluate({ db: t.db, now: () => LATER });
+      expect(r.stats).toMatchObject({ superseded: 1, proposed: 0 });
+      expect(await cyan()).toEqual([['superseded', 'ordered in Vantage (SO9)']]);
+    });
+
+    it('supersedes a pending proposal when a Vantage order completes after it was created', async () => {
+      await pendingCyan();
+      await vantageOrder(8, { date: '2026-09-18T00:00:00Z', completed: '2026-09-21T15:00:00Z' });
+      const r = await runReplenishEvaluate({ db: t.db, now: () => LATER });
+      expect(r.stats).toMatchObject({ superseded: 1, proposed: 0 });
+      expect(await cyan()).toEqual([['superseded', 'ordered in Vantage (SO8)']]);
+    });
+
+    it('leaves the proposal pending for an older open order, or one completed before it was created', async () => {
+      await pendingCyan();
+      await vantageOrder(7, { date: '2026-09-20T00:00:00Z' });
+      await vantageOrder(6, { date: '2026-09-01T00:00:00Z', completed: '2026-09-02T10:00:00Z' });
+      const r = await runReplenishEvaluate({ db: t.db, now: () => LATER });
+      expect(r.stats).toMatchObject({ superseded: 0 });
+      expect(await cyan()).toEqual([['pending', null]]);
+    });
   });
 
   async function userId() {
