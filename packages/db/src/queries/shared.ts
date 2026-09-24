@@ -18,6 +18,15 @@ export const METER_NAMES = {
 } as const;
 
 /**
+ * DRMS's own equipment `Name` ("Hazell & Jefferies Downstairs C450i"), kept only in `raw`. Not the
+ * `product_name` column, which is the model with a firmware suffix ("bizhub C300i_Ver22"). Feeds
+ * `deviceDisplayName` (@mps/core).
+ */
+export function drmsEquipmentName() {
+  return sql<string | null>`${drmsEquipment.raw}->>'Name'`;
+}
+
+/**
  * Subquery: the latest `counter_snapshots.id` per device. `max(id)` is correct because ids
  * increase with insertion and a device's newest collection is always inserted last.
  */

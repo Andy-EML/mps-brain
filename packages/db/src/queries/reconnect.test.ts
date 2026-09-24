@@ -120,7 +120,7 @@ describe('needs reconnecting', () => {
       },
       // The newly/long boundary: 30.5 days is "30 days" (newly), 31 days is "over 30" (long).
       { id: 'edge30', customer: 'Edge Thirty', counterDaysAgo: 30.5 },
-      { id: 'edge31', customer: 'Edge ThirtyOne', counterDaysAgo: 31 },
+      { id: 'edge31', customer: 'Edge ThirtyOne', counterDaysAgo: 31, raw: { Name: 'Edge ThirtyOne Hall C300i' } },
       // Empty and malformed DRMS dates are ignored rather than breaking the query.
       {
         id: 'badDates',
@@ -164,6 +164,13 @@ describe('needs reconnecting', () => {
     });
     expect(row?.vantageEquipmentId).toEqual(expect.any(Number));
     expect(row?.lastContactAt).toEqual(daysAgo(20));
+  });
+
+  it("names each device from DRMS's equipment Name when it adds something, else customer and model", async () => {
+    const { rows } = await listReconnect(t.db, { now: NOW });
+    const pick = (id: string) => rows.find((r) => r.drmsId === id);
+    expect(pick('new20')).toMatchObject({ equipmentName: null, displayName: 'Acme bizhub C300i' });
+    expect(pick('edge31')).toMatchObject({ equipmentName: 'Edge ThirtyOne Hall C300i', displayName: 'Edge ThirtyOne Hall C300i' });
   });
 
   it('takes the newest of the meter reading and DRMS alarms as last contact', async () => {

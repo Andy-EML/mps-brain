@@ -1,8 +1,9 @@
+import { deviceDisplayName, deviceNameAddsInfo } from '@mps/core';
 import { and, count, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
-import { lastAlarmSubquery } from './shared';
+import { drmsEquipmentName, lastAlarmSubquery } from './shared';
 
 /** Days without contact before a device that reports meter readings counts as silent. */
 export const RECONNECT_DAYS = 14;
@@ -19,7 +20,12 @@ export type ReconnectFilter = 'all' | 'new' | 'long' | 'unmonitored';
 export interface ReconnectRow {
   drmsId: string;
   serial: string | null;
+  /** DRMS's product name ("bizhub C300i_Ver22"); the CSV export's Device column. */
   name: string | null;
+  /** DRMS's equipment `Name`, only when it says more than the model (usually the site); else null. */
+  equipmentName: string | null;
+  /** See `deviceDisplayName` (@mps/core). */
+  displayName: string;
   model: string | null;
   drmsStatus: string | null;
   /** The Vantage customer, falling back to DRMS's customer name. */
@@ -183,6 +189,7 @@ export async function listReconnect(
         drmsId: drmsEquipment.drmsId,
         serial: drmsEquipment.serial,
         name: drmsEquipment.productName,
+        equipmentName: drmsEquipmentName(),
         model: drmsEquipment.modelName,
         drmsStatus: drmsEquipment.status,
         customerName,
@@ -219,6 +226,8 @@ export async function listReconnect(
         drmsId: r.drmsId,
         serial: r.serial,
         name: r.name,
+        equipmentName: deviceNameAddsInfo(r.equipmentName, r.model) ? r.equipmentName!.trim() : null,
+        displayName: deviceDisplayName({ equipmentName: r.equipmentName, customerName: r.customerName, model: r.model, serial: r.serial, drmsId: r.drmsId }),
         model: r.model,
         drmsStatus: r.drmsStatus,
         customerName: r.customerName,

@@ -1,4 +1,4 @@
-import { REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
+import { REPLENISH_COLOURS, deviceDisplayName, type ReplenishColour } from '@mps/core';
 import { and, count, countDistinct, desc, eq, gte, inArray, lt, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
@@ -15,7 +15,7 @@ import {
 } from '../schema';
 import { getOrderStates, type OrderRef } from './order-state';
 import { effectiveSettingsSubquery, type SettingSource } from './settings';
-import { counterPivotSubquery, toNumberOrNull } from './shared';
+import { counterPivotSubquery, drmsEquipmentName, toNumberOrNull } from './shared';
 
 /**
  * The toner-order review queue (`/orders`), its header stats and the device page's replenishment
@@ -68,6 +68,8 @@ export interface QueueOrder {
 
 export interface QueueDevice {
   drmsId: string;
+  /** The card heading: see `deviceDisplayName` (@mps/core). */
+  displayName: string;
   name: string | null;
   model: string | null;
   serial: string | null;
@@ -146,6 +148,7 @@ async function deviceContexts(db: Db, drmsIds: string[]): Promise<Map<string, De
     .select({
       drmsId: drmsEquipment.drmsId,
       name: drmsEquipment.productName,
+      equipmentName: drmsEquipmentName(),
       model: drmsEquipment.modelName,
       serial: drmsEquipment.serial,
       drmsCustomerName: drmsEquipment.customerName,
@@ -173,13 +176,15 @@ async function deviceContexts(db: Db, drmsIds: string[]): Promise<Map<string, De
     .where(inArray(drmsEquipment.drmsId, drmsIds));
 
   for (const r of rows) {
+    const customerName = r.vantageCustomerName ?? r.drmsCustomerName;
     out.set(r.drmsId, {
       device: {
         drmsId: r.drmsId,
+        displayName: deviceDisplayName({ equipmentName: r.equipmentName, customerName, model: r.model, serial: r.serial, drmsId: r.drmsId }),
         name: r.name,
         model: r.model,
         serial: r.serial,
-        customerName: r.vantageCustomerName ?? r.drmsCustomerName,
+        customerName,
         location: r.location,
         vantageEquipmentId: r.vantageEquipmentId,
       },
@@ -260,14 +265,7 @@ async function assemble(db: Db, proposals: ProposalRow[], orders: OrderRow[], no
 /** Review order: the emptiest cartridge first (no reading last), then name. */
 function byUrgency(a: QueueDevice, b: QueueDevice): number {
   const low = (d: QueueDevice) => Math.min(...d.proposals.map((p) => p.currentLevel ?? Infinity));
-  return low(a) - low(b) || compareNullable(a.name, b.name) || a.drmsId.localeCompare(b.drmsId);
-}
-
-function compareNullable(a: string | null, b: string | null): number {
-  if (a === b) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  return a.localeCompare(b);
+  return low(a) - low(b) || a.displayName.localeCompare(b.displayName) || a.drmsId.localeCompare(b.drmsId);
 }
 
 /** The other tabs: most recent activity (order sent or raised, proposal decided) first. */

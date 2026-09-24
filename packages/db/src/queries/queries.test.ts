@@ -562,6 +562,14 @@ describe('queries', () => {
       expect(detail?.vantageRaw).toEqual({});
     });
 
+    it("getDevice names the device from DRMS's equipment Name, else the customer and model", async () => {
+      const before = await getDevice(t.db, f.drms.online);
+      const model = before!.device.model;
+      expect(before?.displayName).toBe(['Acme Ltd (Vantage)', model].filter(Boolean).join(' '));
+      await t.db.update(drmsEquipment).set({ raw: { Name: 'Acme Ltd Downstairs C450i' } }).where(eq(drmsEquipment.drmsId, f.drms.online));
+      expect((await getDevice(t.db, f.drms.online))?.displayName).toBe('Acme Ltd Downstairs C450i');
+    });
+
     it('getDevice carries lastAlarmAt, the second signal that a device is reaching CSRC', async () => {
       const newest = new Date(FIXED_NOW.getTime() - 27 * 60_000);
       await t.db.insert(deviceAlarms).values([

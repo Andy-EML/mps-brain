@@ -31,7 +31,7 @@ describe('replenishment queue', () => {
     const [u] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning();
     userId = u!.id;
     await t.db.insert(drmsEquipment).values([
-      { drmsId: 'd1', productName: 'Alpha MFP', modelName: 'bizhub C300i', serial: 'S1', isColour: true, customerName: 'Acme (DRMS)', raw: {} },
+      { drmsId: 'd1', productName: 'Alpha MFP', modelName: 'bizhub C300i', serial: 'S1', isColour: true, customerName: 'Acme (DRMS)', raw: { Name: 'Acme Upstairs C300i' } },
       { drmsId: 'd2', productName: 'Beta MFP', modelName: 'bizhub 301i', serial: 'S2', isColour: false, customerName: 'Beta (DRMS)', raw: {} },
     ]);
     await t.db.insert(vantageEquipment).values([
@@ -133,6 +133,8 @@ describe('replenishment queue', () => {
     const q = await listReplenishmentQueue(t.db, { tab: 'review' });
     expect(q.map((d) => d.drmsId)).toEqual(['d1', 'd2']);
     expect(q[0]).toMatchObject({ name: 'Alpha MFP', model: 'bizhub C300i', serial: 'S1', customerName: 'Acme', location: 'Reception', vantageEquipmentId: 100, orders: [] });
+    // DRMS's equipment Name when it says more than the model, else customer + model.
+    expect(q.map((d) => d.displayName)).toEqual(['Acme Upstairs C300i', 'Beta bizhub 301i']);
     expect(q[0]!.proposals.map((p) => p.colour)).toEqual(['black', 'cyan']);
     expect(q[0]!.proposals.find((p) => p.colour === 'black')).toMatchObject({
       threshold: 15, thresholdSource: 'default', currentLevel: 12, level: 12, trigger: 'threshold', quantity: 1, status: 'pending',
