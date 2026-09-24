@@ -4,6 +4,13 @@
 > `2026-09-17-mps-foundation-design.md` → "Replenishment settings", "Bulk settings", "Needs toner
 > tile destination"; `docs/HANDOFF.md` → "Next: sub-project 3"). Choices marked **(default)** were
 > not discussed and were picked to keep the build moving; each is a named constant, easy to change.
+>
+> **2026-09-24: code-complete and reviewed, on `feat/replenishment` @ `2b8a041`, not merged/pushed.**
+> All tasks (1–17) implemented and reviewed clean; final whole-branch review (Opus) fixed after one
+> wave. Task 14 step 1 (full automated test pass) done — `docs/TEST-REPORT-2026-09-24.md`. Steps 2–3
+> (worker + UI against real data) are PENDING USER. **Live ordering (Task 1 step 7, Task 8, step 4)
+> is deferred to the roadmap by the user** — `vantage-order-submit` and `VANTAGE_ORDERS_ENABLED`
+> below are designed but not built. See `docs/HANDOFF.md` for next steps.
 
 ## Goal
 

@@ -1,7 +1,48 @@
-# Handoff — end of 2026-09-18
+# Handoff — end of 2026-09-24
 
-**Read this section, then `CLAUDE.md`, then the spec. Sections 0a and 0b below are earlier in the
-same day and are kept only for the detail; where they disagree with this section, this one wins.**
+**Read this section first, then `CLAUDE.md`, then the current spec. The 2026-09-18 sections below
+(Foundation) are kept only for the detail; where they disagree, this one wins.**
+
+## Where we finished on 2026-09-24
+
+**Sub-project 3 (replenishment) is code-complete and reviewed on `feat/replenishment`** (off
+`feat/foundation-web`, HEAD `2b8a041`, not merged, not pushed). All 17 plan tasks (thresholds
+cascade, `auto_replenish`, bulk settings, operator review queue, DRMS auto-registration approval
+queue, "Needs reconnecting", usability fixes) are done, reviewed, and the final whole-branch review
+(Opus) is clean after one fix wave. **Live Vantage ordering (spec Task 1 step 7, plan Task 8, and
+Task 14 step 4) is deferred to the roadmap by the user's decision — nothing in this branch sends an
+order automatically.**
+
+**Task 14 step 1 (full automated test pass) is done:** 716 tests / 56 files, typecheck, lint and
+the `@mps/web` production build are all clean. See `docs/TEST-REPORT-2026-09-24.md` — it also
+records a PGlite `hookTimeout` fix (`vitest.config.ts`, 10s → 60s) needed to stop 3 files flaking in
+the combined run, and summarises everything already ruled OK-TO-DEFER on the SDD ledger.
+
+### Next steps
+
+1. **Task 14 steps 2–3, with the user:** worker end-to-end against the shared local Postgres (needs
+   migration `0008` applied there — it currently only has `0007`), and a page-by-page UI pass. This
+   needs a second worker running next to the live dev worker in `C:\dev\mps-brain`, and the user's
+   sign-in. Do this before treating sub-project 3 as fully verified end-to-end.
+2. **Then sub-project 4: site stock.** Spares (which cartridges/parts are held, and where) vary
+   **per customer/site and per colour** — there is no single fleet-wide spares policy. Detect a
+   toner **replacement** (not just a level change) as a **level rise of ≥30 points to ≥80%**
+   (evidence from the fleet: Howden C&LC K 1→100 and Y 1→100 over two days in September). Use that
+   signal to decrement site stock automatically; the design otherwise starts fresh — no decisions
+   carried over from sub-project 3 beyond the toner-order data it already writes.
+
+### Before live ordering is ever enabled (whenever Task 8 is picked up)
+
+- **Clear or confirm any stale `queued`/`approved` orders first.** Approvals made while
+  `VANTAGE_ORDERS_ENABLED` was off just sit in the queue; if the switch is flipped on with old rows
+  still sitting there, they would all send at once the moment the submit job first runs.
+- **Check the live `.env`'s `ORDERS_CRON`.** It may still say the old nightly schedule
+  (`40 2 * * *`) rather than the current hourly default (`.env.example` now has `20 * * * *`, from
+  Task 17) — confirm which one is actually deployed before relying on it.
+- **Never run a hand batch (`run-batch.sh`/`register.mjs`) while the app's registration sender has
+  approved rows waiting**, and never approve anything in the app while a hand batch is running —
+  see section 3 below; this is the same one-DRMS-write-at-a-time hazard, and it applies to Vantage
+  ordering too once a submit job exists (only one sender should ever be live at a time).
 
 ## Where we finished on 2026-09-18
 
