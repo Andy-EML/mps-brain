@@ -5,7 +5,8 @@ import { QUEUES, createBoss, type QueueName } from '@mps/queue';
 import { createVantageClient } from '@mps/vantage';
 import { loadEnv } from './env';
 import { buildHandlers, type JobData } from './handlers';
-import { QUEUE_OPTIONS } from './queue-options';
+import { budgetFromExpiry } from './jobs/drms-registration-submit';
+import { QUEUE_OPTIONS, REGISTRATION_SUBMIT_EXPIRE_SECONDS } from './queue-options';
 import { failStaleRuns } from './sync-runs';
 
 async function main(): Promise<void> {
@@ -61,6 +62,9 @@ async function main(): Promise<void> {
       excludeRegex: new RegExp(env.AUTO_REGISTER_EXCLUDE, 'i'),
       pauseSeconds: env.AUTO_REGISTER_PAUSE_SECONDS,
       maxPerRun: env.AUTO_REGISTER_MAX_PER_RUN,
+      // Below the queue's expireInSeconds, so the run always returns before pg-boss would mark
+      // it expired and let a second, overlapping run start.
+      budgetMs: budgetFromExpiry(REGISTRATION_SUBMIT_EXPIRE_SECONDS),
     },
   });
 

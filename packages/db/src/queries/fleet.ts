@@ -83,8 +83,11 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
     needsToner,
     manualLow: Number(tonerRow?.manualLow ?? 0),
     criticalToner,
-    // "Low" is the non-critical part of "needs toner" (5%-20%); needsToner already includes critical.
-    lowToner: needsToner - criticalToner,
+    // "Low" is the non-critical part of "needs toner" (5%-20%); needsToner already includes
+    // critical. needsToner follows the settings cascade and only counts auto-replenish devices,
+    // while criticalToner counts every device regardless — so criticalToner can exceed needsToner
+    // and this must not go negative.
+    lowToner: Math.max(0, needsToner - criticalToner),
     offline: offlineRow?.n ?? 0,
     openIssues: issuesRow?.n ?? 0,
     lastSyncAt: syncRow?.finishedAt ?? null,

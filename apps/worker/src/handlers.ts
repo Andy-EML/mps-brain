@@ -27,7 +27,7 @@ export interface HandlerDeps {
   now?: () => Date;
   offlineAlertHours?: number;
   /** DRMS registration settings (env `AUTO_REGISTER_*`); the defaults match the env defaults. */
-  registration?: { excludeRegex: RegExp; pauseSeconds: number; maxPerRun: number };
+  registration?: { excludeRegex: RegExp; pauseSeconds: number; maxPerRun: number; budgetMs?: number };
 }
 
 export type JobData = { full?: boolean };
@@ -83,6 +83,7 @@ export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobDa
           now,
           pauseSeconds: registration.pauseSeconds,
           maxPerRun: registration.maxPerRun,
+          budgetMs: registration.budgetMs,
         }),
       );
     },

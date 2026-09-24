@@ -61,17 +61,19 @@ async function wakeSubmit(): Promise<void> {
 }
 
 export async function approveRegistrationsAction(formData: FormData): Promise<void> {
-  const ids = selectedIds(formData);
   await run(async (userId) => {
+    const ids = selectedIds(formData);
     await approveRegistrations(getDb(), { ids, userId });
     await wakeSubmit();
   }, backTo(formData));
 }
 
 export async function rejectRegistrationsAction(formData: FormData): Promise<void> {
-  const ids = selectedIds(formData);
-  const note = String(formData.get('note') ?? '').trim().slice(0, 500) || undefined;
-  await run((userId) => rejectRegistrations(getDb(), { ids, userId, note }), backTo(formData));
+  await run((userId) => {
+    const ids = selectedIds(formData);
+    const note = String(formData.get('note') ?? '').trim().slice(0, 500) || undefined;
+    return rejectRegistrations(getDb(), { ids, userId, note });
+  }, backTo(formData));
 }
 
 export async function unrejectRegistrationAction(formData: FormData): Promise<void> {

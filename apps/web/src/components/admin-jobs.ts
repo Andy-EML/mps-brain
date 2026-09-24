@@ -194,7 +194,9 @@ export const JOB_CARDS: readonly JobCard[] = [
     title: 'Vantage sales orders',
     description:
       'Fetches sales orders and their lines from Vantage, so the device page can show what consumables have already gone out. Read-only — it never raises an order.',
-    schedule: 'Hourly, at 20 past',
+    // Only shown if the worker has never registered this schedule (see scheduleLabel); this text
+    // is the compiled-in ORDERS_CRON default (env.ts), not a promise of what a live deploy runs.
+    schedule: 'Hourly, at 20 past (worker default; ORDERS_CRON overrides it)',
     external: true,
   },
   {

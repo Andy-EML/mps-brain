@@ -47,13 +47,13 @@ function requireId(id: number | null): number {
 }
 
 export async function approveAction(formData: FormData): Promise<void> {
-  const drmsId = String(formData.get('drmsId') ?? '');
-  const ids = formData.getAll('proposalId').map(Number).filter((n) => Number.isInteger(n) && n > 0);
-  const items = ids.map((proposalId) => ({ proposalId, quantity: Number(formData.get(`qty-${proposalId}`) ?? 1) }));
   await run(async (userId) => {
+    const drmsId = String(formData.get('drmsId') ?? '');
+    const ids = formData.getAll('proposalId').map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    const items = ids.map((proposalId) => ({ proposalId, quantity: Number(formData.get(`qty-${proposalId}`) ?? 1) }));
     await approveProposals(getDb(), { drmsId, items, userId });
     // Task 8 wakes the Vantage order sender here.
-  }, decisionBackPath(formData.get('back'), drmsId));
+  }, decisionBackPath(formData.get('back'), String(formData.get('drmsId') ?? '')));
   revalidateDevice(formData);
 }
 

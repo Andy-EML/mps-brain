@@ -18,6 +18,11 @@ import type { JobResult } from '../sync-runs';
  * - a row with a request id is only ever polled, never sent again, and a send whose outcome is
  *   unknown (5xx, timeout, the worker dying mid-POST) is recorded as failed for a person to check;
  * - a 429 or an auth error stops the run; a pre-check read that fails skips the device unsent.
+ * - a wall-clock budget (below the queue's pg-boss `expireInSeconds`) on starting *new* sends:
+ *   pg-boss marks an expired job failed but never cancels the running handler, so without this a
+ *   slow run (the backbone deadlocking is exactly when sends are slowest) could still be sending
+ *   past its expiry while the next scheduled run starts a second, overlapping sender. Rows not
+ *   started in time are simply left `approved` for the next run.
  */
 export interface RegistrationSubmitDeps {
   db: Db;
@@ -31,12 +36,26 @@ export interface RegistrationSubmitDeps {
   /** 30 s between polls, up to 40 polls: about 20 minutes per request. */
   pollIntervalMs?: number;
   maxPolls?: number;
+  /**
+   * Wall-clock ceiling for this run, in ms, measured from its start. Derived by the caller from
+   * the queue's `expireInSeconds` minus a safety margin (`budgetFromExpiry`). Undefined means no
+   * cap (existing behaviour), which the tests below rely on unless they opt in.
+   */
+  budgetMs?: number;
 }
 
 export const DEFAULT_PAUSE_SECONDS = 90;
 export const DEFAULT_MAX_PER_RUN = 40;
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_MAX_POLLS = 40;
+
+/** Subtracted from the queue's `expireInSeconds` so the run always returns before pg-boss would
+ *  mark it expired and let a second run start alongside it. */
+export const BUDGET_MARGIN_MS = 30 * 60 * 1000;
+
+export function budgetFromExpiry(expireInSeconds: number, marginMs = BUDGET_MARGIN_MS): number {
+  return Math.max(0, expireInSeconds * 1000 - marginMs);
+}
 
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -67,15 +86,25 @@ export function changedSinceApproval(live: DrmsEquipment, payload: Record<string
 export async function runRegistrationSubmit(deps: RegistrationSubmitDeps): Promise<JobResult> {
   const { db, drms } = deps;
   const now = deps.now ?? (() => new Date());
+  const startedAt = now();
   const sleep = deps.sleep ?? realSleep;
   const pauseMs = (deps.pauseSeconds ?? DEFAULT_PAUSE_SECONDS) * 1000;
   const maxPerRun = deps.maxPerRun ?? DEFAULT_MAX_PER_RUN;
   const pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const maxPolls = deps.maxPolls ?? DEFAULT_MAX_POLLS;
+  const budgetMs = deps.budgetMs;
   const r = drmsRegistrations;
 
-  const stats = { resumed: 0, sent: 0, registered: 0, failed: 0, precheckFailed: 0, stillProcessing: 0, uncertain: 0 };
+  const stats = { resumed: 0, sent: 0, registered: 0, failed: 0, precheckFailed: 0, stillProcessing: 0, uncertain: 0, budgetStopped: false };
   const errors = new ErrorCollector();
+
+  /**
+   * True once starting another send could no longer fit inside the budget: elapsed time so far,
+   * plus a conservative pause, plus the worst case for that send's polling (`maxPolls` at
+   * `pollIntervalMs` each). Checked only for *new* sends — resuming a request already sent must
+   * always be polled to a final answer.
+   */
+  const overBudget = () => budgetMs !== undefined && now().getTime() - startedAt.getTime() + pauseMs + maxPolls * pollIntervalMs > budgetMs;
 
   const finish = (id: number, values: Partial<typeof r.$inferInsert>) =>
     db.update(r).set({ finishedAt: now(), ...values }).where(eq(r.id, id));
@@ -172,6 +201,10 @@ export async function runRegistrationSubmit(deps: RegistrationSubmitDeps): Promi
 
     for (const row of queue) {
       if (stats.sent >= maxPerRun) break;
+      if (overBudget()) {
+        stats.budgetStopped = true;
+        break;
+      }
 
       // The pause comes first, so the live pre-check below is the last thing before the POST.
       if (lastSentAt) {

@@ -160,6 +160,13 @@ cd /c/dev/mps-brain
 
 ## 3. DRMS device registration (outside the app, scripts)
 
+**Never run a hand batch (`run-batch.sh`/`register.mjs`) while the app's registration sender
+(`drms-registration-submit`) has approved rows waiting.** Both send to DRMS one device at a time
+with their own pause, but neither knows about the other, so running both together means two
+registration streams hitting DRMS at once — the exact overload the one-at-a-time rule exists to
+avoid. Before starting a hand batch, check `/registrations` (Awaiting/Approved tabs) is empty or
+pause the worker; before approving anything in the app, finish or stop any hand batch in progress.
+
 Folder: `F:\dev\API Docs Etc\DRMS registration batches\`
 - `select-batch.mjs`: **read-only**. Picks N eligible Discovered devices from live DRMS and Vantage and writes a CSV.
 - `register.mjs`: registers **one** device from a CSV:

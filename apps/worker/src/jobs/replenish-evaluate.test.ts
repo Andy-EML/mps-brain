@@ -106,6 +106,27 @@ describe('runReplenishEvaluate', () => {
     expect(live).toEqual([]);
   });
 
+  it('does not drop a same-run alarm proposal for a colour whose threshold proposal just recovered', async () => {
+    await levels('colour', 'c1', 12, 50); // black below threshold
+    await runReplenishEvaluate({ db: t.db, now: () => NOW }); // pending black threshold proposal
+    await levels('colour', 'c2', 98, 50); // black cartridge replaced: recovers
+    await t.db.insert(deviceAlarms).values({
+      alarmId: 'k1', drmsEquipmentId: 'colour', receivedTime: new Date('2026-09-20T08:00:00Z'), category: 'toner',
+      status: 'ReadyForErpDelivery', description: 'Toner Near Empty(K)', raw: {},
+    });
+    const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+    expect(r.stats).toMatchObject({ superseded: 1, proposed: 1 });
+    const black = await t.db
+      .select()
+      .from(replenishmentProposals)
+      .where(eq(replenishmentProposals.colour, 'black'))
+      .orderBy(replenishmentProposals.id);
+    expect(black.map((p) => [p.status, p.trigger, p.note])).toEqual([
+      ['superseded', 'threshold', 'level recovered'],
+      ['pending', 'alarm', null],
+    ]);
+  });
+
   describe('an order appearing in Vantage', () => {
     // The pending proposal is created at NOW (14:00 UTC on 21 Sep); Vantage order dates are date-only.
     async function vantageOrder(id: number, o: { date: string; completed?: string }) {

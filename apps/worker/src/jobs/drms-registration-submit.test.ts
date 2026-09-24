@@ -282,6 +282,44 @@ describe('runRegistrationSubmit', () => {
     expect(result.stats).toMatchObject({ uncertain: 1 });
   });
 
+  it('stops starting new sends once the wall-clock budget cannot fit one more (pause + max polls), leaving the rest approved for the next run', async () => {
+    for (const id of ['d1', 'd2']) await approved(id);
+    // A fake clock that advances with every simulated sleep, so elapsed wall time in the run
+    // tracks the pauses and poll waits exactly as the real job would experience them.
+    let clockMs = NOW.getTime();
+    const clockNow = () => new Date(clockMs);
+    const drms = fakeDrms({});
+    const result = await runRegistrationSubmit({
+      db: t.db,
+      drms: drms.client,
+      now: clockNow,
+      sleep: async (ms) => {
+        clockMs += ms;
+        sleeps.push(ms);
+        drms.calls.push({ method: 'sleep', arg: ms });
+      },
+      pauseSeconds: 90,
+      maxPerRun: 40,
+      pollIntervalMs: 30_000,
+      maxPolls: 3,
+      // Worst case per send: 90s pause + 3 * 30s polling = 180s. d1's own send only actually
+      // takes 30s (one poll to ProcessedSuccessful), so 200s leaves enough for d1 (0 + 180 <=
+      // 200) but not for a second send afterwards (30 + 180 > 200).
+      budgetMs: 200_000,
+    });
+    expect(drms.sends()).toHaveLength(1);
+    expect(result.stats).toMatchObject({ sent: 1, registered: 1, budgetStopped: true });
+    const list = await rows();
+    expect(list[0]).toMatchObject({ status: 'registered' });
+    expect(list[1]).toMatchObject({ status: 'approved', submittedAt: null, requestId: null });
+  });
+
+  it('does not budget-stop when no budgetMs is given', async () => {
+    for (const id of ['d1', 'd2']) await approved(id);
+    const result = await run(fakeDrms({}));
+    expect(result.stats).toMatchObject({ sent: 2, budgetStopped: false });
+  });
+
   it('stops the run on 429, leaving the rest untouched', async () => {
     await approved('d1');
     await approved('d2');

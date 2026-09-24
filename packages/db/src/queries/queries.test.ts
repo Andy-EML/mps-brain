@@ -89,6 +89,17 @@ describe('queries', () => {
       expect(summary.lowToner).toBe(1);
     });
 
+    it('never lets lowToner go negative when criticalToner outgrows needsToner', async () => {
+      // needsToner follows the settings cascade and only counts auto-replenish devices; criticalToner
+      // counts every device regardless. Switching D1 (critical) to manual drops it out of needsToner
+      // but not criticalToner, so the naive subtraction would go negative.
+      await updateDeviceSettings(t.db, { drmsIds: [f.drms.online], patch: { autoReplenish: false }, userId: f.user.id });
+      const summary = await getFleetSummary(t.db);
+      expect(summary.needsToner).toBe(0);
+      expect(summary.criticalToner).toBe(1);
+      expect(summary.lowToner).toBe(0);
+    });
+
     it('honours a custom offline threshold', async () => {
       const summary = await getFleetSummary(t.db, { offlineHours: 48 });
       expect(summary.offline).toBe(0);

@@ -109,7 +109,6 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   const orderStates = await getOrderStates(db, linkedIds, now);
 
   const stats = { devices: devices.length, proposed: 0, superseded: 0, suppressed: 0, autoOff: 0, unlinked: 0 };
-  const toSupersede: { id: number; note: string }[] = [];
 
   for (const d of devices) {
     const thresholds: Record<TonerColour, number> = { black: Number(d.tBlack), cyan: Number(d.tCyan), magenta: Number(d.tMagenta), yellow: Number(d.tYellow) };
@@ -122,7 +121,10 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
     const mine = proposalRows.filter((p) => p.drmsId === d.drmsId);
     const states = d.vantageEquipmentId === null ? undefined : orderStates.get(d.vantageEquipmentId);
 
-    // Supersede first, so a recovered channel does not count as "live" below.
+    // Supersede first, so a recovered channel does not count as "live" below, and so this
+    // device's insert (below) never conflicts with a still-pending row it just replaced —
+    // otherwise a same-run alarm proposal for the recovered colour would be silently dropped.
+    const toSupersede: { id: number; note: string }[] = [];
     for (const p of mine) {
       if (p.status !== 'pending') continue;
       const ordered = states ? orderedInVantage(states[p.colour], p.createdAt) : null;
@@ -133,6 +135,14 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       }
     }
     const superseded = new Set(toSupersede.map((s) => s.id));
+    for (const s of toSupersede) {
+      const updated = await db
+        .update(replenishmentProposals)
+        .set({ status: 'superseded', decidedAt: now, note: s.note })
+        .where(and(eq(replenishmentProposals.id, s.id), eq(replenishmentProposals.status, 'pending')))
+        .returning({ id: replenishmentProposals.id });
+      stats.superseded += updated.length;
+    }
 
     const history: Partial<Record<ReplenishColour, ColourHistory>> = {};
     for (const colour of ['black', 'cyan', 'magenta', 'yellow', 'waste'] as const) {
@@ -189,12 +199,5 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
     }
   }
 
-  for (const s of toSupersede) {
-    await db
-      .update(replenishmentProposals)
-      .set({ status: 'superseded', decidedAt: now, note: s.note })
-      .where(and(eq(replenishmentProposals.id, s.id), eq(replenishmentProposals.status, 'pending')));
-  }
-  stats.superseded = toSupersede.length;
   return { status: 'success', stats };
 }

@@ -1,4 +1,4 @@
-import { AuthError, HttpError, RateLimitError } from '@mps/core';
+import { AuthError, HttpError } from '@mps/core';
 import { drmsRegistrations } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import type { VantageRecord } from '@mps/vantage';
@@ -196,8 +196,9 @@ describe('runRegistrationScan', () => {
   it('stops the run on a Vantage 429 without looking up anything more', async () => {
     await seedDevice(t, 'd1', 'SERIAL0000001');
     await seedDevice(t, 'd2', 'SERIAL0000002');
-    const v = fakeVantage({ SERIAL0000001: new RateLimitError('Vantage returned 429', new Date()), SERIAL0000002: [] });
-    await expect(scan(v)).rejects.toBeInstanceOf(RateLimitError);
+    // The real Vantage client's GET throws a plain HttpError(429), never RateLimitError.
+    const v = fakeVantage({ SERIAL0000001: new HttpError('Vantage GET Equipment failed (429)', 429), SERIAL0000002: [] });
+    await expect(scan(v)).rejects.toBeInstanceOf(HttpError);
     expect(v.calls).toEqual(['SERIAL0000001']);
   });
 

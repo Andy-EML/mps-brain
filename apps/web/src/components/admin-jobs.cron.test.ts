@@ -51,4 +51,14 @@ describe('scheduleLabel', () => {
   it('falls back when the worker has registered nothing at all', () => {
     expect(scheduleLabel(snapshot, new Map())).toBe(snapshot.schedule);
   });
+
+  it("labels the orders card's fallback as a worker default naming ORDERS_CRON, not a bare claim", () => {
+    // Regression: this text used to read as fact ("Hourly, at 20 past") even when a live .env
+    // overrode ORDERS_CRON — misleading whenever the worker has not (yet) registered its
+    // schedule in pg-boss, which is the only case this fallback is ever shown for.
+    const vantageOrders = JOB_CARDS.find((c) => c.queue === 'vantage-orders')!;
+    expect(vantageOrders.schedule).toContain('ORDERS_CRON');
+    // Once the worker has registered the schedule, its live cron always wins regardless.
+    expect(scheduleLabel(vantageOrders, new Map([['vantage-orders', '40 2 * * *']]))).toBe('Daily at 02:40');
+  });
 });
