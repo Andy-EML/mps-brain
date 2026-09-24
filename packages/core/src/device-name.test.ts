@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deviceDisplayName, deviceNameAddsInfo } from './device-name';
+import { deviceDisplayName, deviceNameAddsInfo, informativeEquipmentName } from './device-name';
 
 describe('deviceNameAddsInfo', () => {
   it('is false when there is no name to show', () => {
@@ -57,5 +57,13 @@ describe('deviceDisplayName', () => {
   it('falls back to the serial, then the DRMS id, when there is nothing else', () => {
     expect(deviceDisplayName({ ...base, customerName: null, model: null })).toBe('A1B2C3D4E');
     expect(deviceDisplayName({ ...base, customerName: ' ', model: null, serial: null })).toBe('d1');
+  });
+});
+
+describe('informativeEquipmentName', () => {
+  it('is the trimmed Name when it adds something, else null', () => {
+    expect(informativeEquipmentName(' Hazell Downstairs C450i ', 'bizhub C450i')).toBe('Hazell Downstairs C450i');
+    expect(informativeEquipmentName('bizhub C450i_Ver22', 'bizhub C450i')).toBeNull();
+    expect(informativeEquipmentName(null, 'bizhub C450i')).toBeNull();
   });
 });

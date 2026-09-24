@@ -1,4 +1,4 @@
-import { deviceDisplayName, deviceNameAddsInfo } from '@mps/core';
+import { deviceDisplayName, informativeEquipmentName } from '@mps/core';
 import { and, count, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
@@ -226,7 +226,7 @@ export async function listReconnect(
         drmsId: r.drmsId,
         serial: r.serial,
         name: r.name,
-        equipmentName: deviceNameAddsInfo(r.equipmentName, r.model) ? r.equipmentName!.trim() : null,
+        equipmentName: informativeEquipmentName(r.equipmentName, r.model),
         displayName: deviceDisplayName({ equipmentName: r.equipmentName, customerName: r.customerName, model: r.model, serial: r.serial, drmsId: r.drmsId }),
         model: r.model,
         drmsStatus: r.drmsStatus,

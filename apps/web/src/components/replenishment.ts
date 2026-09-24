@@ -1,5 +1,5 @@
 import type { ReplenishColour } from '@mps/core';
-import type { OrderStatus, ProposalTrigger } from '@mps/db';
+import type { OrderStatus, ProposalStatus, ProposalTrigger } from '@mps/db';
 import type { EffectiveSettings, SettingSource } from '@mps/db/queries';
 import type { Tone } from '@/components/toner';
 // Relative, not `@/lib/format`: Vitest has no `@/` alias and this module is unit-tested.
@@ -123,4 +123,22 @@ export function decisionBackPath(back: unknown, drmsId: unknown): string {
 /** The Rejected tab's line for a superseded proposal: the engine's note says why. */
 export function supersededText(note: string | null): string {
   return note ? `Superseded: ${note}` : 'Superseded';
+}
+
+const PROPOSAL_STATUS: Record<ProposalStatus, { text: string; href: string }> = {
+  pending: { text: 'Awaiting review', href: '/orders' },
+  approved: { text: 'Approved', href: '/orders?tab=in-progress' },
+  failed: { text: 'Failed', href: '/orders?tab=in-progress' },
+  ordered: { text: 'Ordered', href: '/orders?tab=ordered' },
+  rejected: { text: 'Rejected', href: '/orders?tab=rejected' },
+  superseded: { text: 'Superseded', href: '/orders?tab=rejected' },
+};
+
+/**
+ * A proposal's status on the device page's Replenishment card, and the `/orders` tab that lists
+ * it. A superseded one says why, as the Rejected tab does ("Superseded: ordered in Vantage (SO…)").
+ */
+export function proposalStatusLink(p: { status: ProposalStatus; note: string | null }): { text: string; href: string } {
+  const entry = PROPOSAL_STATUS[p.status];
+  return p.status === 'superseded' ? { ...entry, text: supersededText(p.note) } : entry;
 }

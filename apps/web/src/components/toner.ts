@@ -45,12 +45,6 @@ export function tonerLevels(row: DeviceRow): (number | null)[] {
   return tonerChannels(row).map((c) => row.toner[c.key]);
 }
 
-/**
- * Whether a DRMS name is worth showing next to the Model column. Lives in `@mps/core` so the query
- * layer can use it for rows' `displayName`; re-exported here for the list components.
- */
-export { deviceNameAddsInfo } from '@mps/core';
-
 /** `6h` for the first two days, then whole days — "No meter reading · 4128h" helps nobody. */
 function readingAge(lastCounterAt: Date | null, now: Date): string | null {
   if (lastCounterAt == null) return null;

@@ -1,7 +1,14 @@
 import Link from 'next/link';
 import type { EffectiveSettings, QueueOrder, QueueProposal, SettingSource } from '@mps/db/queries';
 import { updateDeviceSettingsAction } from '@/app/(app)/devices/[id]/actions';
-import { colourLabel, orderStatusLabel, orderStatusTone, settingOrigin, triggerLabel } from '@/components/replenishment';
+import {
+  colourLabel,
+  orderStatusLabel,
+  orderStatusTone,
+  proposalStatusLink,
+  settingOrigin,
+  triggerLabel,
+} from '@/components/replenishment';
 import { ReviewForm } from '@/components/replenishment-queue';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
 import { ToneBadge } from '@/components/tone-badge';
@@ -24,10 +31,6 @@ export interface ReplenishmentCardProps {
 }
 
 const COLOURS = ['black', 'cyan', 'magenta', 'yellow'] as const;
-
-const PROPOSAL_STATUS: Record<string, { text: string; href: string }> = {
-  approved: { text: 'Approved', href: '/orders?tab=in-progress' },
-};
 
 /** Where an order sits on `/orders`: the In progress tab until it has reached Vantage. */
 function orderHref(order: QueueOrder): string {
@@ -130,7 +133,7 @@ export function ReplenishmentCard({
           {decided.length > 0 ? (
             <ul className="mt-1">
               {decided.map((p) => {
-                const status = PROPOSAL_STATUS[p.status] ?? { text: p.status, href: '/orders' };
+                const status = proposalStatusLink(p);
                 return (
                   <li key={p.id} className="border-b border-line/70 py-2 last:border-0">
                     <Link href={status.href} className="block text-[13px] hover:underline">

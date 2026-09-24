@@ -3,6 +3,7 @@ import {
   colourLabel,
   decisionBackPath,
   orderStatusTone,
+  proposalStatusLink,
   replenishmentErrorMessage,
   settingOrigin,
   sourceLabel,
@@ -109,5 +110,18 @@ describe('supersededText', () => {
     expect(supersededText('ordered in Vantage (SO123)')).toBe('Superseded: ordered in Vantage (SO123)');
     expect(supersededText('level recovered')).toBe('Superseded: level recovered');
     expect(supersededText(null)).toBe('Superseded');
+  });
+});
+
+describe('proposalStatusLink', () => {
+  it("says where a device card's proposal stands and which queue tab holds it", () => {
+    expect(proposalStatusLink({ status: 'pending', note: null })).toEqual({ text: 'Awaiting review', href: '/orders' });
+    expect(proposalStatusLink({ status: 'approved', note: null })).toEqual({ text: 'Approved', href: '/orders?tab=in-progress' });
+    expect(proposalStatusLink({ status: 'rejected', note: 'dup' })).toEqual({ text: 'Rejected', href: '/orders?tab=rejected' });
+    expect(proposalStatusLink({ status: 'superseded', note: 'ordered in Vantage (SO9)' })).toEqual({
+      text: 'Superseded: ordered in Vantage (SO9)',
+      href: '/orders?tab=rejected',
+    });
+    expect(proposalStatusLink({ status: 'ordered', note: null })).toEqual({ text: 'Ordered', href: '/orders?tab=ordered' });
   });
 });

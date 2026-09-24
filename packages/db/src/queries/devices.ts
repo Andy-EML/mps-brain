@@ -1,14 +1,20 @@
+import { deviceDisplayName, informativeEquipmentName } from '@mps/core';
 import { and, asc, count, eq, ilike, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
 import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
 import { effectiveSettingsSubquery } from './settings';
-import { belowThreshold, counterPivotSubquery, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
+import { belowThreshold, counterPivotSubquery, drmsEquipmentName, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
 export interface DeviceRow {
   drmsId: string;
   serial: string | null;
+  /** DRMS's product name ("bizhub C300i_Ver22"): the model with a firmware suffix. */
   name: string | null;
+  /** DRMS's equipment `Name`, only when it says more than the model (usually the site); else null. */
+  equipmentName: string | null;
+  /** What to call the device on screen: see `deviceDisplayName` (@mps/core). */
+  displayName: string;
   model: string | null;
   status: string | null;
   /**
@@ -65,6 +71,7 @@ function deviceRowFields(
     drmsId: drmsEquipment.drmsId,
     serial: drmsEquipment.serial,
     name: drmsEquipment.productName,
+    equipmentName: drmsEquipmentName(),
     model: drmsEquipment.modelName,
     status: drmsEquipment.status,
     isColour: drmsEquipment.isColour,
@@ -87,6 +94,7 @@ interface RawDeviceRow {
   drmsId: string;
   serial: string | null;
   name: string | null;
+  equipmentName: string | null;
   model: string | null;
   status: string | null;
   isColour: boolean;
@@ -105,12 +113,34 @@ interface RawDeviceRow {
   meterScan: number | null;
 }
 
+/** The two name fields every `DeviceRow` carries, from the raw DRMS columns. */
+export function deviceRowNames(r: {
+  drmsId: string;
+  serial: string | null;
+  equipmentName: string | null;
+  model: string | null;
+  customerName: string | null;
+  vantageCustomerName: string | null;
+}): Pick<DeviceRow, 'equipmentName' | 'displayName'> {
+  return {
+    equipmentName: informativeEquipmentName(r.equipmentName, r.model),
+    displayName: deviceDisplayName({
+      equipmentName: r.equipmentName,
+      customerName: r.vantageCustomerName ?? r.customerName,
+      model: r.model,
+      serial: r.serial,
+      drmsId: r.drmsId,
+    }),
+  };
+}
+
 function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
   const lastCounterAt = r.lastCounterAt ?? null;
   return {
     drmsId: r.drmsId,
     serial: r.serial,
     name: r.name,
+    ...deviceRowNames(r),
     model: r.model,
     status: r.status,
     isColour: r.isColour,

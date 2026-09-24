@@ -1,4 +1,4 @@
-import { ORDER_COLOURS, deviceDisplayName, isOrderColour, type OrderColour } from '@mps/core';
+import { ORDER_COLOURS, isOrderColour, type OrderColour } from '@mps/core';
 import { and, asc, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import type { Db } from '../client';
 import {
@@ -12,7 +12,7 @@ import {
   vantageSalesOrderLines,
   vantageSalesOrders,
 } from '../schema';
-import type { DeviceRow } from './devices';
+import { deviceRowNames, type DeviceRow } from './devices';
 import { counterPivotSubquery, drmsEquipmentName, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
 export interface DeviceDetail {
@@ -107,6 +107,7 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
     drmsId: row.drmsId,
     serial: row.serial,
     name: row.name,
+    ...deviceRowNames(row),
     model: row.model,
     status: row.status,
     isColour: row.isColour,
@@ -132,13 +133,7 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
 
   return {
     device,
-    displayName: deviceDisplayName({
-      equipmentName: row.equipmentName,
-      customerName: row.vantageCustomerName ?? row.customerName,
-      model: row.model,
-      serial: row.serial,
-      drmsId: row.drmsId,
-    }),
+    displayName: device.displayName,
     drmsRaw: row.drmsRaw,
     vantageRaw: row.vantageRaw ?? null,
     latestSnapshotAt: snap?.latest ?? null,

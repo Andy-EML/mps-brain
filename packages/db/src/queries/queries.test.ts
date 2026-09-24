@@ -420,6 +420,18 @@ describe('queries', () => {
   });
 
   describe('listDevices', () => {
+    it("names each device from DRMS's equipment Name when it adds something, else customer and model", async () => {
+      await t.db.update(drmsEquipment).set({ raw: { Name: 'Acme Ltd Downstairs C450i' } }).where(eq(drmsEquipment.drmsId, f.drms.online));
+      const { rows } = await listDevices(t.db);
+      const online = rows.find((r) => r.drmsId === f.drms.online)!;
+      expect(online).toMatchObject({ equipmentName: 'Acme Ltd Downstairs C450i', displayName: 'Acme Ltd Downstairs C450i' });
+      const other = rows.find((r) => r.drmsId === f.drms.offline)!;
+      expect(other.equipmentName).toBeNull();
+      expect(other.displayName).toBe([other.vantageCustomerName ?? other.customerName, other.model].filter(Boolean).join(' ') || other.serial);
+      // getDevice builds the same row, so the device page and the list agree.
+      expect((await getDevice(t.db, f.drms.online))?.device).toMatchObject({ displayName: 'Acme Ltd Downstairs C450i' });
+    });
+
     it('returns toner and meter values on the right device', async () => {
       const { rows } = await listDevices(t.db);
       expect(rows).toHaveLength(3);

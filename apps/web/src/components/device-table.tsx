@@ -4,7 +4,7 @@ import { cn } from 'cn';
 import { CopyText } from '@/components/copy-text';
 import { SelectPageCheckbox, SelectRowCheckbox } from '@/components/device-selection';
 import { StatusDot, TONE_TEXT } from '@/components/status-dot';
-import { deviceNameAddsInfo, deviceStatusLabel } from '@/components/toner';
+import { deviceStatusLabel } from '@/components/toner';
 import { TonerBars } from '@/components/toner-bar';
 
 export interface DeviceTableProps {
@@ -36,9 +36,9 @@ function deviceSerial(row: DeviceRow): string {
  * DRMS toner channels as bars with their percentage underneath, and pages/month on the right.
  *
  * The customer leads because it is what an operator is looking for; the serial underneath is the
- * link to the device page. The DRMS product name only appears when it says something the Model
- * column doesn't — for many devices the name *is* the model ("ineo+458_Ver42" beside a Model
- * reading "ineo+458"), which printed the same thing twice in one row.
+ * link to the device page. The device's display name (DRMS's equipment Name, e.g. "Hazell &
+ * Jefferies Downstairs C450i") only appears when it says something the Model column doesn't — the
+ * product name ("ineo+458_Ver42") is just the model, and printed the same thing twice in one row.
  */
 export function DeviceTable({
   rows,
@@ -82,7 +82,9 @@ export function DeviceTable({
         <tbody>
           {rows.map((row) => {
             const status = deviceStatusLabel(row, now);
-            const showName = deviceNameAddsInfo(row.name, row.model);
+            // The same `displayName` as the queue and device page. Printed only when it is DRMS's
+            // equipment Name: the fallback (customer + model) would repeat this row's own columns.
+            const showName = row.equipmentName !== null;
             return (
               <tr key={row.drmsId} className="border-b border-line align-top last:border-0">
                 {selectable ? (
@@ -105,7 +107,7 @@ export function DeviceTable({
                         {row.serial ? <CopyText text={row.serial} iconOnly /> : null}
                       </div>
                       {showName ? (
-                        <div className="truncate text-[13px] text-muted-foreground">{row.name}</div>
+                        <div className="truncate text-[13px] text-muted-foreground">{row.displayName}</div>
                       ) : null}
                     </div>
                   </div>

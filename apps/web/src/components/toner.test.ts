@@ -18,6 +18,8 @@ function row(over: Partial<DeviceRow> = {}): DeviceRow {
     drmsId: 'd1',
     serial: 'A1B2C3D4E',
     name: 'Reception',
+    equipmentName: 'Reception',
+    displayName: 'Reception',
     model: 'bizhub C458',
     isColour: true,
     status: 'Registered',

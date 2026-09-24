@@ -194,10 +194,10 @@ function DeviceCells({ row }: { row: ReconnectRow }) {
     <>
       <td className="px-5 py-4 text-[14px]">{row.location ?? '—'}</td>
       <td className="px-5 py-4">
-        <div className="truncate text-[14px]">{row.model ?? '—'}</div>
-        {/* DRMS's equipment Name, only when it says more than the model — usually the site. */}
-        {row.equipmentName ? (
-          <div className="truncate text-[13px] text-muted-foreground">{row.equipmentName}</div>
+        {/* The same name as the queue and device page; the model underneath unless it already ends it. */}
+        <div className="truncate text-[14px]">{row.displayName}</div>
+        {row.model && !row.displayName.includes(row.model) ? (
+          <div className="truncate text-[13px] text-muted-foreground">{row.model}</div>
         ) : null}
       </td>
       <td className="px-5 py-4">

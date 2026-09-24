@@ -41,6 +41,11 @@ export function deviceNameAddsInfo(name: string | null | undefined, model: strin
   return nameTokens.some((t) => !fromModel.has(t));
 }
 
+/** DRMS's equipment `Name`, trimmed, when it says more than the model; else null. */
+export function informativeEquipmentName(name: string | null | undefined, model: string | null | undefined): string | null {
+  return name && deviceNameAddsInfo(name, model) ? name.trim() : null;
+}
+
 export interface DeviceNameParts {
   /** DRMS's equipment `Name` (`drms_equipment.raw->>'Name'`), e.g. "Hazell & Jefferies Downstairs C450i". */
   equipmentName: string | null;
@@ -56,7 +61,8 @@ export interface DeviceNameParts {
  * DRMS id. Never the DRMS *product* name ("bizhub C300i_Ver22"), which only restates the model.
  */
 export function deviceDisplayName(d: DeviceNameParts): string {
-  if (d.equipmentName && deviceNameAddsInfo(d.equipmentName, d.model)) return d.equipmentName.trim();
+  const named = informativeEquipmentName(d.equipmentName, d.model);
+  if (named) return named;
   const fallback = [d.customerName, d.model]
     .map((s) => s?.trim())
     .filter(Boolean)
