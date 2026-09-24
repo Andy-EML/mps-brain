@@ -84,7 +84,10 @@ describe('DRMS registration queue', () => {
       expect(failed.rows.map((r) => r.id)).not.toContain(oldFail.id);
 
       expect(await getRegistrationCounts(t.db)).toEqual({ awaitingApproval: 1, approved: 1, waiting: 1, registered: 2, failed: 1, rejected: 0 });
-      expect(await countAwaitingApproval(t.db)).toBe(1);
+      // The sidebar badge must equal the *Awaiting approval* tab's own count (awaiting.total, above) —
+      // awaiting_approval rows plus approved ones still being sent, not just the former.
+      expect(await countAwaitingApproval(t.db)).toBe(awaiting.total);
+      expect(await countAwaitingApproval(t.db)).toBe(2);
     });
 
     it('searches serial, device and both customer names, and pages', async () => {
@@ -173,6 +176,15 @@ describe('DRMS registration queue', () => {
       expect(await audits()).toEqual([
         expect.objectContaining({ action: 'registration.retry', entityIds: [f.id], details: { newRegistrationId: registrationId } }),
       ]);
+    });
+
+    it('maps a clash with a live row (a concurrent retry) to stale, writing nothing', async () => {
+      // A live row with a lower id than the failed one: what a racing second retry would meet.
+      await row('d1', 'approved');
+      const f = await row('d1', 'failed');
+      await expect(requestRetry(t.db, { registrationId: f.id, userId })).rejects.toMatchObject({ name: 'RegistrationError', code: 'stale' });
+      expect((await t.db.select().from(drmsRegistrations)).map((x) => x.status).sort()).toEqual(['approved', 'failed']);
+      expect(await audits()).toEqual([]);
     });
 
     it('refuses a row that is not failed, or a failure already retried', async () => {

@@ -87,6 +87,17 @@ export async function rejectRegistrations(
   });
 }
 
+const LIVE_UNIQUE = 'drms_registrations_live_uq';
+
+/** A unique violation on the one-live-row-per-device index (pg and PGlite, bare or wrapped by drizzle). */
+function isLiveClash(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e && depth < 4; e = (e as { cause?: unknown }).cause, depth++) {
+    const x = e as { code?: string; constraint?: string; message?: string };
+    if (x.code === '23505' && (x.constraint === LIVE_UNIQUE || (x.message ?? '').includes(LIVE_UNIQUE))) return true;
+  }
+  return false;
+}
+
 async function loadRow(tx: Pick<Db, 'select'>, id: number) {
   const [row] = await tx.select().from(r).where(eq(r.id, id));
   if (!row) throw new RegistrationError('That registration no longer exists — refresh the page.', 'not_found');
@@ -141,6 +152,16 @@ export async function requestRetry(
   args: { registrationId: number; userId: number; now?: Date },
 ): Promise<{ registrationId: number }> {
   const now = args.now ?? new Date();
+  try {
+    return await retryInTransaction(db, args, now);
+  } catch (err) {
+    // Two people pressed Retry at once: the loser's insert meets the other's live row.
+    if (isLiveClash(err)) throw new RegistrationError(STALE, 'stale');
+    throw err;
+  }
+}
+
+function retryInTransaction(db: Db, args: { registrationId: number; userId: number }, now: Date): Promise<{ registrationId: number }> {
   return db.transaction(async (tx) => {
     const { row, superseded } = await loadRow(tx, args.registrationId);
     if (row.status !== 'failed' || superseded) {

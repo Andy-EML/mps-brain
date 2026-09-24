@@ -6,7 +6,7 @@ import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
 import { Pagination } from '@/components/pagination';
 import { RegistrationQueue } from '@/components/registration-queue';
-import { parseRegistrationTab } from '@/components/registrations';
+import { awaitingTabCount, parseRegistrationTab } from '@/components/registrations';
 import { SearchInput } from '@/components/search-input';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
@@ -54,7 +54,7 @@ export default async function RegistrationsPage({ searchParams }: PageProps<'/re
   }
 
   const tabs: FilterTab[] = [
-    { value: 'awaiting', label: <TabLabel label="Awaiting approval" count={counts.awaitingApproval} /> },
+    { value: 'awaiting', label: <TabLabel label="Awaiting approval" count={awaitingTabCount(counts).text} /> },
     { value: 'waiting', label: <TabLabel label="Waiting" count={counts.waiting} /> },
     { value: 'registered', label: <TabLabel label="Registered" count={counts.registered} /> },
     { value: 'failed', label: <TabLabel label="Failed" count={counts.failed} /> },
@@ -147,11 +147,11 @@ export default async function RegistrationsPage({ searchParams }: PageProps<'/re
   );
 }
 
-function TabLabel({ label, count }: { label: string; count: number }) {
+function TabLabel({ label, count }: { label: string; count: number | string }) {
   return (
     <>
       {label}
-      <span className="ml-1.5 tabular-nums opacity-60">{formatNumber(count)}</span>
+      <span className="ml-1.5 tabular-nums opacity-60">{typeof count === 'number' ? formatNumber(count) : count}</span>
     </>
   );
 }

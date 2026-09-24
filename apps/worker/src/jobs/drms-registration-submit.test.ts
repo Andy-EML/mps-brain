@@ -9,7 +9,7 @@ import { runRegistrationSubmit } from './drms-registration-submit';
 
 const NOW = new Date('2026-09-22T09:00:00Z');
 
-type Call = { method: 'getEquipment' | 'registerEquipment' | 'getEquipmentRequest'; arg: unknown };
+type Call = { method: 'getEquipment' | 'registerEquipment' | 'getEquipmentRequest' | 'sleep'; arg: unknown };
 
 /**
  * A scripted DRMS: per-device status answers for `getEquipment` (in order; the last repeats),
@@ -19,6 +19,8 @@ function fakeDrms(script: {
   status?: Record<string, (string | Error)[]>;
   register?: Record<string, string | Error>;
   polls?: Record<string, (Partial<DrmsEquipmentRequest> | Error)[]>;
+  /** Live fields overriding the defaults (which match the approved payload). */
+  record?: Record<string, Partial<DrmsEquipment>>;
 }) {
   const calls: Call[] = [];
   const seen: Record<string, number> = {};
@@ -36,7 +38,15 @@ function fakeDrms(script: {
         calls.push({ method: 'getEquipment', arg: id });
         const s = next(`eq:${id}`, script.status?.[id]) ?? 'Discovered';
         if (s instanceof Error) throw s;
-        return { Id: id, Status: s, ErpId: s === 'PreRegistered' ? '4321' : null };
+        return {
+          Id: id,
+          Status: s,
+          ErpId: s === 'PreRegistered' ? '4321' : null,
+          SerialNumber: `SER-${id}`,
+          CsrcId: `csrc-SER-${id}`,
+          CustomerErpId: 'CUST0001',
+          ...script.record?.[id],
+        };
       },
       async registerEquipment(payload: Record<string, unknown>): Promise<string> {
         calls.push({ method: 'registerEquipment', arg: payload });
@@ -55,7 +65,12 @@ function fakeDrms(script: {
   };
 }
 
-const payload = (serial: string) => ({ EquipmentErpId: '4321', EquipmentSerialNumber: serial, CustomerErpId: 'CUST0001' });
+const payload = (serial: string) => ({
+  EquipmentErpId: '4321',
+  EquipmentSerialNumber: serial,
+  EquipmentCsrcId: `csrc-${serial}`,
+  CustomerErpId: 'CUST0001',
+});
 
 describe('runRegistrationSubmit', () => {
   let t: TestDb;
@@ -88,6 +103,8 @@ describe('runRegistrationSubmit', () => {
       now: () => NOW,
       sleep: async (ms) => {
         sleeps.push(ms);
+        // Also in the call log, so a test can see where each pause falls.
+        drms.calls.push({ method: 'sleep', arg: ms });
       },
       pauseSeconds: o.pauseSeconds ?? 90,
       maxPerRun: o.maxPerRun ?? 40,
@@ -103,7 +120,9 @@ describe('runRegistrationSubmit', () => {
     expect(drms.calls.map((c) => c.method)).toEqual([
       'getEquipment',
       'registerEquipment',
+      'sleep',
       'getEquipmentRequest',
+      'sleep',
       'getEquipmentRequest',
       'getEquipment',
     ]);
@@ -128,15 +147,21 @@ describe('runRegistrationSubmit', () => {
     const drms = fakeDrms({});
     const result = await run(drms, { maxPerRun: 2 });
 
-    const order = drms.calls.map((c) => `${c.method}:${typeof c.arg === 'string' ? c.arg : (c.arg as { EquipmentSerialNumber: string }).EquipmentSerialNumber}`);
-    // d1 is fully finished (polled, status after) before d2 is even pre-checked; d3 is over the cap.
+    const order = drms.calls.map(
+      (c) => `${c.method}:${typeof c.arg === 'object' ? (c.arg as { EquipmentSerialNumber: string }).EquipmentSerialNumber : String(c.arg)}`,
+    );
+    // d1 is fully finished (polled, status after) before d2 is touched; the 90 s pause comes
+    // before d2's pre-check, so the live read is immediately before the POST. d3 is over the cap.
     expect(order).toEqual([
       'getEquipment:d1',
       'registerEquipment:SER-d1',
+      'sleep:30000',
       'getEquipmentRequest:req-SER-d1',
       'getEquipment:d1',
+      'sleep:90000',
       'getEquipment:d2',
       'registerEquipment:SER-d2',
+      'sleep:30000',
       'getEquipmentRequest:req-SER-d2',
       'getEquipment:d2',
     ]);
@@ -250,6 +275,7 @@ describe('runRegistrationSubmit', () => {
     const drms = fakeDrms({});
     const result = await run(drms);
     expect(drms.calls).toEqual([]);
+    expect(sleeps).toEqual([]);
     const [row] = await rows();
     expect(row?.status).toBe('failed');
     expect(row?.error).toMatch(/may or may not/);
@@ -314,5 +340,65 @@ describe('runRegistrationSubmit', () => {
     const drms = fakeDrms({ status: { d1: ['Deleted'] } });
     await run(drms);
     expect(drms.sends()).toHaveLength(0);
+  });
+  it.each([
+    ['ErpId set by someone else', { ErpId: '99999' }, 'ErpId'],
+    ['a different CsrcId', { CsrcId: 'csrc-other' }, 'CsrcId'],
+    ['a different serial', { SerialNumber: 'SER-other' }, 'SerialNumber'],
+    ['a different customer code', { CustomerErpId: 'CUST0002' }, 'CustomerErpId'],
+  ] as const)('does not send when DRMS has %s since approval', async (_what, record, field) => {
+    await approved('d1');
+    const drms = fakeDrms({ record: { d1: record } });
+    const result = await run(drms);
+    expect(drms.sends()).toHaveLength(0);
+    const [row] = await rows();
+    expect(row).toMatchObject({ status: 'failed', requestId: null, submittedAt: null });
+    expect(row?.error).toContain('Changed in DRMS since approval');
+    expect(row?.error).toContain(field);
+    expect(row?.error).toContain('rescan');
+    expect(result.stats).toMatchObject({ failed: 1, sent: 0 });
+  });
+
+  it('accepts an ErpId that is a copy of the serial, and our own Vantage id on a retry only', async () => {
+    await approved('d1');
+    const copy = fakeDrms({ record: { d1: { ErpId: 'ser-d1' } } });
+    await run(copy);
+    expect(copy.sends()).toHaveLength(1);
+
+    await approved('d2');
+    const ours = fakeDrms({ record: { d2: { ErpId: '4321' } } });
+    await run(ours);
+    expect(ours.sends()).toHaveLength(0);
+
+    await approved('d3', { retryRequestedBy: userId, retryRequestedAt: NOW, decidedBy: null, decidedAt: null });
+    const retry = fakeDrms({ status: { d3: ['Deleted', 'PreRegistered'] }, record: { d3: { ErpId: '4321' } } });
+    await run(retry);
+    expect(retry.sends()).toHaveLength(1);
+  });
+
+  it('stops the run on a 429 at the pre-check with nothing sent', async () => {
+    await approved('d1');
+    await approved('d2');
+    const drms = fakeDrms({ status: { d1: [new RateLimitError('DRMS Equipment/{id} returned 429', new Date())] } });
+    const result = await run(drms);
+    expect(drms.sends()).toHaveLength(0);
+    expect(drms.calls.filter((c) => c.arg === 'd2')).toHaveLength(0);
+    expect((await rows()).map((r) => [r.status, r.submittedAt])).toEqual([
+      ['approved', null],
+      ['approved', null],
+    ]);
+    expect(result).toMatchObject({ status: 'failed', stats: { stopped: true } });
+  });
+
+  it('keeps the recorded result when the status-after read hits a 429', async () => {
+    await approved('d1');
+    await approved('d2');
+    const drms = fakeDrms({ status: { d1: ['Discovered', new RateLimitError('429', new Date())] } });
+    const result = await run(drms);
+    const list = await rows();
+    expect(list[0]).toMatchObject({ status: 'registered', requestId: 'req-SER-d1', drmsStatusAfter: null });
+    expect(list[1]).toMatchObject({ status: 'approved', submittedAt: null });
+    expect(drms.sends()).toHaveLength(1);
+    expect(result).toMatchObject({ status: 'failed', stats: { stopped: true, registered: 1 } });
   });
 });

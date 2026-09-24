@@ -159,9 +159,13 @@ export async function getRegistrationCounts(db: Db): Promise<RegistrationCounts>
   };
 }
 
-/** Rows awaiting a decision — the sidebar badge. One indexed count. */
+/**
+ * The sidebar badge. Must equal the *Awaiting approval* tab's own count, so it uses the same
+ * `TAB_WHERE` condition (awaiting a decision, plus approved rows still on their way to DRMS) —
+ * not just `awaiting_approval` alone.
+ */
 export async function countAwaitingApproval(db: Db): Promise<number> {
-  const [row] = await db.select({ n: count() }).from(r).where(eq(r.status, 'awaiting_approval'));
+  const [row] = await db.select({ n: count() }).from(r).where(TAB_WHERE.awaiting);
   return Number(row?.n ?? 0);
 }
 

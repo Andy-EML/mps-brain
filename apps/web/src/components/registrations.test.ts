@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { customerMatchBadge, parseRegistrationTab, registrationStatusBadge, selectedIds } from './registrations';
+import { awaitingTabCount, customerMatchBadge, parseRegistrationTab, registrationStatusBadge, retryConfirmText, selectedIds } from './registrations';
 
 describe('parseRegistrationTab', () => {
   it('accepts the five tabs and falls back to awaiting approval', () => {
@@ -40,5 +40,21 @@ describe('selectedIds', () => {
     f.append('id', '5');
     f.append('only', '9');
     expect(selectedIds(f)).toEqual([9]);
+  });
+});
+
+describe('retryConfirmText', () => {
+  it('warns hardest when DRMS never gave a request id (the first attempt may still be processing)', () => {
+    expect(retryConfirmText({ requestId: null, serial: 'S1' })).toContain('DRMS may still be processing the first attempt — check the device in DRMS first');
+    const known = retryConfirmText({ requestId: 'r1', serial: 'S1' });
+    expect(known).toContain('S1');
+    expect(known).not.toContain('may still be processing');
+  });
+});
+
+describe('awaitingTabCount', () => {
+  it('counts exactly what the tab lists: awaiting a decision plus approved and sending', () => {
+    expect(awaitingTabCount({ awaitingApproval: 3, approved: 2 })).toEqual({ total: 5, text: '3 + 2 sending' });
+    expect(awaitingTabCount({ awaitingApproval: 3, approved: 0 })).toEqual({ total: 3, text: '3' });
   });
 });

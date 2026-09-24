@@ -1,6 +1,7 @@
 import {
   AuthError,
   ErrorCollector,
+  RateLimitError,
   autoRegisterEligibility,
   drmsCandidateCheck,
   type DrmsRegistrationRecord,
@@ -82,8 +83,9 @@ export async function runRegistrationScan(deps: RegistrationScanDeps): Promise<J
     try {
       matches = await vantage.findEquipmentBySerial(record.SerialNumber ?? '');
     } catch (err) {
-      // Vantage refusing us is not a per-device problem: stop rather than fail every lookup.
-      if (err instanceof AuthError) throw err;
+      // Vantage refusing us (auth) or throttling us (429) is not a per-device problem: stop rather
+      // than keep calling.
+      if (err instanceof AuthError || err instanceof RateLimitError) throw err;
       lookupErrors++;
       errors.add(`${record.SerialNumber}`, err);
       keep.add(device.drmsId);

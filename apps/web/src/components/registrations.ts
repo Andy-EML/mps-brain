@@ -61,3 +61,20 @@ export function selectedIds(formData: FormData): number[] {
   }
   return [...new Set(formData.getAll('id').map(valid).filter((n): n is number => n !== null))];
 }
+
+/**
+ * The Retry confirmation. With no request id DRMS never told us whether it took the first attempt
+ * (a timeout, a 5xx, a crash mid-send — or a plain rejection), so the person is sent to look first.
+ */
+export function retryConfirmText(row: { requestId: string | null; serial: string | null }): string {
+  const machine = row.serial ?? 'this machine';
+  return row.requestId === null
+    ? `DRMS may still be processing the first attempt — check the device in DRMS first. Register ${machine} in DRMS again anyway?`
+    : `Register ${machine} in DRMS again? DRMS answered the first attempt with a failure.`;
+}
+
+/** The *Awaiting approval* tab lists rows awaiting a decision and approved rows being sent; so does its count. */
+export function awaitingTabCount(c: { awaitingApproval: number; approved: number }): { total: number; text: string } {
+  const total = c.awaitingApproval + c.approved;
+  return { total, text: c.approved > 0 ? `${c.awaitingApproval} + ${c.approved} sending` : String(c.awaitingApproval) };
+}

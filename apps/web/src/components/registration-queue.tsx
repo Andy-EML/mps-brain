@@ -11,7 +11,7 @@ import {
   retryRegistrationAction,
   unrejectRegistrationAction,
 } from '@/app/(app)/registrations/actions';
-import { customerMatchBadge, registrationStatusBadge } from '@/components/registrations';
+import { customerMatchBadge, registrationStatusBadge, retryConfirmText } from '@/components/registrations';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -293,7 +293,7 @@ function FailedCells({ row }: { row: RegistrationRow }) {
         <form action={retryRegistrationAction}>
           <input type="hidden" name="id" value={row.id} />
           <input type="hidden" name="tab" value="failed" />
-          <PendingButton label="Retry" pendingLabel="Queueing…" />
+          <PendingButton label="Retry" pendingLabel="Queueing…" confirm={retryConfirmText(row)} />
         </form>
       </td>
     </>
@@ -318,10 +318,30 @@ function RejectedCells({ row }: { row: RegistrationRow }) {
   );
 }
 
-function PendingButton({ label, pendingLabel, variant = 'default' }: { label: string; pendingLabel: string; variant?: 'default' | 'outline' }) {
+function PendingButton({
+  label,
+  pendingLabel,
+  variant = 'default',
+  confirm,
+}: {
+  label: string;
+  pendingLabel: string;
+  variant?: 'default' | 'outline';
+  /** Asked with the browser's confirm before submitting. */
+  confirm?: string;
+}) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" size="sm" variant={variant} disabled={pending} className={variant === 'default' ? 'bg-brand hover:bg-brand/90' : undefined}>
+    <Button
+      type="submit"
+      size="sm"
+      variant={variant}
+      disabled={pending}
+      className={variant === 'default' ? 'bg-brand hover:bg-brand/90' : undefined}
+      onClick={(e) => {
+        if (confirm && !window.confirm(confirm)) e.preventDefault();
+      }}
+    >
       {pending ? pendingLabel : label}
     </Button>
   );

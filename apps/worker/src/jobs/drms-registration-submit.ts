@@ -1,6 +1,6 @@
-import { AuthError, ErrorCollector, HttpError, RateLimitError, UncertainWriteError, errorMessage } from '@mps/core';
+import { AuthError, ErrorCollector, HttpError, RateLimitError, UncertainWriteError, errorMessage, normaliseSerial } from '@mps/core';
 import { drmsRegistrations, type Db } from '@mps/db';
-import type { DrmsClient, DrmsEquipmentRequest } from '@mps/drms';
+import type { DrmsClient, DrmsEquipment, DrmsEquipmentRequest } from '@mps/drms';
 import { and, asc, eq, isNotNull, isNull, max, sql } from 'drizzle-orm';
 import type { JobResult } from '../sync-runs';
 
@@ -44,6 +44,25 @@ const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(reso
 const isStop = (err: unknown) => err instanceof RateLimitError || err instanceof AuthError;
 
 type Row = typeof drmsRegistrations.$inferSelect;
+
+const same = (a: unknown, b: unknown) => (a ?? '') === (b ?? '');
+
+/**
+ * What differs between the live DRMS record and the approved payload, so a device that someone
+ * changed in DRMS after approval is never registered on stale data. ErpId must still be empty or
+ * a copy of the serial — or, for a retry, the Vantage id our own failed attempt may have left.
+ */
+export function changedSinceApproval(live: DrmsEquipment, payload: Record<string, unknown>, isRetry: boolean): string[] {
+  const out: string[] = [];
+  const erpId = live.ErpId ?? '';
+  if (erpId.trim() !== '' && normaliseSerial(erpId) !== normaliseSerial(live.SerialNumber) && !(isRetry && erpId === payload.EquipmentErpId)) {
+    out.push('ErpId');
+  }
+  if (!same(live.CsrcId, payload.EquipmentCsrcId)) out.push('CsrcId');
+  if (!same(live.SerialNumber, payload.EquipmentSerialNumber)) out.push('SerialNumber');
+  if (!same(live.CustomerErpId, payload.CustomerErpId)) out.push('CustomerErpId');
+  return out;
+}
 
 export async function runRegistrationSubmit(deps: RegistrationSubmitDeps): Promise<JobResult> {
   const { db, drms } = deps;
@@ -154,17 +173,25 @@ export async function runRegistrationSubmit(deps: RegistrationSubmitDeps): Promi
     for (const row of queue) {
       if (stats.sent >= maxPerRun) break;
 
+      // The pause comes first, so the live pre-check below is the last thing before the POST.
+      if (lastSentAt) {
+        const wait = lastSentAt.getTime() + pauseMs - now().getTime();
+        if (wait > 0) await sleep(wait);
+      }
+
       // Pre-check: the device must still be Discovered (or Deleted, for a retry of a registration
-      // DRMS rolled back). A failed read skips the device without sending anything.
-      let drmsStatus: string | null;
+      // DRMS rolled back) and still be the device that was approved. A failed read skips the
+      // device without sending anything.
+      let live: DrmsEquipment;
       try {
-        drmsStatus = (await drms.getEquipment(row.drmsEquipmentId)).Status ?? null;
+        live = await drms.getEquipment(row.drmsEquipmentId);
       } catch (err) {
         if (isStop(err)) throw err;
         stats.precheckFailed++;
         errors.add(`pre-check ${row.serial ?? row.drmsEquipmentId}`, err);
         continue;
       }
+      const drmsStatus = live.Status ?? null;
       const allowed = row.retryRequestedAt ? ['Discovered', 'Deleted'] : ['Discovered'];
       if (!allowed.includes(drmsStatus ?? '')) {
         stats.failed++;
@@ -175,10 +202,15 @@ export async function runRegistrationSubmit(deps: RegistrationSubmitDeps): Promi
         });
         continue;
       }
-
-      if (lastSentAt) {
-        const wait = lastSentAt.getTime() + pauseMs - now().getTime();
-        if (wait > 0) await sleep(wait);
+      const changed = changedSinceApproval(live, (row.request ?? {}) as Record<string, unknown>, row.retryRequestedAt !== null);
+      if (changed.length > 0) {
+        stats.failed++;
+        await finish(row.id, {
+          status: 'failed',
+          drmsStatusAfter: drmsStatus,
+          error: `Changed in DRMS since approval (${changed.join(', ')}) — not sent; rescan.`,
+        });
+        continue;
       }
 
       // Mark the send before it happens (guarded), so a crash mid-POST is never re-sent.

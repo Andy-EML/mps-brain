@@ -1,4 +1,4 @@
-import { AuthError, HttpError } from '@mps/core';
+import { AuthError, HttpError, RateLimitError } from '@mps/core';
 import { drmsRegistrations } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import type { VantageRecord } from '@mps/vantage';
@@ -191,6 +191,14 @@ describe('runRegistrationScan', () => {
     await expect(scan(fakeVantage({ SERIAL0000001: new AuthError('Vantage loginsingle failed (401)', 401) }))).rejects.toBeInstanceOf(
       AuthError,
     );
+  });
+
+  it('stops the run on a Vantage 429 without looking up anything more', async () => {
+    await seedDevice(t, 'd1', 'SERIAL0000001');
+    await seedDevice(t, 'd2', 'SERIAL0000002');
+    const v = fakeVantage({ SERIAL0000001: new RateLimitError('Vantage returned 429', new Date()), SERIAL0000002: [] });
+    await expect(scan(v)).rejects.toBeInstanceOf(RateLimitError);
+    expect(v.calls).toEqual(['SERIAL0000001']);
   });
 
   it('flags a customer mismatch but still queues it for approval', async () => {
