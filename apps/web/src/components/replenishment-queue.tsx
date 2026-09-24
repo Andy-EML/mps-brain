@@ -7,7 +7,15 @@ import { Minus, Plus } from 'lucide-react';
 import type { QueueDevice, QueueOrder, QueueProposal, QueueTab } from '@mps/db/queries';
 import { cn } from 'cn';
 import { approveAction, rejectAction, resolveOrderAction, retryOrderAction } from '@/app/(app)/orders/actions';
-import { colourLabel, orderStatusLabel, orderStatusTone, sourceLabel, triggerLabel } from '@/components/replenishment';
+import { CopyText } from '@/components/copy-text';
+import {
+  colourLabel,
+  orderStatusLabel,
+  orderStatusTone,
+  sourceLabel,
+  supersededText,
+  triggerLabel,
+} from '@/components/replenishment';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,7 +50,9 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
       {devices.map((device) => (
         <li key={device.drmsId} className="px-5 py-5">
           <DeviceHeading device={device} />
-          {tab === 'review' ? <ReviewForm device={device} /> : null}
+          {tab === 'review' ? (
+            <ReviewForm drmsId={device.drmsId} proposals={device.proposals} unlinked={device.vantageEquipmentId === null} />
+          ) : null}
           {tab === 'in-progress' ? <InProgress device={device} /> : null}
           {tab === 'ordered' ? <Ordered device={device} /> : null}
           {tab === 'rejected' ? <Rejected device={device} /> : null}
@@ -54,18 +64,18 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
 
 function DeviceHeading({ device }: { device: QueueDevice }) {
   const where = [device.customerName, device.location].filter(Boolean).join(' · ');
+  // The fallback display name already ends in the model; an equipment Name usually does not.
+  const showModel = device.model !== null && !device.displayName.includes(device.model);
   return (
     <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
       <div className="min-w-0">
         <Link href={`/devices/${device.drmsId}`} className="text-[15px] font-medium text-brand hover:underline">
-          {device.name ?? device.model ?? device.drmsId}
+          {device.displayName}
         </Link>
-        {device.model && device.model !== device.name ? (
-          <span className="ml-2 text-[13px] text-muted-foreground">{device.model}</span>
-        ) : null}
+        {showModel ? <span className="ml-2 text-[13px] text-muted-foreground">{device.model}</span> : null}
         {where ? <p className="mt-0.5 text-[13px] text-muted-foreground">{where}</p> : null}
       </div>
-      {device.serial ? <span className="font-mono text-xs text-muted-foreground">{device.serial}</span> : null}
+      {device.serial ? <CopyText text={device.serial} className="text-xs text-muted-foreground" /> : null}
     </div>
   );
 }
@@ -98,13 +108,28 @@ function orderContext(p: QueueProposal): { text: string; open: boolean } | null 
 
 /* ---------------------------------------------------------------- Review */
 
-function ReviewForm({ device }: { device: QueueDevice }) {
-  const unlinked = device.vantageEquipmentId === null;
+export interface ReviewFormProps {
+  drmsId: string;
+  /** The device's `pending` proposals. */
+  proposals: QueueProposal[];
+  /** No current Vantage link: nothing can be approved, only rejected. */
+  unlinked: boolean;
+  /** Set on the device page, so a refused decision comes back there (see `decisionBackPath`). */
+  back?: 'device';
+}
+
+/**
+ * One device's pending proposals with a checkbox and quantity each, Approve selected and Reject
+ * selected + reason. Used by the queue's Review tab and the device page's Replenishment card; both
+ * post to the same actions, which revalidate both pages.
+ */
+export function ReviewForm({ drmsId, proposals, unlinked, back }: ReviewFormProps) {
   return (
     <form action={approveAction}>
-      <input type="hidden" name="drmsId" value={device.drmsId} />
+      <input type="hidden" name="drmsId" value={drmsId} />
+      {back ? <input type="hidden" name="back" value={back} /> : null}
       <div className="grid gap-2">
-        {device.proposals.map((p) => (
+        {proposals.map((p) => (
           <ProposalRow key={p.id} proposal={p} />
         ))}
       </div>
@@ -402,7 +427,7 @@ function Rejected({ device }: { device: QueueDevice }) {
           <span className="text-[13px] text-muted-foreground">{triggerLabel(p)}</span>
           <span className="text-[13px] text-muted-foreground">
             {p.status === 'superseded'
-              ? `Superseded: level recovered · ${formatDateTime(p.decidedAt)}`
+              ? `${supersededText(p.note)} · ${formatDateTime(p.decidedAt)}`
               : `Rejected by ${p.decidedBy ?? 'unknown'} · ${formatDateTime(p.decidedAt)}`}
           </span>
           {p.status === 'rejected' && p.note ? <span className="text-[13px] italic">“{p.note}”</span> : null}

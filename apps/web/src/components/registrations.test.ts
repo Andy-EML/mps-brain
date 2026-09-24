@@ -57,4 +57,9 @@ describe('awaitingTabCount', () => {
     expect(awaitingTabCount({ awaitingApproval: 3, approved: 2 })).toEqual({ total: 5, text: '3 + 2 sending' });
     expect(awaitingTabCount({ awaitingApproval: 3, approved: 0 })).toEqual({ total: 3, text: '3' });
   });
+
+  it('keeps the thousands separators the other tab counts have', () => {
+    expect(awaitingTabCount({ awaitingApproval: 1234, approved: 0 }).text).toBe('1,234');
+    expect(awaitingTabCount({ awaitingApproval: 1234, approved: 1500 }).text).toBe('1,234 + 1,500 sending');
+  });
 });

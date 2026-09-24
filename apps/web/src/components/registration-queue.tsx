@@ -11,6 +11,7 @@ import {
   retryRegistrationAction,
   unrejectRegistrationAction,
 } from '@/app/(app)/registrations/actions';
+import { CopyText } from '@/components/copy-text';
 import { customerMatchBadge, registrationStatusBadge, retryConfirmText } from '@/components/registrations';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
@@ -98,9 +99,12 @@ function MachineCell({ row }: { row: RegistrationRow }) {
     <td className={CELL}>
       <div className="text-[14px] font-medium">{row.deviceName ?? row.model ?? row.drmsId}</div>
       {row.model && row.model !== row.deviceName ? <div className="text-[13px] text-muted-foreground">{row.model}</div> : null}
-      <Link href={`/devices/${row.drmsId}`} className="font-mono text-[12px] text-muted-foreground hover:text-brand hover:underline">
-        {row.serial ?? row.drmsId}
-      </Link>
+      <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+        <Link href={`/devices/${row.drmsId}`} className="font-mono hover:text-brand hover:underline">
+          {row.serial ?? row.drmsId}
+        </Link>
+        {row.serial ? <CopyText text={row.serial} iconOnly /> : null}
+      </div>
     </td>
   );
 }

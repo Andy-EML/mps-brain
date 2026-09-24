@@ -45,7 +45,15 @@ export function AppSidebar({
         <NavLink href="/" label="Fleet overview" icon={<LayoutGrid />} exact />
         <NavLink href="/devices" label="Devices" icon={<Printer />} />
         <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
-        <NavLink href="/reconnect" label="Needs reconnecting" icon={<WifiOff />} count={newlySilent} tone="warn" />
+        {/* "Needs reconnecting" truncated beside its badge; the page keeps the full name as its title. */}
+        <NavLink
+          href="/reconnect"
+          label="Reconnect"
+          title="Needs reconnecting"
+          icon={<WifiOff />}
+          count={newlySilent}
+          tone="warn"
+        />
         <NavLink
           href="/registrations"
           label="DRMS registrations"

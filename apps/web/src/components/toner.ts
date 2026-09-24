@@ -46,42 +46,10 @@ export function tonerLevels(row: DeviceRow): (number | null)[] {
 }
 
 /**
- * Split on anything that isn't a letter or a digit, lower-case, and drop a trailing firmware
- * version from each token (`_Ver42` → its own token and then empty; `458Ver2` → `458`). DRMS
- * product names and model names differ mostly in punctuation and that suffix, so this turns
- * "ineo+458_Ver42" and "ineo+458" into the same token list.
+ * Whether a DRMS name is worth showing next to the Model column. Lives in `@mps/core` so the query
+ * layer can use it for rows' `displayName`; re-exported here for the list components.
  */
-function modelTokens(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .map((t) => t.replace(/ver\d+$/, ''))
-    .filter((t) => t !== '');
-}
-
-/**
- * Whether the DRMS product name is worth showing next to the Model column.
- *
- * Many devices are named after their own model — "ineo+458_Ver42" beside a Model column reading
- * "ineo+458" — which prints the same thing twice in one row. Others carry the site, which is the
- * most useful thing on the row: "Little Heath School (Maths) C3351i", "A-Plan (Southampton)
- * MF3303".
- *
- * The test is therefore "does anything survive once the model's own words are taken out", not
- * plain substring containment. Containment would also hide "A-Plan (Southampton) MF3303" whenever
- * the model is literally `MF3303`, and that name is exactly the kind we want to keep. A name that
- * is only a shortened model ("C3351i" under "bizhub C3351i") still leaves nothing behind, so it is
- * dropped as intended.
- */
-export function deviceNameAddsInfo(name: string | null | undefined, model: string | null | undefined): boolean {
-  const nameTokens = name ? modelTokens(name) : [];
-  if (nameTokens.length === 0) return false;
-
-  const fromModel = new Set(model ? modelTokens(model) : []);
-  if (fromModel.size === 0) return true;
-
-  return nameTokens.some((t) => !fromModel.has(t));
-}
+export { deviceNameAddsInfo } from '@mps/core';
 
 /** `6h` for the first two days, then whole days — "No meter reading · 4128h" helps nobody. */
 function readingAge(lastCounterAt: Date | null, now: Date): string | null {

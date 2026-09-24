@@ -13,6 +13,7 @@ import {
 } from '@mps/db/queries';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
+import { CopyText } from '@/components/copy-text';
 import { PageHeader } from '@/components/page-header';
 import { Pagination } from '@/components/pagination';
 import { SearchInput } from '@/components/search-input';
@@ -194,17 +195,18 @@ function DeviceCells({ row }: { row: ReconnectRow }) {
       <td className="px-5 py-4 text-[14px]">{row.location ?? '—'}</td>
       <td className="px-5 py-4">
         <div className="truncate text-[14px]">{row.model ?? '—'}</div>
-        {row.name && row.name !== row.model ? (
-          <div className="truncate text-[13px] text-muted-foreground">{row.name}</div>
+        {/* DRMS's equipment Name, only when it says more than the model — usually the site. */}
+        {row.equipmentName ? (
+          <div className="truncate text-[13px] text-muted-foreground">{row.equipmentName}</div>
         ) : null}
       </td>
       <td className="px-5 py-4">
-        <Link
-          href={`/devices/${row.drmsId}`}
-          className="font-mono text-[12px] text-muted-foreground hover:text-brand hover:underline"
-        >
-          {row.serial ?? row.drmsId}
-        </Link>
+        <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          <Link href={`/devices/${row.drmsId}`} className="font-mono hover:text-brand hover:underline">
+            {row.serial ?? row.drmsId}
+          </Link>
+          {row.serial ? <CopyText text={row.serial} iconOnly /> : null}
+        </div>
       </td>
       <td className="px-5 py-4 text-[14px]">{row.drmsStatus ?? '—'}</td>
     </>

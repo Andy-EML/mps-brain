@@ -91,3 +91,36 @@ const ORDER_LABELS: Record<OrderStatus, string> = {
 export function orderStatusLabel(status: OrderStatus): string {
   return ORDER_LABELS[status];
 }
+
+/** `?error=` codes from the queue's actions (`ReplenishmentErrorCode`), as sentences. */
+const DECISION_ERRORS: Record<string, string> = {
+  not_pending: 'Someone else has already decided one of those proposals — the list has been refreshed.',
+  unlinked: 'That device is no longer linked to Vantage equipment, so it cannot be ordered for.',
+  bad_quantity: 'Quantities are whole numbers from 1 to 20.',
+  mixed_devices: 'Those proposals belong to different devices. Approve one device at a time.',
+  empty: 'Nothing was selected. Tick at least one cartridge first.',
+  not_found: 'That order or proposal no longer exists — the list has been refreshed.',
+  bad_state:
+    'That order has moved on since the page loaded, or is missing something it needs (an order that exists in Vantage needs its reference).',
+};
+
+/** The sentence for an `?error=` code from the toner-order actions, on `/orders` or a device page. */
+export function replenishmentErrorMessage(code: string): string {
+  return DECISION_ERRORS[code] ?? 'That did not work. Refresh the page and try again.';
+}
+
+/**
+ * Where an approve/reject action sends a refused decision (`?error=` is appended): the form's
+ * hidden `back` says which page it sat on — the queue's review tab, its In progress tab, or the
+ * device page's Replenishment card.
+ */
+export function decisionBackPath(back: unknown, drmsId: unknown): string {
+  if (back === 'in-progress') return '/orders?tab=in-progress';
+  if (back === 'device' && typeof drmsId === 'string' && drmsId !== '') return `/devices/${encodeURIComponent(drmsId)}`;
+  return '/orders';
+}
+
+/** The Rejected tab's line for a superseded proposal: the engine's note says why. */
+export function supersededText(note: string | null): string {
+  return note ? `Superseded: ${note}` : 'Superseded';
+}

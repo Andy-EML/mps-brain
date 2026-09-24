@@ -1,4 +1,6 @@
 import type { CustomerMatchFlag, RegistrationStatus, RegistrationTab } from '@mps/db/queries';
+// Relative, not `@/lib/format`: Vitest has no `@/` alias and this module is unit-tested.
+import { formatNumber } from '../lib/format';
 import type { Tone } from './toner';
 
 /**
@@ -73,8 +75,12 @@ export function retryConfirmText(row: { requestId: string | null; serial: string
     : `Register ${machine} in DRMS again? DRMS answered the first attempt with a failure.`;
 }
 
-/** The *Awaiting approval* tab lists rows awaiting a decision and approved rows being sent; so does its count. */
+/**
+ * The *Awaiting approval* tab lists rows awaiting a decision and approved rows being sent; so does its
+ * count. `text` is already formatted (thousands separators), because the tab label prints it as is.
+ */
 export function awaitingTabCount(c: { awaitingApproval: number; approved: number }): { total: number; text: string } {
   const total = c.awaitingApproval + c.approved;
-  return { total, text: c.approved > 0 ? `${c.awaitingApproval} + ${c.approved} sending` : String(c.awaitingApproval) };
+  const awaiting = formatNumber(c.awaitingApproval);
+  return { total, text: c.approved > 0 ? `${awaiting} + ${formatNumber(c.approved)} sending` : awaiting };
 }

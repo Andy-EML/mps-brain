@@ -15,9 +15,11 @@ export interface NavLinkProps {
   tone?: 'critical' | 'warn';
   /** `/` would otherwise match every route, so exact matching is opt-in. */
   exact?: boolean;
+  /** Hover tooltip, for a short label standing in for the page's full name; defaults to `label`. */
+  title?: string;
 }
 
-export function NavLink({ href, label, icon, count, tone = 'critical', exact }: NavLinkProps) {
+export function NavLink({ href, label, icon, count, tone = 'critical', exact, title }: NavLinkProps) {
   const pathname = usePathname();
   const active = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
 
@@ -25,6 +27,7 @@ export function NavLink({ href, label, icon, count, tone = 'critical', exact }: 
     <Link
       href={href}
       aria-current={active ? 'page' : undefined}
+      title={title ?? label}
       className={cn(
         'flex items-center gap-3 rounded-lg px-3 py-2.5 text-[15px] transition-colors',
         '[&_svg]:size-[18px] [&_svg]:shrink-0',

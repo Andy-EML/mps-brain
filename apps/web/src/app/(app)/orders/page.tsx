@@ -5,6 +5,7 @@ import { getReplenishmentStats, listReplenishmentQueue, type QueueTab } from '@m
 import { Breadcrumb } from '@/components/breadcrumb';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
+import { replenishmentErrorMessage } from '@/components/replenishment';
 import { ReplenishmentQueue } from '@/components/replenishment-queue';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
@@ -13,18 +14,6 @@ import { formatNumber, pluralise } from '@/lib/format';
 export const metadata = { title: 'Toner orders · MPS Dashboard' };
 
 const TABS: readonly QueueTab[] = ['review', 'in-progress', 'ordered', 'rejected'];
-
-/** `?error=` codes from the actions (`ReplenishmentErrorCode`), as sentences. */
-const ERRORS: Record<string, string> = {
-  not_pending: 'Someone else has already decided one of those proposals — the list has been refreshed.',
-  unlinked: 'That device is no longer linked to Vantage equipment, so it cannot be ordered for.',
-  bad_quantity: 'Quantities are whole numbers from 1 to 20.',
-  mixed_devices: 'Those proposals belong to different devices. Approve one device at a time.',
-  empty: 'Nothing was selected. Tick at least one cartridge first.',
-  not_found: 'That order or proposal no longer exists — the list has been refreshed.',
-  bad_state:
-    'That order has moved on since the page loaded, or is missing something it needs (an order that exists in Vantage needs its reference).',
-};
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -39,7 +28,7 @@ export default async function OrdersPage({ searchParams }: PageProps<'/orders'>)
   const requested = first(params.tab);
   const tab: QueueTab = TABS.includes(requested as QueueTab) ? (requested as QueueTab) : 'review';
   const errorCode = first(params.error);
-  const error = errorCode ? (ERRORS[errorCode] ?? 'That did not work. Refresh the page and try again.') : null;
+  const error = errorCode ? replenishmentErrorMessage(errorCode) : null;
 
   const db = getDb();
   const [devices, inProgress, stats, ordersEnabled] = await Promise.all([
@@ -76,11 +65,13 @@ export default async function OrdersPage({ searchParams }: PageProps<'/orders'>)
       />
 
       {ordersEnabled !== true ? (
+        // Live ordering is on the roadmap, not switched on: until then this is a record of decisions.
+        // Still keyed on app_state, so it goes away by itself if sending is ever enabled.
         <div role="status" className="mb-4 flex items-start gap-3 rounded-xl border border-warn/30 bg-warn/5 px-5 py-4">
           <PowerOff aria-hidden className="mt-0.5 size-[18px] shrink-0 text-warn" />
           <p className="text-[14px] text-warn">
-            Sending to Vantage is switched off. Approved orders wait in <em>In progress</em> until an administrator sets
-            VANTAGE_ORDERS_ENABLED on the worker.
+            Orders are not sent to Vantage yet — approving records the decision so the queue stays tidy. Raise the
+            order in Vantage as usual.
           </p>
         </div>
       ) : null}

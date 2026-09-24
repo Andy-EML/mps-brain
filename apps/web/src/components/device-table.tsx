@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { DeviceRow } from '@mps/db/queries';
 import { cn } from 'cn';
+import { CopyText } from '@/components/copy-text';
 import { SelectPageCheckbox, SelectRowCheckbox } from '@/components/device-selection';
 import { StatusDot, TONE_TEXT } from '@/components/status-dot';
 import { deviceNameAddsInfo, deviceStatusLabel } from '@/components/toner';
@@ -94,12 +95,15 @@ export function DeviceTable({
                     <StatusDot tone={status.tone} className="mt-[7px]" />
                     <div className="min-w-0">
                       <div className="truncate text-[15px] font-semibold">{customerName(row)}</div>
-                      <Link
-                        href={`/devices/${row.drmsId}`}
-                        className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground hover:text-brand hover:underline"
-                      >
-                        {deviceSerial(row)}
-                      </Link>
+                      <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <Link
+                          href={`/devices/${row.drmsId}`}
+                          className="truncate font-mono hover:text-brand hover:underline"
+                        >
+                          {deviceSerial(row)}
+                        </Link>
+                        {row.serial ? <CopyText text={row.serial} iconOnly /> : null}
+                      </div>
                       {showName ? (
                         <div className="truncate text-[13px] text-muted-foreground">{row.name}</div>
                       ) : null}

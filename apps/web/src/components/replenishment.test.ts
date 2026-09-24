@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { colourLabel, orderStatusTone, settingOrigin, sourceLabel, triggerLabel } from './replenishment';
+import {
+  colourLabel,
+  decisionBackPath,
+  orderStatusTone,
+  replenishmentErrorMessage,
+  settingOrigin,
+  sourceLabel,
+  supersededText,
+  triggerLabel,
+} from './replenishment';
 
 describe('colourLabel', () => {
   it('names each consumable', () => {
@@ -72,5 +81,33 @@ describe('settingOrigin', () => {
     expect(settingOrigin('device', orphan)).toBe('set on this device, 1 Jul 2026');
     expect(settingOrigin('customer', orphan)).toBe('customer setting');
     expect(settingOrigin('device', { deviceRow: null, customerRow: null })).toBe('set on this device');
+  });
+});
+
+describe('decisionBackPath', () => {
+  it('sends an error back to the page the decision was made on', () => {
+    expect(decisionBackPath(null, 'd1')).toBe('/orders');
+    expect(decisionBackPath('in-progress', 'd1')).toBe('/orders?tab=in-progress');
+    expect(decisionBackPath('device', 'abc/1')).toBe('/devices/abc%2F1');
+  });
+
+  it('falls back to the queue for a device page without a device', () => {
+    expect(decisionBackPath('device', '')).toBe('/orders');
+    expect(decisionBackPath('device', null)).toBe('/orders');
+  });
+});
+
+describe('replenishmentErrorMessage', () => {
+  it('turns a known code into a sentence and anything else into a generic one', () => {
+    expect(replenishmentErrorMessage('empty')).toMatch(/Nothing was selected/);
+    expect(replenishmentErrorMessage('what')).toBe('That did not work. Refresh the page and try again.');
+  });
+});
+
+describe('supersededText', () => {
+  it('says why the proposal was superseded, including an order raised in Vantage', () => {
+    expect(supersededText('ordered in Vantage (SO123)')).toBe('Superseded: ordered in Vantage (SO123)');
+    expect(supersededText('level recovered')).toBe('Superseded: level recovered');
+    expect(supersededText(null)).toBe('Superseded');
   });
 });

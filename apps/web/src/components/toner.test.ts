@@ -2,7 +2,6 @@ import type { DeviceRow } from '@mps/db/queries';
 import { describe, expect, it } from 'vitest';
 import {
   attentionRank,
-  deviceNameAddsInfo,
   deviceStatusLabel,
   hasRecentAlarm,
   tonerChannels,
@@ -232,40 +231,3 @@ describe('topIssueType', () => {
   });
 });
 
-describe('deviceNameAddsInfo', () => {
-  it('is false when there is no name to show', () => {
-    expect(deviceNameAddsInfo(null, 'bizhub C3351i')).toBe(false);
-    expect(deviceNameAddsInfo('   ', 'bizhub C3351i')).toBe(false);
-  });
-
-  it('is true when there is a name but no model to compare it against', () => {
-    expect(deviceNameAddsInfo('Reception', null)).toBe(true);
-  });
-
-  it('is false when the name is just the model with a version suffix', () => {
-    expect(deviceNameAddsInfo('ineo+458_Ver42', 'ineo+458')).toBe(false);
-    expect(deviceNameAddsInfo('ineo+458Ver2', 'ineo+458')).toBe(false);
-  });
-
-  it('is false when the name and the model are the same thing punctuated differently', () => {
-    expect(deviceNameAddsInfo('bizhub C3351i', 'bizhub-C3351i')).toBe(false);
-    expect(deviceNameAddsInfo('BIZHUB C3351I', 'bizhub C3351i')).toBe(false);
-  });
-
-  it('is false when the name is only part of the model', () => {
-    expect(deviceNameAddsInfo('C3351i', 'bizhub C3351i')).toBe(false);
-  });
-
-  it('is true when the name carries a site the model does not', () => {
-    expect(deviceNameAddsInfo('Little Heath School (Maths) C3351i', 'bizhub C3351i')).toBe(true);
-    expect(deviceNameAddsInfo('Reception', 'bizhub C458')).toBe(true);
-  });
-
-  it('keeps a site name that wraps the whole model, which plain containment would have hidden', () => {
-    expect(deviceNameAddsInfo('A-Plan (Southampton) MF3303', 'MF3303')).toBe(true);
-  });
-
-  it('only drops a trailing version suffix, not a version in the middle of a name', () => {
-    expect(deviceNameAddsInfo('Ver42 Studio ineo+458', 'ineo+458')).toBe(true);
-  });
-});

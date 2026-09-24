@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { ReplenishmentError, approveProposals, rejectProposals, resolveOrder, retryOrder } from '@mps/db/queries';
+import { decisionBackPath } from '@/components/replenishment';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 
@@ -12,7 +13,8 @@ import { getDb } from '@/lib/db';
  * never from the form. Any signed-in user may decide proposals.
  *
  * The logic lives in `@mps/db/queries` (`replenishment-actions.ts`); a `ReplenishmentError` comes
- * back to the page as `?error=<code>`, which the page turns into a sentence.
+ * back to the page as `?error=<code>`, which the page turns into a sentence. Approve and reject also
+ * run from the device page's Replenishment card, whose form says so with `back=device`.
  */
 async function run(fn: (userId: number) => Promise<void>, back: string): Promise<void> {
   const user = await requireUser();
@@ -51,14 +53,14 @@ export async function approveAction(formData: FormData): Promise<void> {
   await run(async (userId) => {
     await approveProposals(getDb(), { drmsId, items, userId });
     // Task 8 wakes the Vantage order sender here.
-  }, '/orders');
+  }, decisionBackPath(formData.get('back'), drmsId));
   revalidateDevice(formData);
 }
 
 export async function rejectAction(formData: FormData): Promise<void> {
   const proposalIds = formData.getAll('proposalId').map(Number).filter((n) => Number.isInteger(n) && n > 0);
   const note = String(formData.get('note') ?? '').trim().slice(0, 500) || undefined;
-  const back = formData.get('back') === 'in-progress' ? '/orders?tab=in-progress' : '/orders';
+  const back = decisionBackPath(formData.get('back'), formData.get('drmsId'));
   await run(async (userId) => {
     await rejectProposals(getDb(), { proposalIds, userId, note });
   }, back);

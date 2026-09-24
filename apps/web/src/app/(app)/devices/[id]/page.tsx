@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
@@ -15,11 +16,13 @@ import { cn } from 'cn';
 import { acknowledgeAlertAction } from '@/app/(app)/alerts/actions';
 import { AlarmGroups } from '@/components/alarm-groups';
 import { Breadcrumb } from '@/components/breadcrumb';
+import { CopyText } from '@/components/copy-text';
 import { CounterTable } from '@/components/counter-table';
 import { DetailCard, DetailRow } from '@/components/detail-card';
 import { counterHistoryRows, groupAlarms, meterChannels, rawString } from '@/components/device-detail';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
+import { replenishmentErrorMessage } from '@/components/replenishment';
 import { ReplenishmentCard } from '@/components/replenishment-card';
 import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
@@ -160,6 +163,9 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const showAllAlarms = first(query.alarms) === 'all';
   const settingsErrorCode = first(query.settingsError);
   const settingsError = settingsErrorCode ? settingsErrorMessage(settingsErrorCode) : null;
+  // From approve/reject on the Replenishment card (the same actions as /orders).
+  const decisionErrorCode = first(query.error);
+  const decisionError = decisionErrorCode ? replenishmentErrorMessage(decisionErrorCode) : null;
 
   const db = getDb();
   const detail = await getDevice(db, id);
@@ -190,7 +196,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const noReadingAlert = alerts.find((a) => a.type === 'offline');
   const reachingCsrc = hasRecentAlarm(device, now);
 
-  const name = device.name ?? device.serial ?? device.drmsId;
+  const name = detail.displayName;
   const customer = link.customerName ?? device.customerName ?? 'Unknown customer';
   const comServer = rawString(detail.drmsRaw, 'CsrcComServerId');
   const csrcId = rawString(detail.drmsRaw, 'CsrcId');
@@ -201,16 +207,24 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const hasCounters = channels.some((c) => device.toner[c.key] != null);
   const hasMeters = meters.some((m) => device.meters[m.key] != null);
 
-  const subtitle = [
+  const subtitleParts: React.ReactNode[] = [
     device.model,
-    device.serial ? `Serial ${device.serial}` : null,
+    device.serial ? (
+      <>
+        Serial <CopyText text={device.serial} />
+      </>
+    ) : null,
     device.status,
     // The brief writes this as "COM <server>", but every real value already begins with COM
     // (`COM_GB502`, `DEFCNTCOM_GB500`), and "COM COM_GB502" reads like a stutter.
     comServer,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  ].filter(Boolean);
+  const subtitle = subtitleParts.map((part, i) => (
+    <Fragment key={i}>
+      {i > 0 ? ' · ' : null}
+      {part}
+    </Fragment>
+  ));
 
   return (
     <>
@@ -379,7 +393,9 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
               settings={settings}
               proposals={replenishment.proposals}
               orders={replenishment.orders}
+              unlinked={vantageEquipmentId == null}
               error={settingsError}
+              decisionError={decisionError}
             />
           ) : null}
 

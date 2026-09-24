@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { EffectiveSettings, QueueOrder, QueueProposal, SettingSource } from '@mps/db/queries';
 import { updateDeviceSettingsAction } from '@/app/(app)/devices/[id]/actions';
 import { colourLabel, orderStatusLabel, orderStatusTone, settingOrigin, triggerLabel } from '@/components/replenishment';
+import { ReviewForm } from '@/components/replenishment-queue';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
 import { ToneBadge } from '@/components/tone-badge';
 import { formatDate } from '@/lib/format';
@@ -14,14 +15,17 @@ export interface ReplenishmentCardProps {
   /** This device's live proposals (pending or approved) and its latest MPS orders. */
   proposals: QueueProposal[];
   orders: QueueOrder[];
+  /** No current Vantage link: pending proposals can be rejected but not approved. */
+  unlinked: boolean;
   /** A sentence for `?settingsError=` from the Edit dialog's action. */
   error?: string | null;
+  /** A sentence for `?error=` from an approve/reject made on this card. */
+  decisionError?: string | null;
 }
 
 const COLOURS = ['black', 'cyan', 'magenta', 'yellow'] as const;
 
 const PROPOSAL_STATUS: Record<string, { text: string; href: string }> = {
-  pending: { text: 'Awaiting review', href: '/orders' },
   approved: { text: 'Approved', href: '/orders?tab=in-progress' },
 };
 
@@ -34,9 +38,21 @@ function orderHref(order: QueueOrder): string {
  * The device page's *Replenishment* card: the effective threshold per cartridge and the two
  * flags, each with where it came from (default, customer setting, or this device — with who set
  * it and when), an Edit dialog for the device-level overrides, and this device's live proposals
- * and MPS orders.
+ * and MPS orders. Pending proposals can be approved or rejected right here, with the queue's own
+ * form; approved ones link to where they sit on `/orders`.
  */
-export function ReplenishmentCard({ drmsId, isColour, settings, proposals, orders, error }: ReplenishmentCardProps) {
+export function ReplenishmentCard({
+  drmsId,
+  isColour,
+  settings,
+  proposals,
+  orders,
+  unlinked,
+  error,
+  decisionError,
+}: ReplenishmentCardProps) {
+  const pending = proposals.filter((p) => p.status === 'pending');
+  const decided = proposals.filter((p) => p.status !== 'pending');
   const colours = isColour ? COLOURS : (['black'] as const);
   // A value that comes from the customer links to that customer's row on the settings page.
   const customerHref =
@@ -97,23 +113,36 @@ export function ReplenishmentCard({ drmsId, isColour, settings, proposals, order
         />
       </dl>
 
+      {decisionError ? (
+        <p role="alert" className="mt-3 rounded-lg bg-critical/5 px-3 py-2 text-[13px] text-critical">
+          {decisionError}
+        </p>
+      ) : null}
+
       {proposals.length > 0 ? (
         <div className="mt-4">
           <h3 className="text-[13px] font-medium">Toner proposals</h3>
-          <ul className="mt-1">
-            {proposals.map((p) => {
-              const status = PROPOSAL_STATUS[p.status] ?? { text: p.status, href: '/orders' };
-              return (
-                <li key={p.id} className="border-b border-line/70 py-2 last:border-0">
-                  <Link href={status.href} className="block text-[13px] hover:underline">
-                    <span className="font-medium">{colourLabel(p.colour)}</span>
-                    <span className="text-muted-foreground"> · {triggerLabel(p)} · </span>
-                    <span className="text-brand">{status.text}</span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+          {pending.length > 0 ? (
+            <div className="mt-2">
+              <ReviewForm drmsId={drmsId} proposals={pending} unlinked={unlinked} back="device" />
+            </div>
+          ) : null}
+          {decided.length > 0 ? (
+            <ul className="mt-1">
+              {decided.map((p) => {
+                const status = PROPOSAL_STATUS[p.status] ?? { text: p.status, href: '/orders' };
+                return (
+                  <li key={p.id} className="border-b border-line/70 py-2 last:border-0">
+                    <Link href={status.href} className="block text-[13px] hover:underline">
+                      <span className="font-medium">{colourLabel(p.colour)}</span>
+                      <span className="text-muted-foreground"> · {triggerLabel(p)} · </span>
+                      <span className="text-brand">{status.text}</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
         </div>
       ) : null}
 
