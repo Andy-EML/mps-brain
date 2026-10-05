@@ -121,7 +121,7 @@ export default async function FleetOverviewPage() {
           <h2 className="text-[15px] font-medium">Devices</h2>
           <TonerLegend />
         </div>
-        <DeviceTable rows={preview.rows} now={now} emptyMessage="No devices have been synced yet." />
+        <DeviceTable from="fleet" rows={preview.rows} now={now} emptyMessage="No devices have been synced yet." />
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3.5">
           <p className="text-sm text-muted-foreground">
             Showing {formatNumber(preview.rows.length)} of {formatNumber(summary.devices)}{' '}

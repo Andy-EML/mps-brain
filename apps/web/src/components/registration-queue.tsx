@@ -16,6 +16,7 @@ import { customerMatchBadge, registrationStatusBadge, retryConfirmText } from '@
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { deviceHref } from '@/lib/device-origin';
 import { formatDateTime, formatNumber, pluralise } from '@/lib/format';
 
 export interface RegistrationQueueProps {
@@ -23,6 +24,8 @@ export interface RegistrationQueueProps {
   rows: RegistrationRow[];
   /** Set when a search narrowed the list, for the empty state. */
   search?: string;
+  /** This view's own URL (tab, search, page), so the device page's Back link returns to it. */
+  back?: string;
 }
 
 const EMPTY: Record<RegistrationTab, string> = {
@@ -41,7 +44,7 @@ const CELL = 'px-4 py-3.5 align-top';
  * count and the pending state of the buttons; every decision is a plain `<form>` posting to a
  * server action, so the page works the same after a refresh.
  */
-export function RegistrationQueue({ tab, rows, search }: RegistrationQueueProps) {
+export function RegistrationQueue({ tab, rows, search, back }: RegistrationQueueProps) {
   if (rows.length === 0) {
     return (
       <p className="px-5 py-12 text-center text-sm text-muted-foreground">
@@ -49,13 +52,13 @@ export function RegistrationQueue({ tab, rows, search }: RegistrationQueueProps)
       </p>
     );
   }
-  if (tab === 'awaiting') return <AwaitingForm rows={rows} />;
+  if (tab === 'awaiting') return <AwaitingForm rows={rows} back={back} />;
   return (
     <Table
       head={COLUMNS[tab]}
       rows={rows.map((row) => (
         <tr key={row.id} className="border-b border-line last:border-0">
-          <MachineCell row={row} />
+          <MachineCell row={row} back={back} />
           <CustomerCell row={row} />
           {tab === 'waiting' ? <WaitingCells row={row} /> : null}
           {tab === 'registered' ? <RegisteredCells row={row} /> : null}
@@ -94,13 +97,13 @@ function Table({ head, rows, lead }: { head: string[]; rows: ReactNode; lead?: R
   );
 }
 
-function MachineCell({ row }: { row: RegistrationRow }) {
+function MachineCell({ row, back }: { row: RegistrationRow; back?: string }) {
   return (
     <td className={CELL}>
       <div className="text-[14px] font-medium">{row.deviceName ?? row.model ?? row.drmsId}</div>
       {row.model && row.model !== row.deviceName ? <div className="text-[13px] text-muted-foreground">{row.model}</div> : null}
       <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        <Link href={`/devices/${row.drmsId}`} className="font-mono hover:text-brand hover:underline">
+        <Link href={deviceHref(row.drmsId, 'registrations', back)} className="font-mono hover:text-brand hover:underline">
           {row.serial ?? row.drmsId}
         </Link>
         {row.serial ? <CopyText text={row.serial} iconOnly /> : null}
@@ -134,7 +137,7 @@ function who(name: string | null, at: Date | null): string {
 
 /* ------------------------------------------------------- Awaiting approval */
 
-function AwaitingForm({ rows }: { rows: RegistrationRow[] }) {
+function AwaitingForm({ rows, back }: { rows: RegistrationRow[]; back?: string }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [ticked, setTicked] = useState(0);
   const decidable = rows.filter((r) => r.status === 'awaiting_approval');
@@ -176,7 +179,7 @@ function AwaitingForm({ rows }: { rows: RegistrationRow[] }) {
                 />
               ) : null}
             </td>
-            <MachineCell row={row} />
+            <MachineCell row={row} back={back} />
             <CustomerCell row={row} />
             <td className={cn(CELL, 'text-[13px] whitespace-nowrap text-muted-foreground')}>{formatDateTime(row.createdAt)}</td>
             <td className={cn(CELL, 'text-right')}>

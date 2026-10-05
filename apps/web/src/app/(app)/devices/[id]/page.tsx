@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
 import { notFound } from 'next/navigation';
 import {
   getCounterHistory,
@@ -29,7 +30,9 @@ import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { resolveDeviceOrigin } from '@/lib/device-origin';
 import { formatDateTime, formatNumber, formatRelative, pluralise } from '@/lib/format';
+import { hrefWith } from '@/lib/href';
 import { settingsErrorMessage } from '@/lib/settings-form';
 
 export const metadata = { title: 'Device · MPS Dashboard' };
@@ -161,6 +164,11 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const { id } = await params;
   const query = await searchParams;
   const showAllAlarms = first(query.alarms) === 'all';
+  // The list this page was opened from (`?from=orders&back=/orders?tab=rejected`), for the
+  // breadcrumb root and the Back link. Unknown or missing means the Devices list.
+  const fromParam = first(query.from);
+  const backParam = first(query.back);
+  const origin = resolveDeviceOrigin(fromParam, backParam);
   const settingsErrorCode = first(query.settingsError);
   const settingsError = settingsErrorCode ? settingsErrorMessage(settingsErrorCode) : null;
   // From approve/reject on the Replenishment card (the same actions as /orders).
@@ -230,8 +238,16 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
     <>
       <Breadcrumb
         className="mb-3"
-        items={[{ label: 'Fleet overview', href: '/' }, { label: customer }, { label: name }]}
+        items={[{ label: origin.label, href: origin.href }, { label: customer }, { label: name }]}
       />
+
+      <Link
+        href={origin.href}
+        className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-brand hover:underline"
+      >
+        <ArrowLeft aria-hidden className="size-3.5" />
+        Back to {origin.label}
+      </Link>
 
       {noReadingAlert ? (
         <NoMeterReadingBanner
@@ -312,7 +328,12 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
             action={
               hiddenCount > 0 || showAllAlarms ? (
                 <Link
-                  href={showAllAlarms ? `/devices/${id}` : `/devices/${id}?alarms=all`}
+                  // Keeps from/back, so the Back link still knows where this page was opened from.
+                  href={hrefWith(`/devices/${encodeURIComponent(id)}`, {
+                    alarms: showAllAlarms ? undefined : 'all',
+                    from: fromParam,
+                    back: backParam,
+                  })}
                   scroll={false}
                   className="text-sm font-medium text-brand hover:underline"
                 >

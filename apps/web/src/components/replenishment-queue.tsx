@@ -27,7 +27,9 @@ import { MAX_QUANTITY, approveAllFields, clampQuantity, reviewChips } from '@/co
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { deviceHref } from '@/lib/device-origin';
 import { formatDate, formatDateTime, formatPercent } from '@/lib/format';
+import { hrefWith } from '@/lib/href';
 
 export interface ReplenishmentQueueProps {
   tab: QueueTab;
@@ -63,7 +65,7 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
     <ul className="divide-y divide-line">
       {devices.map((device) => (
         <li key={device.drmsId} className="px-5 py-5">
-          <DeviceHeading device={device} />
+          <DeviceHeading device={device} back={hrefWith('/orders', { tab })} />
           {tab === 'in-progress' ? <InProgress device={device} /> : null}
           {tab === 'ordered' ? <Ordered device={device} /> : null}
           {tab === 'rejected' ? <Rejected device={device} /> : null}
@@ -73,14 +75,15 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
   );
 }
 
-function DeviceHeading({ device }: { device: QueueDevice }) {
+/** `back` is this tab's URL, so the device page's Back link returns to the same tab. */
+function DeviceHeading({ device, back }: { device: QueueDevice; back: string }) {
   const where = [device.customerName, device.location].filter(Boolean).join(' · ');
   // The fallback display name already ends in the model; an equipment Name usually does not.
   const showModel = device.model !== null && !device.displayName.includes(device.model);
   return (
     <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
       <div className="min-w-0">
-        <Link href={`/devices/${device.drmsId}`} className="text-[15px] font-medium text-brand hover:underline">
+        <Link href={deviceHref(device.drmsId, 'orders', back)} className="text-[15px] font-medium text-brand hover:underline">
           {device.displayName}
         </Link>
         {showModel ? <span className="ml-2 text-[13px] text-muted-foreground">{device.model}</span> : null}
@@ -192,7 +195,7 @@ function ReviewRow({ device }: { device: QueueDevice }) {
             <ReviewForm drmsId={device.drmsId} proposals={device.proposals} unlinked={unlinked} />
             <ReviewDetailPanel state={detail} proposals={device.proposals} onRetry={load} />
             <p className="mt-4 text-[13px]">
-              <Link href={`/devices/${device.drmsId}`} className="text-brand hover:underline">
+              <Link href={deviceHref(device.drmsId, 'orders')} className="text-brand hover:underline">
                 Open device page
               </Link>
             </p>

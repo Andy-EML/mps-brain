@@ -24,13 +24,19 @@ export type PagesSince =
   /** That colour never went out on this device (or it is not linked to Vantage). */
   | { kind: 'no-order' };
 
+/** A toner/waste line (shown as a colour chip), or anything else on the order as its text. */
+export type ReviewOrderLine =
+  | { kind: 'toner'; colour: OrderColour; quantity: number | null }
+  /** `text` is the line's Details, else its item description, else its part number. */
+  | { kind: 'other'; text: string; quantity: number | null };
+
 export interface ReviewOrder {
   vantageId: number;
   reference: string | null;
   orderDate: Date | null;
   open: boolean;
-  /** The order's toner/waste lines only, returned lines left out. */
-  lines: { colour: OrderColour; quantity: number | null }[];
+  /** Every line on the order, in Vantage's order, returned lines left out. */
+  lines: ReviewOrderLine[];
 }
 
 export interface ReviewAlarm {
@@ -61,7 +67,8 @@ export const PAGES_SINCE_WINDOW_DAYS = 45;
 export const STALE_READING_DAYS = 3;
 const ALARM_DAYS = 30;
 const ALARM_CATEGORIES = ['toner', 'waste', 'parts'];
-const ORDER_COUNT = 6;
+/** The last few Vantage sales orders of any kind — toner, parts, service. */
+const ORDER_COUNT = 4;
 /** Alarms scanned for page-count readings (all categories), newest first. */
 const ALARM_READING_LIMIT = 1000;
 
@@ -112,6 +119,25 @@ export function meterPoints(input: {
   return points.sort((x, y) => x.at.getTime() - y.at.getTime());
 }
 
+/** The words for a non-toner line, in the same order as the device page's order history. */
+function lineLabel(line: { details: string | null; itemDescription: string | null; itemPartNumber: string | null }): string {
+  for (const candidate of [line.details, line.itemDescription, line.itemPartNumber]) {
+    if (candidate != null && candidate.trim() !== '') return candidate.trim();
+  }
+  return 'Unnamed line';
+}
+
+function reviewLine(line: {
+  colour: string | null;
+  quantity: number | null;
+  details: string | null;
+  itemDescription: string | null;
+  itemPartNumber: string | null;
+}): ReviewOrderLine {
+  if (isOrderColour(line.colour)) return { kind: 'toner', colour: line.colour, quantity: line.quantity };
+  return { kind: 'other', text: lineLabel(line), quantity: line.quantity };
+}
+
 export async function getReviewDeviceDetail(db: Db, drmsId: string, now: Date = new Date()): Promise<ReviewDeviceDetail | null> {
   const detail = await getDevice(db, drmsId);
   if (!detail) return null;
@@ -133,15 +159,13 @@ export async function getReviewDeviceDetail(db: Db, drmsId: string, now: Date = 
   const lastReadingAt = detail.latestSnapshotAt ?? device.lastCounterAt;
   const readingStale = lastReadingAt === null || now.getTime() - lastReadingAt.getTime() > STALE_READING_DAYS * DAY;
 
-  const reviewOrders: ReviewOrder[] = [];
-  for (const o of orders?.orders ?? []) {
-    const lines = o.lines
-      .filter((l) => l.returnedDate === null && isOrderColour(l.colour))
-      .map((l) => ({ colour: l.colour as OrderColour, quantity: l.quantity }));
-    if (lines.length === 0) continue;
-    reviewOrders.push({ vantageId: o.vantageId, reference: o.reference, orderDate: o.orderDate, open: o.open, lines });
-    if (reviewOrders.length === ORDER_COUNT) break;
-  }
+  const reviewOrders: ReviewOrder[] = (orders?.orders ?? []).slice(0, ORDER_COUNT).map((o) => ({
+    vantageId: o.vantageId,
+    reference: o.reference,
+    orderDate: o.orderDate,
+    open: o.open,
+    lines: o.lines.filter((l) => l.returnedDate === null).map(reviewLine),
+  }));
 
   const since = now.getTime() - ALARM_DAYS * DAY;
   const reviewAlarms: ReviewAlarm[] = alarms

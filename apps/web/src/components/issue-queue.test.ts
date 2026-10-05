@@ -36,7 +36,7 @@ describe('issueDetailLines', () => {
     expect(issueDetailLines({ vantageIds: [7, 9] })).toEqual([{ label: 'Candidate Vantage ids', value: '7, 9' }]);
     // The holder is an opaque DRMS GUID, so it gets a link to that device's page.
     expect(issueDetailLines({ linkedDrmsId: 'd9', method: 'serial' })).toEqual([
-      { label: 'Vantage record already held by', value: 'd9', href: '/devices/d9' },
+      { label: 'Vantage record already held by', value: 'd9', href: '/devices/d9?from=issues' },
       { label: 'Match method', value: 'serial' },
     ]);
   });

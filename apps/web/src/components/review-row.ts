@@ -1,5 +1,5 @@
-import type { ReplenishColour } from '@mps/core';
-import type { PagesSince, QueueDevice, QueueProposal } from '@mps/db/queries';
+import type { OrderColour, ReplenishColour } from '@mps/core';
+import type { PagesSince, QueueDevice, QueueProposal, ReviewOrderLine } from '@mps/db/queries';
 // Relative, not `@/…`: Vitest has no `@/` alias and this module is unit-tested.
 import { formatDate, formatNumber, formatPercent } from '../lib/format';
 import { colourLabel } from './replenishment';
@@ -89,4 +89,39 @@ export function pagesSinceText(p: PagesSince): string {
     case 'no-order':
       return 'no previous order';
   }
+}
+
+/** Longest non-toner line text printed in the Review panel's order list; the hover has the rest. */
+const LINE_TEXT_MAX = 60;
+/** Non-toner lines printed per order; an order with more says how many it left out. */
+const OTHER_LINES_MAX = 3;
+
+export interface ReviewOrderLines {
+  /** Toner and waste lines, drawn as colour chips. */
+  toner: { colour: OrderColour; quantity: number | null }[];
+  /** Everything else (parts, service, staples…): short text, with the full text for the hover. */
+  other: { text: string; title: string }[];
+  /** Non-toner lines not printed. */
+  hidden: number;
+}
+
+/** One recent sales order's lines, as the Review panel prints them. */
+export function reviewOrderLines(lines: readonly ReviewOrderLine[]): ReviewOrderLines {
+  const toner: ReviewOrderLines['toner'] = [];
+  const other: ReviewOrderLines['other'] = [];
+  let hidden = 0;
+  for (const line of lines) {
+    if (line.kind === 'toner') {
+      toner.push({ colour: line.colour, quantity: line.quantity });
+      continue;
+    }
+    if (other.length === OTHER_LINES_MAX) {
+      hidden += 1;
+      continue;
+    }
+    const qty = line.quantity !== null && line.quantity > 1 ? ` ×${formatNumber(line.quantity)}` : '';
+    const short = line.text.length > LINE_TEXT_MAX ? `${line.text.slice(0, LINE_TEXT_MAX - 1).trimEnd()}…` : line.text;
+    other.push({ text: `${short}${qty}`, title: `${line.text}${qty}` });
+  }
+  return { toner, other, hidden };
 }

@@ -6,6 +6,7 @@ import { SelectPageCheckbox, SelectRowCheckbox } from '@/components/device-selec
 import { StatusDot, TONE_TEXT } from '@/components/status-dot';
 import { deviceStatusLabel } from '@/components/toner';
 import { TonerBars } from '@/components/toner-bar';
+import { deviceHref, type DeviceOriginKey } from '@/lib/device-origin';
 
 export interface DeviceTableProps {
   rows: DeviceRow[];
@@ -18,6 +19,10 @@ export interface DeviceTableProps {
    * `DeviceSelectionProvider`, which owns the selection.
    */
   selectable?: boolean;
+  /** The section this table sits on, for the device page's breadcrumb and Back link. */
+  from?: DeviceOriginKey;
+  /** This list's own URL (path + query), so Back returns to the same filter, search and page. */
+  back?: string;
 }
 
 const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
@@ -46,6 +51,8 @@ export function DeviceTable({
   emptyMessage = 'No devices match this view.',
   className,
   selectable = false,
+  from = 'devices',
+  back,
 }: DeviceTableProps) {
   if (rows.length === 0) {
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
@@ -99,7 +106,7 @@ export function DeviceTable({
                       <div className="truncate text-[15px] font-semibold">{customerName(row)}</div>
                       <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                         <Link
-                          href={`/devices/${row.drmsId}`}
+                          href={deviceHref(row.drmsId, from, back)}
                           className="truncate font-mono hover:text-brand hover:underline"
                         >
                           {deviceSerial(row)}

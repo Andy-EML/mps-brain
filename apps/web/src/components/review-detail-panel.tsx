@@ -2,10 +2,10 @@
 
 import type { ReactNode } from 'react';
 import type { ReplenishColour } from '@mps/core';
-import type { QueueProposal, ReviewDeviceDetail, ReviewTonerColour } from '@mps/db/queries';
+import type { QueueProposal, ReviewDeviceDetail, ReviewOrder, ReviewTonerColour } from '@mps/db/queries';
 import { cn } from 'cn';
 import { colourLabel } from '@/components/replenishment';
-import { pagesSinceText } from '@/components/review-row';
+import { pagesSinceText, reviewOrderLines } from '@/components/review-row';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerBar } from '@/components/toner-bar';
 import { formatDate, formatDateTime, formatNumber } from '@/lib/format';
@@ -31,7 +31,7 @@ export type DetailState =
   | { status: 'ready'; data: ReviewDeviceDetail | null };
 
 /**
- * Everything below the proposal lines in an open Review row: toner levels, recent toner orders,
+ * Everything below the proposal lines in an open Review row: toner levels, recent sales orders,
  * recent consumable alarms and pages printed since each proposed colour last went out. Loaded by
  * the row on first open (`loadReviewDetail`) and kept for the life of the page.
  */
@@ -111,28 +111,13 @@ export function ReviewDetailPanel({
         )}
       </Section>
 
-      <Section title="Recent toner orders">
+      <Section title="Recent sales orders">
         {d.orders.length === 0 ? (
-          <Empty>No toner orders in Vantage for this device.</Empty>
+          <Empty>No sales orders in Vantage for this device.</Empty>
         ) : (
-          <ul className="grid gap-1.5">
+          <ul className="grid gap-2.5">
             {d.orders.map((o) => (
-              <li key={o.vantageId} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
-                <span className="w-24 shrink-0 text-muted-foreground tabular-nums">{formatDate(o.orderDate)}</span>
-                <span className="w-24 shrink-0 font-mono">{o.reference ?? '—'}</span>
-                <span className="flex flex-wrap items-center gap-2">
-                  {o.lines.map((l, i) => (
-                    <span key={i} className="inline-flex items-center gap-1">
-                      <Swatch colour={l.colour} className="size-2.5" />
-                      {colourLabel(l.colour)}
-                      {l.quantity !== null && l.quantity !== 1 ? ` ×${formatNumber(l.quantity)}` : ''}
-                    </span>
-                  ))}
-                </span>
-                <ToneBadge tone={o.open ? 'warn' : 'muted'} dot={false} className="px-2 py-0.5 text-[11px]">
-                  {o.open ? 'Open' : 'Completed'}
-                </ToneBadge>
-              </li>
+              <RecentOrder key={o.vantageId} order={o} />
             ))}
           </ul>
         )}
@@ -159,6 +144,54 @@ export function ReviewDetailPanel({
         )}
       </Section>
     </div>
+  );
+}
+
+/**
+ * One recent sales order: date, reference and status on a header line that never wraps (the
+ * reference truncates first, so the badge stays put), then its lines underneath — toner and waste
+ * as colour chips, anything else as its text.
+ */
+function RecentOrder({ order: o }: { order: ReviewOrder }) {
+  const lines = reviewOrderLines(o.lines);
+  const hasLines = lines.toner.length > 0 || lines.other.length > 0;
+  return (
+    <li className="min-w-0 text-[13px]">
+      <div className="flex min-w-0 items-center gap-x-3">
+        <span className="w-24 shrink-0 text-muted-foreground tabular-nums">{formatDate(o.orderDate)}</span>
+        <span className="min-w-0 flex-1 truncate font-mono">{o.reference ?? `#${o.vantageId}`}</span>
+        <ToneBadge tone={o.open ? 'warn' : 'muted'} dot={false} className="shrink-0 px-2 py-0.5 text-[11px]">
+          {o.open ? 'Open' : 'Completed'}
+        </ToneBadge>
+      </div>
+      {hasLines ? (
+        <div className="mt-1 grid min-w-0 gap-0.5 sm:pl-27">
+          {lines.toner.length > 0 ? (
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {lines.toner.map((l, i) => (
+                <span key={i} className="inline-flex items-center gap-1">
+                  <Swatch colour={l.colour} className="size-2.5" />
+                  {colourLabel(l.colour)}
+                  {l.quantity !== null && l.quantity !== 1 ? ` ×${formatNumber(l.quantity)}` : ''}
+                </span>
+              ))}
+            </span>
+          ) : null}
+          {lines.other.map((l, i) => (
+            <span key={i} title={l.title} className="truncate text-muted-foreground">
+              {l.text}
+            </span>
+          ))}
+          {lines.hidden > 0 ? (
+            <span className="text-[12px] text-muted-foreground">
+              +{formatNumber(lines.hidden)} more {lines.hidden === 1 ? 'line' : 'lines'}
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-1 text-muted-foreground sm:pl-27">No lines on this order.</p>
+      )}
+    </li>
   );
 }
 

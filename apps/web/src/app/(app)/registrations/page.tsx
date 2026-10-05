@@ -130,7 +130,13 @@ export default async function RegistrationsPage({ searchParams }: PageProps<'/re
           </p>
         ) : null}
 
-        <RegistrationQueue key={`${tab}-${search ?? ''}-${page}`} tab={tab} rows={rows} search={search} />
+        <RegistrationQueue
+          key={`${tab}-${search ?? ''}-${page}`}
+          tab={tab}
+          rows={rows}
+          search={search}
+          back={hrefWith('/registrations', { tab: tabParam, search, page: page > 1 ? page : undefined })}
+        />
 
         <div className="border-t border-line px-5 py-3.5">
           <Pagination

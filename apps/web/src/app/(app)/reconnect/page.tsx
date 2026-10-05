@@ -20,6 +20,7 @@ import { SearchInput } from '@/components/search-input';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatDate, formatDateTime, formatNumber, pluralise } from '@/lib/format';
+import { deviceHref } from '@/lib/device-origin';
 import { hrefWith } from '@/lib/href';
 import { monitoringGroupLabel, parseReconnectFilter } from './filters';
 
@@ -71,6 +72,9 @@ export default async function ReconnectPage({ searchParams }: PageProps<'/reconn
       }),
     );
   }
+
+  // This view's own URL, for the device page's Back link.
+  const back = hrefWith('/reconnect', { search, filter: filterParam, page: page > 1 ? page : undefined });
 
   const tabs: FilterTab[] = [
     { value: 'all', label: <TabLabel label="All" count={counts.silent} /> },
@@ -147,9 +151,9 @@ export default async function ReconnectPage({ searchParams }: PageProps<'/reconn
             {search ? `No machines match “${search}”.` : EMPTY[filter]}
           </p>
         ) : filter === 'unmonitored' ? (
-          <UnmonitoredTable rows={rows} />
+          <UnmonitoredTable rows={rows} back={back} />
         ) : (
-          <SilentTable rows={rows} />
+          <SilentTable rows={rows} back={back} />
         )}
 
         <div className="border-t border-line px-5 py-3.5">
@@ -189,7 +193,8 @@ function CustomerCell({ row }: { row: ReconnectRow }) {
   );
 }
 
-function DeviceCells({ row }: { row: ReconnectRow }) {
+/** `back` is this list's own URL, so the device page's Back link returns to the same view. */
+function DeviceCells({ row, back }: { row: ReconnectRow; back: string }) {
   return (
     <>
       <td className="px-5 py-4 text-[14px]">{row.location ?? '—'}</td>
@@ -202,7 +207,7 @@ function DeviceCells({ row }: { row: ReconnectRow }) {
       </td>
       <td className="px-5 py-4">
         <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-          <Link href={`/devices/${row.drmsId}`} className="font-mono hover:text-brand hover:underline">
+          <Link href={deviceHref(row.drmsId, 'reconnect', back)} className="font-mono hover:text-brand hover:underline">
             {row.serial ?? row.drmsId}
           </Link>
           {row.serial ? <CopyText text={row.serial} iconOnly /> : null}
@@ -213,7 +218,7 @@ function DeviceCells({ row }: { row: ReconnectRow }) {
   );
 }
 
-function SilentTable({ rows }: { rows: ReconnectRow[] }) {
+function SilentTable({ rows, back }: { rows: ReconnectRow[]; back: string }) {
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[880px] border-collapse text-left">
@@ -243,7 +248,7 @@ function SilentTable({ rows }: { rows: ReconnectRow[] }) {
           {rows.map((row) => (
             <tr key={row.drmsId} className="border-b border-line align-top last:border-0">
               <CustomerCell row={row} />
-              <DeviceCells row={row} />
+              <DeviceCells row={row} back={back} />
               <td className="px-5 py-4 text-right">
                 <div className="text-[14px] whitespace-nowrap">
                   {formatDateTime(row.lastContactAt)}
@@ -268,7 +273,7 @@ function SilentTable({ rows }: { rows: ReconnectRow[] }) {
 }
 
 /** Grouped by `registeredInDrms`, which is how the query sorts them. */
-function UnmonitoredTable({ rows }: { rows: ReconnectRow[] }) {
+function UnmonitoredTable({ rows, back }: { rows: ReconnectRow[]; back: string }) {
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[880px] border-collapse text-left">
@@ -320,7 +325,7 @@ function UnmonitoredTable({ rows }: { rows: ReconnectRow[] }) {
                 ) : null}
                 <tr className="border-b border-line align-top last:border-0">
                   <CustomerCell row={row} />
-                  <DeviceCells row={row} />
+                  <DeviceCells row={row} back={back} />
                   <td className="px-5 py-4 text-[14px] whitespace-nowrap">
                     {formatDate(row.firstConnectedAt)}
                   </td>

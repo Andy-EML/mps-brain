@@ -125,7 +125,7 @@ describe('getReviewDeviceDetail', () => {
       { vantageId: 11, salesOrderId: 1, vantageEquipmentId: 100, quantity: '1', colour: 'black', raw: {} },
       { vantageId: 21, salesOrderId: 2, vantageEquipmentId: 100, quantity: '2', colour: 'cyan', raw: {} },
       { vantageId: 31, salesOrderId: 3, vantageEquipmentId: 100, quantity: '1', colour: 'black', raw: {} },
-      { vantageId: 41, salesOrderId: 4, vantageEquipmentId: 100, quantity: '1', colour: 'unknown', raw: {} },
+      { vantageId: 41, salesOrderId: 4, vantageEquipmentId: 100, quantity: '1', colour: 'unknown', details: 'Engineer visit', raw: {} },
     ]);
 
     await t.db.insert(deviceAlarms).values([
@@ -162,11 +162,56 @@ describe('getReviewDeviceDetail', () => {
     expect(Object.keys(detail.pagesSince)).toEqual(['black']);
   });
 
-  it('lists toner orders newest first, without deleted orders or orders with no toner line', async () => {
+  it('lists sales orders of any kind newest first, without deleted orders', async () => {
     const detail = (await getReviewDeviceDetail(t.db, 'col', NOW))!;
     expect(detail.orders.map((o) => [o.reference, o.open, o.lines])).toEqual([
-      ['SO2', true, [{ colour: 'cyan', quantity: 2 }]],
-      ['SO1', false, [{ colour: 'black', quantity: 1 }]],
+      ['SO-SERVICE', true, [{ kind: 'other', text: 'Engineer visit', quantity: 1 }]],
+      ['SO2', true, [{ kind: 'toner', colour: 'cyan', quantity: 2 }]],
+      ['SO1', false, [{ kind: 'toner', colour: 'black', quantity: 1 }]],
+    ]);
+  });
+
+  it('keeps only the last four orders, with toner, part and empty orders alike', async () => {
+    await t.db.insert(vantageSalesOrders).values([
+      { vantageId: 5, reference: 'SO-PARTS', orderDate: ago(6), completedDate: ago(5), vantageEquipmentId: 100, raw: {} },
+      { vantageId: 6, reference: 'SO-EMPTY', orderDate: ago(3), vantageEquipmentId: 100, raw: {} },
+      // Linked only through its line, as Vantage sometimes does.
+      { vantageId: 7, reference: 'SO-MIX', orderDate: ago(2), raw: {} },
+    ]);
+    await t.db.insert(vantageSalesOrderLines).values([
+      { vantageId: 51, salesOrderId: 5, vantageEquipmentId: 100, quantity: '1', colour: 'unknown', details: '  Drum unit DR-316  ', itemDescription: 'Drum', raw: {} },
+      { vantageId: 52, salesOrderId: 5, vantageEquipmentId: 100, quantity: '2', itemDescription: 'Fuser', raw: {} },
+      { vantageId: 53, salesOrderId: 5, vantageEquipmentId: 100, quantity: '1', itemPartNumber: 'A0X5150', raw: {} },
+      { vantageId: 54, salesOrderId: 5, vantageEquipmentId: 100, quantity: '1', colour: 'black', returnedDate: ago(4), raw: {} },
+      { vantageId: 55, salesOrderId: 5, vantageEquipmentId: 100, quantity: null, raw: {} },
+      { vantageId: 71, salesOrderId: 7, vantageEquipmentId: 100, quantity: '1', colour: 'black', raw: {} },
+      { vantageId: 72, salesOrderId: 7, vantageEquipmentId: 100, quantity: '1', colour: 'waste', raw: {} },
+      { vantageId: 73, salesOrderId: 7, vantageEquipmentId: 100, quantity: '1', details: 'Staples', raw: {} },
+    ]);
+    const detail = (await getReviewDeviceDetail(t.db, 'col', NOW))!;
+    expect(detail.orders.map((o) => [o.reference, o.open, o.lines])).toEqual([
+      [
+        'SO-MIX',
+        true,
+        [
+          { kind: 'toner', colour: 'black', quantity: 1 },
+          { kind: 'toner', colour: 'waste', quantity: 1 },
+          { kind: 'other', text: 'Staples', quantity: 1 },
+        ],
+      ],
+      ['SO-EMPTY', true, []],
+      [
+        'SO-PARTS',
+        false,
+        // Details first, then the item description, then the part number; returned lines left out.
+        [
+          { kind: 'other', text: 'Drum unit DR-316', quantity: 1 },
+          { kind: 'other', text: 'Fuser', quantity: 2 },
+          { kind: 'other', text: 'A0X5150', quantity: 1 },
+          { kind: 'other', text: 'Unnamed line', quantity: null },
+        ],
+      ],
+      ['SO-SERVICE', true, [{ kind: 'other', text: 'Engineer visit', quantity: 1 }]],
     ]);
   });
 

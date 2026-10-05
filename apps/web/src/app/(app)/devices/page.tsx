@@ -105,6 +105,8 @@ export default async function DevicesPage({ searchParams }: PageProps<'/devices'
 
           <DeviceTable
             selectable
+            from="devices"
+            back={hrefWith('/devices', { search, filter: filterParam, page: page > 1 ? page : undefined })}
             rows={rows}
             now={now}
             emptyMessage={search ? `No devices match “${search}”.` : EMPTY[filter]}

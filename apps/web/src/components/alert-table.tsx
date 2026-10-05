@@ -5,6 +5,7 @@ import { cn } from 'cn';
 import { acknowledgeAlertAction } from '@/app/(app)/alerts/actions';
 import { ToneBadge } from '@/components/tone-badge';
 import type { Tone } from '@/components/toner';
+import { deviceHref } from '@/lib/device-origin';
 import { formatDateTime, formatGap, formatRelative } from '@/lib/format';
 
 export interface AlertTableProps {
@@ -13,6 +14,8 @@ export interface AlertTableProps {
   now?: Date;
   emptyMessage?: string;
   className?: string;
+  /** This list's own URL (path + query), so the device page's Back link returns to the same tab. */
+  back?: string;
 }
 
 const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
@@ -43,7 +46,13 @@ function deviceLabel(row: AlertRow): string {
  * The alerts table. A server component throughout: Acknowledge is a plain `<form>` posting to a
  * server action, so it needs no JavaScript and its feedback is the row moving to another tab.
  */
-export function AlertTable({ rows, now = new Date(), emptyMessage = 'No alerts in this view.', className }: AlertTableProps) {
+export function AlertTable({
+  rows,
+  now = new Date(),
+  emptyMessage = 'No alerts in this view.',
+  className,
+  back,
+}: AlertTableProps) {
   if (rows.length === 0) {
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
   }
@@ -78,7 +87,7 @@ export function AlertTable({ rows, now = new Date(), emptyMessage = 'No alerts i
             return (
               <tr key={row.id} className="border-b border-line last:border-b-0">
                 <td className={CELL}>
-                  <Link href={`/devices/${row.drmsId}`} className="text-sm font-medium text-brand hover:underline">
+                  <Link href={deviceHref(row.drmsId, 'alerts', back)} className="text-sm font-medium text-brand hover:underline">
                     {deviceLabel(row)}
                   </Link>
                   <span className="mt-0.5 block font-mono text-xs text-muted-foreground">{row.serial ?? row.drmsId}</span>

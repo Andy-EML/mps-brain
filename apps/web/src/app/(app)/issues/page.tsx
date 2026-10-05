@@ -110,7 +110,11 @@ export default async function IssuesPage({ searchParams }: PageProps<'/issues'>)
           />
         </div>
 
-        <IssueTable rows={rows} emptyMessage={emptyMessage(type, status)} />
+        <IssueTable
+          rows={rows}
+          emptyMessage={emptyMessage(type, status)}
+          back={hrefWith('/issues', { type: typeParam, status: statusParam, page: page > 1 ? page : undefined })}
+        />
 
         <div className="border-t border-line px-5 py-3.5">
           <Pagination

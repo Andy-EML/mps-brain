@@ -1,3 +1,5 @@
+// Relative, not `@/…`: Vitest has no `@/` alias and this module is unit-tested.
+import { deviceHref } from '../lib/device-origin';
 import { issueTypeLabel, type Tone } from './toner';
 
 /**
@@ -83,7 +85,7 @@ function humanise(key: string): string {
  * Flattens an issue's `details` jsonb into labelled lines. Unknown keys are humanised rather than
  * dropped, so a new issue type the linker starts raising is still readable here on day one.
  */
-export function issueDetailLines(details: unknown): DetailLine[] {
+export function issueDetailLines(details: unknown, back?: string): DetailLine[] {
   if (details === null || typeof details !== 'object' || Array.isArray(details)) return [];
 
   const lines: DetailLine[] = [];
@@ -95,7 +97,7 @@ export function issueDetailLines(details: unknown): DetailLine[] {
       label: DETAIL_LABELS[key] ?? humanise(key),
       value: key === 'reason' ? (REASONS[value] ?? value) : value,
       // A DRMS id on its own is an opaque GUID; linked, it answers "which device is that?".
-      ...(key === 'linkedDrmsId' ? { href: `/devices/${value}` } : {}),
+      ...(key === 'linkedDrmsId' ? { href: deviceHref(value, 'issues', back) } : {}),
     });
   }
   return lines;

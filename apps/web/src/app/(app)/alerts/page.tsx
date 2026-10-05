@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/page-header';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber, pluralise } from '@/lib/format';
+import { hrefWith } from '@/lib/href';
 
 export const metadata = { title: 'Alerts · MPS Dashboard' };
 
@@ -99,7 +100,11 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
       </p>
 
       <section className="rounded-xl border border-line bg-card">
-        <AlertTable rows={rows} emptyMessage={EMPTY[status]} />
+        <AlertTable
+          rows={rows}
+          emptyMessage={EMPTY[status]}
+          back={hrefWith('/alerts', { status: status === DEFAULT_STATUS ? undefined : status })}
+        />
         {rows.length === LIMIT ? (
           <p className="border-t border-line px-5 py-3.5 text-xs text-muted-foreground">
             Showing the {formatNumber(LIMIT)} most recent alerts.

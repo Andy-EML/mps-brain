@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { QueueDevice, QueueProposal } from '@mps/db/queries';
-import { approveAllFields, pagesSinceText, reviewChips } from './review-row';
+import { approveAllFields, pagesSinceText, reviewChips, reviewOrderLines } from './review-row';
 
 const proposal = (over: Partial<QueueProposal> = {}): QueueProposal => ({
   id: 1,
@@ -94,5 +94,42 @@ describe('pagesSinceText', () => {
     expect(pagesSinceText({ kind: 'no-reading', orderDate })).toBe('no reading at order time (1 Aug 2026)');
     expect(pagesSinceText({ kind: 'meter-reset', orderDate })).toBe('meter reset? (ordered 1 Aug 2026)');
     expect(pagesSinceText({ kind: 'no-order' })).toBe('no previous order');
+  });
+});
+
+describe('reviewOrderLines', () => {
+  it('splits toner/waste chips from the other lines, in order', () => {
+    const out = reviewOrderLines([
+      { kind: 'toner', colour: 'black', quantity: 1 },
+      { kind: 'other', text: 'Drum unit', quantity: 1 },
+      { kind: 'toner', colour: 'waste', quantity: 2 },
+      { kind: 'other', text: 'Fuser', quantity: 3 },
+      { kind: 'other', text: 'No quantity', quantity: null },
+    ]);
+    expect(out.toner).toEqual([
+      { colour: 'black', quantity: 1 },
+      { colour: 'waste', quantity: 2 },
+    ]);
+    expect(out.other).toEqual([
+      { text: 'Drum unit', title: 'Drum unit' },
+      { text: 'Fuser ×3', title: 'Fuser ×3' },
+      { text: 'No quantity', title: 'No quantity' },
+    ]);
+    expect(out.hidden).toBe(0);
+  });
+
+  it('shortens a long line and keeps the full text for the hover', () => {
+    const long = 'Engineer visit to replace the fuser unit and clean the paper path after repeated jams on tray 2';
+    const [line] = reviewOrderLines([{ kind: 'other', text: long, quantity: 2 }]).other;
+    expect(line!.text.length).toBeLessThanOrEqual(60 + ' ×2'.length);
+    expect(line!.text.endsWith('… ×2')).toBe(true);
+    expect(line!.title).toBe(`${long} ×2`);
+  });
+
+  it('shows at most three other lines and counts the rest', () => {
+    const lines = ['a', 'b', 'c', 'd', 'e'].map((text) => ({ kind: 'other' as const, text, quantity: 1 }));
+    const out = reviewOrderLines(lines);
+    expect(out.other.map((l) => l.text)).toEqual(['a', 'b', 'c']);
+    expect(out.hidden).toBe(2);
   });
 });

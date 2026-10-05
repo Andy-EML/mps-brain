@@ -6,6 +6,7 @@ import { setIssueStatusAction, unlinkDeviceAction } from '@/app/(app)/issues/act
 import { LinkPicker } from '@/components/link-picker';
 import { ToneBadge } from '@/components/tone-badge';
 import { canLink, canUnlink, issueDetailLines, issueTone, issueTypeTitle } from '@/components/issue-queue';
+import { deviceHref } from '@/lib/device-origin';
 import { formatDate, formatRelative } from '@/lib/format';
 
 export interface IssueTableProps {
@@ -14,6 +15,8 @@ export interface IssueTableProps {
   now?: Date;
   emptyMessage?: string;
   className?: string;
+  /** This list's own URL (path + query), so the device page's Back link returns to the same tab. */
+  back?: string;
 }
 
 const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
@@ -39,7 +42,13 @@ function StatusPill({ status }: { status: string }) {
  * is `LinkPicker`; Ignore, Reopen and Unlink are plain forms posting to server actions, so they
  * work without JavaScript and give their feedback by the row moving out of the view.
  */
-export function IssueTable({ rows, now = new Date(), emptyMessage = 'No issues match this view.', className }: IssueTableProps) {
+export function IssueTable({
+  rows,
+  now = new Date(),
+  emptyMessage = 'No issues match this view.',
+  className,
+  back,
+}: IssueTableProps) {
   if (rows.length === 0) {
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
   }
@@ -68,7 +77,7 @@ export function IssueTable({ rows, now = new Date(), emptyMessage = 'No issues m
         </thead>
         <tbody>
           {rows.map((row) => {
-            const details = issueDetailLines(row.details);
+            const details = issueDetailLines(row.details, back);
             return (
               <tr key={row.id} className="border-b border-line last:border-b-0">
                 <td className={CELL}>
@@ -97,7 +106,7 @@ export function IssueTable({ rows, now = new Date(), emptyMessage = 'No issues m
                 <td className={CELL}>
                   {row.drmsId ? (
                     <>
-                      <Link href={`/devices/${row.drmsId}`} className="text-sm font-medium text-brand hover:underline">
+                      <Link href={deviceHref(row.drmsId, 'issues', back)} className="text-sm font-medium text-brand hover:underline">
                         {deviceLabel(row)}
                       </Link>
                       <span className="mt-0.5 block font-mono text-xs text-muted-foreground">
