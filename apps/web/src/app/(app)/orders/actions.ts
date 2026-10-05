@@ -2,7 +2,15 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { ReplenishmentError, approveProposals, rejectProposals, resolveOrder, retryOrder } from '@mps/db/queries';
+import {
+  ReplenishmentError,
+  approveProposals,
+  getReviewDeviceDetail,
+  rejectProposals,
+  resolveOrder,
+  retryOrder,
+  type ReviewDeviceDetail,
+} from '@mps/db/queries';
 import { decisionBackPath } from '@/components/replenishment';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
@@ -85,4 +93,14 @@ export async function retryOrderAction(formData: FormData): Promise<void> {
     // Task 8 wakes the Vantage order sender here.
   }, '/orders?tab=in-progress');
   revalidateDevice(formData);
+}
+
+/**
+ * The Review tab's device detail panel, fetched when a row is first opened. Read-only, but still a
+ * public POST endpoint, so it checks the session like the write actions above.
+ */
+export async function loadReviewDetail(drmsId: string): Promise<ReviewDeviceDetail | null> {
+  await requireUser();
+  if (typeof drmsId !== 'string' || drmsId === '' || drmsId.length > 200) return null;
+  return getReviewDeviceDetail(getDb(), drmsId);
 }

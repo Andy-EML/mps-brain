@@ -3,10 +3,16 @@
 import { useState } from 'react';
 import { useFormStatus } from 'react-dom';
 import Link from 'next/link';
-import { Minus, Plus } from 'lucide-react';
+import { BellRing, ChevronRight, Minus, Plus } from 'lucide-react';
 import type { QueueDevice, QueueOrder, QueueProposal, QueueTab } from '@mps/db/queries';
 import { cn } from 'cn';
-import { approveAction, rejectAction, resolveOrderAction, retryOrderAction } from '@/app/(app)/orders/actions';
+import {
+  approveAction,
+  loadReviewDetail,
+  rejectAction,
+  resolveOrderAction,
+  retryOrderAction,
+} from '@/app/(app)/orders/actions';
 import { CopyText } from '@/components/copy-text';
 import {
   colourLabel,
@@ -16,13 +22,12 @@ import {
   supersededText,
   triggerLabel,
 } from '@/components/replenishment';
+import { ReviewDetailPanel, Swatch, type DetailState } from '@/components/review-detail-panel';
+import { MAX_QUANTITY, approveAllFields, clampQuantity, reviewChips } from '@/components/review-row';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatDate, formatDateTime, formatPercent } from '@/lib/format';
-
-/** Mirrors `MAX_ORDER_QUANTITY` in `@mps/db` (not imported: that module is server-side). */
-const MAX_QUANTITY = 20;
 
 export interface ReplenishmentQueueProps {
   tab: QueueTab;
@@ -45,14 +50,20 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
   if (devices.length === 0) {
     return <p className="px-5 py-12 text-center text-sm text-muted-foreground">{EMPTY[tab]}</p>;
   }
+  if (tab === 'review') {
+    return (
+      <ul className="divide-y divide-line">
+        {devices.map((device) => (
+          <ReviewRow key={device.drmsId} device={device} />
+        ))}
+      </ul>
+    );
+  }
   return (
     <ul className="divide-y divide-line">
       {devices.map((device) => (
         <li key={device.drmsId} className="px-5 py-5">
           <DeviceHeading device={device} />
-          {tab === 'review' ? (
-            <ReviewForm drmsId={device.drmsId} proposals={device.proposals} unlinked={device.vantageEquipmentId === null} />
-          ) : null}
           {tab === 'in-progress' ? <InProgress device={device} /> : null}
           {tab === 'ordered' ? <Ordered device={device} /> : null}
           {tab === 'rejected' ? <Rejected device={device} /> : null}
@@ -80,19 +91,6 @@ function DeviceHeading({ device }: { device: QueueDevice }) {
   );
 }
 
-const SWATCH: Record<QueueProposal['colour'], string> = {
-  black: 'bg-toner-black',
-  cyan: 'bg-toner-cyan',
-  magenta: 'bg-toner-magenta',
-  yellow: 'bg-toner-yellow',
-  waste: 'bg-toner-waste',
-};
-
-/** The small square from the mockup's cartridge list. */
-function Swatch({ colour }: { colour: QueueProposal['colour'] }) {
-  return <span aria-hidden className={cn('size-3 shrink-0 rounded-[3px]', SWATCH[colour])} />;
-}
-
 /** What is already known about orders for this colour: an open one outranks the last one. */
 function orderContext(p: QueueProposal): { text: string; open: boolean } | null {
   if (p.openOrder) {
@@ -107,6 +105,114 @@ function orderContext(p: QueueProposal): { text: string; open: boolean } | null 
 }
 
 /* ---------------------------------------------------------------- Review */
+
+/**
+ * One device on the Review tab as an accordion row: a one-line summary (name, where, a chip per
+ * proposed colour, serial, Approve all) that opens onto the proposal lines and the device detail.
+ * The detail is fetched on first open and kept; the proposal form stays mounted once opened, so
+ * collapsing a row does not lose an edited quantity.
+ */
+function ReviewRow({ device }: { device: QueueDevice }) {
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<DetailState | null>(null);
+  const panelId = `review-panel-${device.drmsId}`;
+  const unlinked = device.vantageEquipmentId === null;
+  const where = [device.customerName, device.location].filter(Boolean).join(' · ');
+  const showModel = device.model !== null && !device.displayName.includes(device.model);
+
+  function load() {
+    setDetail({ status: 'loading' });
+    loadReviewDetail(device.drmsId).then(
+      (data) => setDetail({ status: 'ready', data }),
+      () => setDetail({ status: 'error' }),
+    );
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && detail === null) load();
+  }
+
+  return (
+    <li className="px-5 py-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={toggle}
+          className="-mx-1 flex min-w-0 flex-1 items-center gap-3 rounded-md px-1 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
+        >
+          <ChevronRight
+            aria-hidden
+            className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">
+              <span className="text-[15px] font-medium">{device.displayName}</span>
+              {showModel ? <span className="ml-2 text-[13px] text-muted-foreground">{device.model}</span> : null}
+            </span>
+            {where ? <span className="block truncate text-[13px] text-muted-foreground">{where}</span> : null}
+          </span>
+          <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {reviewChips(device.proposals).map((chip) => (
+              <span
+                key={chip.key}
+                title={chip.label}
+                className="inline-flex items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-xs tabular-nums"
+              >
+                <Swatch colour={chip.colour} className="size-2.5" />
+                <span aria-hidden>
+                  {chip.letter}
+                  {chip.levelText ? ` ${chip.levelText}` : ''}
+                </span>
+                {chip.alarm ? <BellRing aria-hidden className="size-3 text-warn" /> : null}
+                <span className="sr-only">{chip.label}</span>
+              </span>
+            ))}
+          </span>
+        </button>
+        {device.serial ? <CopyText text={device.serial} className="text-xs text-muted-foreground" /> : null}
+        <form action={approveAction}>
+          {approveAllFields(device.drmsId, device.proposals).map(([name, value], i) => (
+            <input key={i} type="hidden" name={name} value={value} />
+          ))}
+          <ApproveAllButton unlinked={unlinked} count={device.proposals.length} name={device.displayName} />
+        </form>
+      </div>
+      <div id={panelId} hidden={!open} className="pt-3 pb-2 pl-7">
+        {detail !== null ? (
+          <>
+            <ReviewForm drmsId={device.drmsId} proposals={device.proposals} unlinked={unlinked} />
+            <ReviewDetailPanel state={detail} proposals={device.proposals} onRetry={load} />
+            <p className="mt-4 text-[13px]">
+              <Link href={`/devices/${device.drmsId}`} className="text-brand hover:underline">
+                Open device page
+              </Link>
+            </p>
+          </>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function ApproveAllButton({ unlinked, count, name }: { unlinked: boolean; count: number; name: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <Button
+      type="submit"
+      size="sm"
+      disabled={pending || unlinked}
+      title={unlinked ? 'Not linked to Vantage equipment' : undefined}
+      aria-label={`Approve all ${count} for ${name}`}
+      className="bg-brand hover:bg-brand/90"
+    >
+      {pending ? 'Approving…' : 'Approve all'}
+    </Button>
+  );
+}
 
 export interface ReviewFormProps {
   drmsId: string;
@@ -176,10 +282,6 @@ function ProposalRow({ proposal: p }: { proposal: QueueProposal }) {
       <Stepper id={p.id} value={quantity} onChange={setQuantity} label={colourLabel(p.colour)} />
     </div>
   );
-}
-
-function clampQuantity(n: number): number {
-  return Number.isFinite(n) ? Math.min(MAX_QUANTITY, Math.max(1, Math.round(n))) : 1;
 }
 
 /**
