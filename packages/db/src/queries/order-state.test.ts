@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { drmsEquipment, replenishmentOrders, replenishmentProposals, vantageSalesOrderLines, vantageSalesOrders } from '../schema';
 import { createTestDb, type TestDb } from '../testing';
@@ -70,6 +71,19 @@ describe('getOrderStates', () => {
     const s = (await getOrderStates(t.db, [100], NOW)).get(100)!;
     expect(s.black.open).toBeNull();
     expect(s.cyan.open).toMatchObject({ source: 'mps' });
+  });
+
+  it('sees a colourless mono-device toner order as black (the classifyOrderLine mono fallback)', async () => {
+    // Reclassified by the mono-device fallback (colourSource: 'mono-device'), not a colour word.
+    await order(9, { eq: 100, completed: null, date: d('2026-09-20') }, [{ colour: 'black' }]);
+    const [line] = await t.db.select().from(vantageSalesOrderLines).where(eq(vantageSalesOrderLines.vantageId, 90));
+    await t.db
+      .update(vantageSalesOrderLines)
+      .set({ colourSource: 'mono-device' })
+      .where(eq(vantageSalesOrderLines.vantageId, line!.vantageId));
+
+    const s = (await getOrderStates(t.db, [100], NOW)).get(100)!;
+    expect(s.black.open).toEqual({ reference: 'SO9', orderDate: d('2026-09-20'), source: 'vantage' });
   });
 
   it('a newer open mps order beats an older completed vantage order for `last`', async () => {

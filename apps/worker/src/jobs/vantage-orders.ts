@@ -10,8 +10,10 @@ import {
   getNumber,
   getString,
   parseApiDate,
+  type OrderLineContext,
 } from '@mps/core';
 import { excluded, vantageSalesOrderLines, vantageSalesOrders, type Db } from '@mps/db';
+import { getDeviceIsColourByVantageEquipmentIds } from '@mps/db/queries';
 import { QUEUES } from '@mps/queue';
 import type { SalesOrderListOptions, VantageClient, VantageRecord } from '@mps/vantage';
 import { inArray } from 'drizzle-orm';
@@ -67,13 +69,14 @@ export function mapSalesOrderLine(
   raw: VantageRecord,
   salesOrderId: number,
   syncedAt: Date,
+  context?: OrderLineContext,
 ): typeof vantageSalesOrderLines.$inferInsert {
   const item = getField(raw, 'Item');
   const details = getString(raw, 'Details');
   const itemDescription = getString(item, 'Description');
   const partNumber = getString(item, 'PartNumber');
   const quantity = getNumber(raw, 'Quantity');
-  const { colour, source } = classifyOrderLine({ details, itemDescription, partNumber });
+  const { colour, source } = classifyOrderLine({ details, itemDescription, partNumber }, context);
 
   return {
     vantageId: requireId(raw, 'sales order line'),
@@ -127,16 +130,34 @@ export async function runVantageOrders(deps: VantageOrdersDeps): Promise<JobResu
     throw err;
   }
 
-  const orders = fetched.map((raw) => {
+  const headers = fetched.map((raw) => {
     const header = mapSalesOrder(raw, startedAt);
     const rawLines = getField(raw, 'Lines');
-    return {
-      header,
-      lines: (Array.isArray(rawLines) ? (rawLines as VantageRecord[]) : []).map((l) =>
-        mapSalesOrderLine(l, header.vantageId, startedAt),
-      ),
-    };
+    return { header, rawLines: Array.isArray(rawLines) ? (rawLines as VantageRecord[]) : [] };
   });
+
+  // A line's own EquipmentId wins over the order header's, matching how `getOrderStates` resolves
+  // which device a line belongs to (`@mps/db` `order-state.ts`), so the colour context lines up
+  // with the device a reader would actually see the order against.
+  const equipmentIds = new Set<number>();
+  for (const { header, rawLines } of headers) {
+    for (const raw of rawLines) {
+      const eqId = getNumber(raw, 'EquipmentId') ?? header.vantageEquipmentId;
+      if (eqId != null) equipmentIds.add(eqId);
+    }
+  }
+  const deviceIsColour = await getDeviceIsColourByVantageEquipmentIds(db, [...equipmentIds]);
+
+  const orders = headers.map(({ header, rawLines }) => ({
+    header,
+    lines: rawLines.map((l) => {
+      const eqId = getNumber(l, 'EquipmentId') ?? header.vantageEquipmentId;
+      const context: OrderLineContext = {
+        deviceIsColour: eqId == null ? null : (deviceIsColour.get(eqId) ?? null),
+      };
+      return mapSalesOrderLine(l, header.vantageId, startedAt, context);
+    }),
+  }));
 
   let lineCount = 0;
   for (const batch of chunk(orders, CHUNK)) {

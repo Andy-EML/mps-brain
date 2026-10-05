@@ -1,6 +1,89 @@
 import { describe, expect, it } from 'vitest';
 import { classifyOrderLine, ORDER_COLOURS } from './orders';
 
+describe('classifyOrderLine with device context', () => {
+  it('classifies a colourless toner line as black when the device is mono', () => {
+    // Real mono descriptions from live data (2026-09-25): no colour word, but clearly toner.
+    expect(
+      classifyOrderLine({ details: 'Konica Minolta 300i Toner - TN330A' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'black', source: 'mono-device' });
+    expect(
+      classifyOrderLine(
+        { details: 'TNP90 Konica Minolta bizhub 4750i/4050i Toner' },
+        { deviceIsColour: false },
+      ),
+    ).toEqual({ colour: 'black', source: 'mono-device' });
+    expect(
+      classifyOrderLine({ details: 'Konica Minolta 4700i Toner' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'black', source: 'mono-device' });
+  });
+
+  it('also matches a KM toner part number with no "toner" word, from the item description', () => {
+    expect(
+      classifyOrderLine({ itemDescription: 'TN330A' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'black', source: 'mono-device' });
+  });
+
+  it('leaves a colour device with no colour word as unknown', () => {
+    expect(
+      classifyOrderLine({ details: 'Konica Minolta 300i Toner - TN330A' }, { deviceIsColour: true }),
+    ).toEqual({ colour: 'unknown', source: 'none' });
+  });
+
+  it('leaves a mono device line as unknown when it is not toner-shaped', () => {
+    expect(classifyOrderLine({ details: 'SK-704 Staples Cartridge' }, { deviceIsColour: false })).toEqual({
+      colour: 'unknown',
+      source: 'none',
+    });
+    expect(
+      classifyOrderLine({ details: 'Staples - SH10 (SK-602)' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'unknown', source: 'none' });
+    expect(classifyOrderLine({ details: 'misc' }, { deviceIsColour: false })).toEqual({
+      colour: 'unknown',
+      source: 'none',
+    });
+  });
+
+  it('never overrides a colour or waste already found in the text', () => {
+    // Waste toner box on a mono device must stay waste, not become black.
+    expect(
+      classifyOrderLine({ itemDescription: 'Waste toner bottle' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'waste', source: 'item' });
+    // A colour word already resolves the line before the mono fallback is ever considered.
+    expect(
+      classifyOrderLine({ details: 'Cyan Toner' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'cyan', source: 'details' });
+  });
+
+  it('does not guess drum, imaging unit or developer parts as toner', () => {
+    expect(
+      classifyOrderLine({ details: 'Drum unit DR-512' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'unknown', source: 'none' });
+    expect(
+      classifyOrderLine({ details: 'Imaging Unit IU-313' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'unknown', source: 'none' });
+    expect(
+      classifyOrderLine({ details: 'Developer unit DV-512' }, { deviceIsColour: false }),
+    ).toEqual({ colour: 'unknown', source: 'none' });
+  });
+
+  it('leaves behaviour unchanged when no context is given, even for a toner-shaped line', () => {
+    expect(classifyOrderLine({ details: 'Konica Minolta 4700i Toner' })).toEqual({
+      colour: 'unknown',
+      source: 'none',
+    });
+  });
+
+  it('leaves behaviour unchanged when deviceIsColour is null or undefined (unknown device)', () => {
+    expect(
+      classifyOrderLine({ details: 'Konica Minolta 4700i Toner' }, { deviceIsColour: null }),
+    ).toEqual({ colour: 'unknown', source: 'none' });
+    expect(
+      classifyOrderLine({ details: 'Konica Minolta 4700i Toner' }, { deviceIsColour: undefined }),
+    ).toEqual({ colour: 'unknown', source: 'none' });
+  });
+});
+
 describe('classifyOrderLine', () => {
   it('reads the colour out of the real Details strings', () => {
     // The four examples confirmed against live Vantage data on 2026-09-18.

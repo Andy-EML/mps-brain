@@ -1,5 +1,5 @@
 import { AuthError, RateLimitError } from '@mps/core';
-import { syncRuns, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
+import { deviceLinks, drmsEquipment, syncRuns, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { QUEUES } from '@mps/queue';
 import { eq } from 'drizzle-orm';
@@ -96,6 +96,21 @@ describe('mapSalesOrder / mapSalesOrderLine', () => {
     );
     expect(row).toMatchObject({ colour: 'magenta', colourSource: 'item' });
   });
+
+  it('classifies a colourless toner line as black when the passed-in context says the device is mono', () => {
+    const row = mapSalesOrderLine(
+      line(72, { Details: 'Konica Minolta 4700i Toner', Item: { Id: 5, PartNumber: 'TN330A', Description: 'Toner' } }),
+      7,
+      NOW,
+      { deviceIsColour: false },
+    );
+    expect(row).toMatchObject({ colour: 'black', colourSource: 'mono-device' });
+  });
+
+  it('does not apply the mono fallback without context, matching the unchanged default', () => {
+    const row = mapSalesOrderLine(line(73, { Details: 'Konica Minolta 4700i Toner' }), 7, NOW);
+    expect(row).toMatchObject({ colour: 'unknown', colourSource: 'none' });
+  });
 });
 
 describe('runVantageOrders', () => {
@@ -183,5 +198,33 @@ describe('runVantageOrders', () => {
   it('lets an unexpected error fail the run', async () => {
     const v = fakeVantageOrders(new Error('socket hang up'));
     await expect(runVantageOrders({ db: t.db, vantage: v.client, now: () => NOW })).rejects.toThrow('socket hang up');
+  });
+
+  it('classifies a colourless toner line as black on ingest when the linked device is mono', async () => {
+    await t.db.insert(drmsEquipment).values({ drmsId: 'd-mono', isColour: false, raw: {} });
+    await t.db.insert(vantageEquipment).values({ vantageId: 5001, description: 'bizhub 4750i', raw: {} });
+    await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'd-mono', vantageEquipmentId: 5001, method: 'serial' });
+
+    const v = fakeVantageOrders([
+      order(1, { EquipmentId: 5001, Lines: [line(10, { Details: 'Konica Minolta 4700i Toner', EquipmentId: null })] }),
+    ]);
+    await runVantageOrders({ db: t.db, vantage: v.client, now: () => NOW });
+
+    const [row] = await t.db.select().from(vantageSalesOrderLines).where(eq(vantageSalesOrderLines.vantageId, 10));
+    expect(row).toMatchObject({ colour: 'black', colourSource: 'mono-device' });
+  });
+
+  it('leaves a colourless toner line unknown on ingest when the linked device is colour', async () => {
+    await t.db.insert(drmsEquipment).values({ drmsId: 'd-colour', isColour: true, raw: {} });
+    await t.db.insert(vantageEquipment).values({ vantageId: 5002, description: 'bizhub C3350i', raw: {} });
+    await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'd-colour', vantageEquipmentId: 5002, method: 'serial' });
+
+    const v = fakeVantageOrders([
+      order(2, { EquipmentId: 5002, Lines: [line(20, { Details: 'Konica Minolta 4700i Toner', EquipmentId: null })] }),
+    ]);
+    await runVantageOrders({ db: t.db, vantage: v.client, now: () => NOW });
+
+    const [row] = await t.db.select().from(vantageSalesOrderLines).where(eq(vantageSalesOrderLines.vantageId, 20));
+    expect(row).toMatchObject({ colour: 'unknown', colourSource: 'none' });
   });
 });

@@ -4,6 +4,7 @@ export * from './alert-actions';
 export * from './alerts';
 export * from './customers';
 export * from './device';
+export * from './device-colour';
 export * from './device-selection';
 export * from './devices';
 export * from './fleet';
