@@ -1,5 +1,5 @@
 import type { ReplenishColour } from '@mps/core';
-import type { PagesSince, QueueProposal } from '@mps/db/queries';
+import type { PagesSince, QueueDevice, QueueProposal } from '@mps/db/queries';
 // Relative, not `@/…`: Vitest has no `@/` alias and this module is unit-tested.
 import { formatDate, formatNumber, formatPercent } from '../lib/format';
 import { colourLabel } from './replenishment';
@@ -20,27 +20,48 @@ const ORDER: Record<ReplenishColour, number> = { black: 0, cyan: 1, magenta: 2, 
 const LETTER: Record<ReplenishColour, string> = { black: 'K', cyan: 'C', magenta: 'M', yellow: 'Y', waste: 'W' };
 
 export interface ReviewChip {
-  key: number;
+  key: ReplenishColour;
   colour: ReplenishColour;
   letter: string;
-  /** `1%`; null for waste, which DRMS never reports a level for, or when no reading exists. */
+  /** `1%`, or `—` when there is no reading; null for waste, which DRMS never reports a level for. */
   levelText: string | null;
+  /** The colour has a proposal on this row (the chip is emphasised). */
+  proposed: boolean;
   /** Raised by a DRMS consumable alarm rather than the level threshold. */
   alarm: boolean;
-  /** Accessible name and tooltip: `Cyan 1% (DRMS alarm)`. */
+  /** Accessible name and tooltip: `Cyan 1% (proposed, DRMS alarm)`. */
   label: string;
 }
 
-/** One chip per proposed colour, K C M Y then waste, with the newest known level. */
-export function reviewChips(proposals: readonly QueueProposal[]): ReviewChip[] {
-  return [...proposals]
-    .sort((a, b) => ORDER[a.colour] - ORDER[b.colour])
-    .map((p) => {
-      const level = p.colour === 'waste' ? null : (p.currentLevel ?? p.level);
-      const levelText = level === null ? null : formatPercent(level);
-      const alarm = p.trigger === 'alarm';
-      const label = [colourLabel(p.colour), levelText].filter(Boolean).join(' ') + (alarm ? ' (DRMS alarm)' : '');
-      return { key: p.id, colour: p.colour, letter: LETTER[p.colour], levelText, alarm, label };
+const TONERS = ['black', 'cyan', 'magenta', 'yellow'] as const;
+
+/**
+ * One chip per cartridge the device has — K on a mono device (`is_colour` false), K C M Y on a
+ * colour one — with its latest level, plus a waste chip only when waste is proposed. Proposed
+ * colours are flagged, and an alarm-raised proposal carries the bell. A proposed colour without a
+ * current reading falls back to the level at proposal time.
+ */
+export function reviewChips(
+  device: Pick<QueueDevice, 'isColour' | 'tonerLevels' | 'proposals'>,
+): ReviewChip[] {
+  const byColour = new Map<ReplenishColour, QueueProposal>();
+  for (const p of device.proposals) if (!byColour.has(p.colour) || p.trigger === 'alarm') byColour.set(p.colour, p);
+  const colours = new Set<ReplenishColour>(device.isColour ? TONERS : ['black']);
+  for (const c of byColour.keys()) colours.add(c);
+
+  return [...colours]
+    .sort((a, b) => ORDER[a] - ORDER[b])
+    .map((colour) => {
+      const p = byColour.get(colour);
+      const level = colour === 'waste' ? null : (device.tonerLevels[colour] ?? p?.level ?? null);
+      const levelText = colour === 'waste' ? null : level === null ? '—' : formatPercent(level);
+      const proposed = p !== undefined;
+      const alarm = p?.trigger === 'alarm';
+      const levelLabel = colour === 'waste' ? null : level === null ? 'no reading' : levelText;
+      const notes = [proposed ? 'proposed' : null, alarm ? 'DRMS alarm' : null].filter(Boolean);
+      const label =
+        [colourLabel(colour), levelLabel].filter(Boolean).join(' ') + (notes.length ? ` (${notes.join(', ')})` : '');
+      return { key: colour, colour, letter: LETTER[colour], levelText, proposed, alarm, label };
     });
 }
 

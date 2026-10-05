@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { QueueProposal } from '@mps/db/queries';
+import type { QueueDevice, QueueProposal } from '@mps/db/queries';
 import { approveAllFields, pagesSinceText, reviewChips } from './review-row';
 
 const proposal = (over: Partial<QueueProposal> = {}): QueueProposal => ({
@@ -24,28 +24,47 @@ const proposal = (over: Partial<QueueProposal> = {}): QueueProposal => ({
 });
 
 describe('reviewChips', () => {
-  it('gives one chip per proposed colour with its letter and current level, in K C M Y waste order', () => {
-    const chips = reviewChips([
-      proposal({ id: 2, colour: 'cyan', currentLevel: 1 }),
-      proposal({ id: 1, colour: 'black', currentLevel: 0 }),
+  const levels = (over: Partial<QueueDevice['tonerLevels']> = {}): QueueDevice['tonerLevels'] => ({
+    black: null, cyan: null, magenta: null, yellow: null, ...over,
+  });
+  const row = (chips: ReturnType<typeof reviewChips>) => chips.map((c) => [c.letter, c.levelText, c.proposed, c.alarm]);
+
+  it('shows every cartridge of a colour device in K C M Y order, flagging the proposed ones', () => {
+    const chips = reviewChips({
+      isColour: true,
+      tonerLevels: levels({ black: 40, cyan: 1, magenta: 77 }),
+      proposals: [proposal({ id: 2, colour: 'cyan', currentLevel: 1 })],
+    });
+    expect(row(chips)).toEqual([
+      ['K', '40%', false, false],
+      ['C', '1%', true, false],
+      ['M', '77%', false, false],
+      ['Y', '—', false, false],
     ]);
-    expect(chips.map((c) => [c.key, c.letter, c.levelText, c.alarm])).toEqual([
-      [1, 'K', '0%', false],
-      [2, 'C', '1%', false],
-    ]);
-    expect(chips[1]!.label).toBe('Cyan 1%');
+    expect(chips.map((c) => c.label)).toEqual(['Black 40%', 'Cyan 1% (proposed)', 'Magenta 77%', 'Yellow no reading']);
   });
 
-  it('falls back to the level at proposal time, and shows waste without a level', () => {
-    const [chip] = reviewChips([proposal({ colour: 'magenta', currentLevel: null, level: 6 })]);
-    expect(chip).toMatchObject({ letter: 'M', levelText: '6%' });
-    const [waste] = reviewChips([proposal({ colour: 'waste', level: null, currentLevel: null, trigger: 'alarm' })]);
-    expect(waste).toMatchObject({ letter: 'W', levelText: null, alarm: true, label: 'Waste toner box (DRMS alarm)' });
+  it('shows only black on a mono device', () => {
+    const chips = reviewChips({ isColour: false, tonerLevels: levels({ black: 3 }), proposals: [proposal()] });
+    expect(row(chips)).toEqual([['K', '3%', true, false]]);
   });
 
-  it('marks a chip raised by a DRMS alarm', () => {
-    const [chip] = reviewChips([proposal({ colour: 'yellow', trigger: 'alarm', currentLevel: 12 })]);
-    expect(chip).toMatchObject({ alarm: true, label: 'Yellow 12% (DRMS alarm)' });
+  it('falls back to the level at proposal time for a proposed colour with no reading', () => {
+    const chips = reviewChips({ isColour: false, tonerLevels: levels(), proposals: [proposal({ currentLevel: null, level: 6 })] });
+    expect(chips[0]).toMatchObject({ letter: 'K', levelText: '6%' });
+  });
+
+  it('marks an alarm-raised colour with the bell, and adds waste only when proposed', () => {
+    const chips = reviewChips({
+      isColour: false,
+      tonerLevels: levels({ black: 12 }),
+      proposals: [proposal({ trigger: 'alarm' }), proposal({ id: 5, colour: 'waste', level: null, currentLevel: null, trigger: 'alarm' })],
+    });
+    expect(row(chips)).toEqual([
+      ['K', '12%', true, true],
+      ['W', null, true, true],
+    ]);
+    expect(chips.map((c) => c.label)).toEqual(['Black 12% (proposed, DRMS alarm)', 'Waste toner box (proposed, DRMS alarm)']);
   });
 });
 

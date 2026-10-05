@@ -100,15 +100,19 @@ export async function reclassifyOrderLines(db: Db, opts: { apply: boolean }): Pr
   return { scanned: rows.length, changed: toUpdate.length, byTransition, samples };
 }
 
+/** The CLI's first output line: "changed" once applied, "would change" on a dry run. */
+export function summaryLine(result: { scanned: number; changed: number }, apply: boolean): string {
+  return apply
+    ? `scanned ${result.scanned} unknown line(s), ${result.changed} changed`
+    : `scanned ${result.scanned} unknown line(s), ${result.changed} would change (dry run — pass --apply to write)`;
+}
+
 async function main(): Promise<void> {
   const apply = process.argv.includes('--apply');
   const { db, pool } = createDb(process.env.DATABASE_URL!);
   try {
     const result = await reclassifyOrderLines(db, { apply });
-    console.log(
-      `scanned ${result.scanned} unknown line(s), ${result.changed} would change` +
-        (apply ? ' (applied)' : ' (dry run — pass --apply to write)'),
-    );
+    console.log(summaryLine(result, apply));
     for (const [transition, count] of result.byTransition) {
       console.log(`  ${transition}: ${count}`);
       for (const sample of result.samples.get(transition) ?? []) {

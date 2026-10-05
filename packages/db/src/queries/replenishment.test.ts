@@ -148,6 +148,31 @@ describe('replenishment queue', () => {
     expect(await listReplenishmentQueue(t.db, { tab: 'review', limit: 1 })).toHaveLength(1);
   });
 
+  it('gives each device its colour flag and every latest toner level, proposed or not', async () => {
+    const q = await listReplenishmentQueue(t.db, { tab: 'review' });
+    expect(q.find((d) => d.drmsId === 'd1')).toMatchObject({
+      isColour: true,
+      tonerLevels: { black: 12, cyan: 4, magenta: null, yellow: null },
+    });
+    // A mono device with no snapshot: no readings at all.
+    expect(q.find((d) => d.drmsId === 'd2')).toMatchObject({
+      isColour: false,
+      tonerLevels: { black: null, cyan: null, magenta: null, yellow: null },
+    });
+
+    // A mono device's stray colour level is dropped by the shared pivot.
+    const [snap] = await t.db
+      .insert(counterSnapshots)
+      .values({ drmsEquipmentId: 'd2', counterId: 'c2', receivedTime: NOW, fetchedAt: NOW, raw: {} })
+      .returning();
+    await t.db.insert(counterValues).values([
+      { snapshotId: snap!.id, name: 'BlackTonerLevel', value: 55 },
+      { snapshotId: snap!.id, name: 'CyanTonerLevel', value: 0 },
+    ]);
+    const again = await listReplenishmentQueue(t.db, { tab: 'review' });
+    expect(again.find((d) => d.drmsId === 'd2')!.tonerLevels).toEqual({ black: 55, cyan: null, magenta: null, yellow: null });
+  });
+
   it('falls back to the DRMS customer name for an unlinked device', async () => {
     await t.db.update(deviceLinks).set({ unlinkedAt: NOW }).where(eq(deviceLinks.drmsEquipmentId, 'd2'));
     const q = await listReplenishmentQueue(t.db, { tab: 'review' });

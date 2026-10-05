@@ -108,8 +108,8 @@ function orderContext(p: QueueProposal): { text: string; open: boolean } | null 
 
 /**
  * One device on the Review tab as an accordion row: a one-line summary (name, where, a chip per
- * proposed colour, serial, Approve all) that opens onto the proposal lines and the device detail.
- * The detail is fetched on first open and kept; the proposal form stays mounted once opened, so
+ * cartridge with the proposed colours emphasised, serial, Approve all) that opens onto the proposal
+ * lines and the device detail. The detail is fetched on first open and kept; the proposal form stays mounted once opened, so
  * collapsing a row does not lose an edited quantity.
  */
 function ReviewRow({ device }: { device: QueueDevice }) {
@@ -156,11 +156,16 @@ function ReviewRow({ device }: { device: QueueDevice }) {
             {where ? <span className="block truncate text-[13px] text-muted-foreground">{where}</span> : null}
           </span>
           <span className="flex shrink-0 flex-wrap items-center gap-1.5">
-            {reviewChips(device.proposals).map((chip) => (
+            {reviewChips(device).map((chip) => (
               <span
                 key={chip.key}
                 title={chip.label}
-                className="inline-flex items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-xs tabular-nums"
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs tabular-nums',
+                  chip.proposed
+                    ? 'border-brand bg-brand-soft font-medium text-foreground'
+                    : 'border-line text-muted-foreground',
+                )}
               >
                 <Swatch colour={chip.colour} className="size-2.5" />
                 <span aria-hidden>

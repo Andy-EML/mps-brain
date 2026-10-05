@@ -77,6 +77,13 @@ export interface QueueDevice {
   location: string | null;
   /** The current link's Vantage equipment; null when the device is unlinked. */
   vantageEquipmentId: number | null;
+  /** `drms_equipment.is_colour`: a mono device has only a black cartridge. */
+  isColour: boolean;
+  /**
+   * Latest toner % for every cartridge from the counter pivot, proposed or not; null when there is
+   * no reading (always for cyan/magenta/yellow on a mono device).
+   */
+  tonerLevels: Record<TonerColour, number | null>;
   proposals: QueueProposal[];
   orders: QueueOrder[];
 }
@@ -135,7 +142,6 @@ type TonerColour = Exclude<ReplenishColour, 'waste'>;
 interface DeviceContext {
   device: Omit<QueueDevice, 'proposals' | 'orders'>;
   thresholds: Record<TonerColour, { value: number | null; source: SettingSource }>;
-  levels: Record<TonerColour, number | null>;
 }
 
 /** Display fields, effective thresholds and current levels for a set of devices, in one query. */
@@ -151,6 +157,7 @@ async function deviceContexts(db: Db, drmsIds: string[]): Promise<Map<string, De
       equipmentName: drmsEquipmentName(),
       model: drmsEquipment.modelName,
       serial: drmsEquipment.serial,
+      isColour: drmsEquipment.isColour,
       drmsCustomerName: drmsEquipment.customerName,
       vantageCustomerName: vantageEquipment.customerName,
       location: vantageEquipment.location,
@@ -187,18 +194,19 @@ async function deviceContexts(db: Db, drmsIds: string[]): Promise<Map<string, De
         customerName,
         location: r.location,
         vantageEquipmentId: r.vantageEquipmentId,
+        isColour: r.isColour,
+        tonerLevels: {
+          black: toNumberOrNull(r.black),
+          cyan: toNumberOrNull(r.cyan),
+          magenta: toNumberOrNull(r.magenta),
+          yellow: toNumberOrNull(r.yellow),
+        },
       },
       thresholds: {
         black: { value: toNumberOrNull(r.tBlack), source: r.sBlack },
         cyan: { value: toNumberOrNull(r.tCyan), source: r.sCyan },
         magenta: { value: toNumberOrNull(r.tMagenta), source: r.sMagenta },
         yellow: { value: toNumberOrNull(r.tYellow), source: r.sYellow },
-      },
-      levels: {
-        black: toNumberOrNull(r.black),
-        cyan: toNumberOrNull(r.cyan),
-        magenta: toNumberOrNull(r.magenta),
-        yellow: toNumberOrNull(r.yellow),
       },
     });
   }
@@ -238,7 +246,7 @@ async function assemble(db: Db, proposals: ProposalRow[], orders: OrderRow[], no
       level: p.level,
       threshold: toner ? ctx.thresholds[toner].value : null,
       thresholdSource: toner ? ctx.thresholds[toner].source : null,
-      currentLevel: toner ? ctx.levels[toner] : null,
+      currentLevel: toner ? ctx.device.tonerLevels[toner] : null,
       alarmDescription: p.alarmDescription,
       quantity: p.quantity,
       status: p.status,

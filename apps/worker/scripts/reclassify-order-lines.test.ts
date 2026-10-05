@@ -2,7 +2,7 @@ import { deviceLinks, drmsEquipment, vantageEquipment, vantageSalesOrderLines, v
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { reclassifyOrderLines } from './reclassify-order-lines';
+import { reclassifyOrderLines, summaryLine } from './reclassify-order-lines';
 
 describe('reclassifyOrderLines', () => {
   let t: TestDb;
@@ -110,5 +110,14 @@ describe('reclassifyOrderLines', () => {
     expect(result.scanned).toBe(0);
     const [row] = await t.db.select().from(vantageSalesOrderLines).where(eq(vantageSalesOrderLines.vantageId, 17));
     expect(row).toMatchObject({ colour: 'cyan', colourSource: 'details' });
+  });
+});
+
+describe('summaryLine', () => {
+  it('says "changed" when applied and "would change" on a dry run', () => {
+    expect(summaryLine({ scanned: 5, changed: 2 }, true)).toBe('scanned 5 unknown line(s), 2 changed');
+    expect(summaryLine({ scanned: 5, changed: 2 }, false)).toBe(
+      'scanned 5 unknown line(s), 2 would change (dry run — pass --apply to write)',
+    );
   });
 });
