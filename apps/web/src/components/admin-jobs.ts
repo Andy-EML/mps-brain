@@ -228,6 +228,21 @@ export const JOB_CARDS: readonly JobCard[] = [
 ];
 
 /**
+ * What "Run all" queues: every job that fetches or collects. Two are left out because the worker
+ * already queues them behind these — `link-run` after each pull, `replenish-evaluate` after the
+ * snapshot, alarm and sales-order pulls — so queueing them now would only run them on stale data
+ * first. The registration sender is left out because it writes to DRMS; it keeps its own button.
+ */
+export const RUN_ALL_QUEUES: readonly QueueName[] = [
+  QUEUES.vantagePull,
+  QUEUES.drmsPull,
+  QUEUES.drmsSnapshot,
+  QUEUES.drmsAlarms,
+  QUEUES.vantageOrders,
+  QUEUES.drmsRegistrationScan,
+];
+
+/**
  * Turns a cron expression into the sentence the Jobs page prints under a card.
  *
  * The page used to carry these as hardcoded strings, which quietly went stale: the snapshot moved

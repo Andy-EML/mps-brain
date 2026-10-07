@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { JOB_CARDS, apiName, formatDuration, runTone, statLines, tokenExpiry } from './admin-jobs';
+import { QUEUES } from '@mps/queue';
+import { JOB_CARDS, RUN_ALL_QUEUES, apiName, formatDuration, runTone, statLines, tokenExpiry } from './admin-jobs';
 
 const NOW = new Date('2026-09-18T12:00:00Z');
 const days = (n: number) => new Date(NOW.getTime() + n * 86_400_000);
@@ -139,5 +140,19 @@ describe('JOB_CARDS', () => {
     for (const q of ['drms-registration-scan', 'drms-registration-submit']) {
       expect(JOB_CARDS.find((c) => c.queue === q)?.link).toEqual({ href: '/registrations', label: 'Open DRMS registrations' });
     }
+  });
+});
+
+describe('RUN_ALL_QUEUES', () => {
+  it('queues only jobs that have a card', () => {
+    const cards = new Set(JOB_CARDS.map((c) => c.queue));
+    for (const queue of RUN_ALL_QUEUES) expect(cards.has(queue)).toBe(true);
+  });
+
+  it('leaves out the DRMS writer and the two jobs the worker chains itself', () => {
+    expect(RUN_ALL_QUEUES).not.toContain(QUEUES.drmsRegistrationSubmit);
+    expect(RUN_ALL_QUEUES).not.toContain(QUEUES.linkRun);
+    expect(RUN_ALL_QUEUES).not.toContain(QUEUES.replenishEvaluate);
+    expect(RUN_ALL_QUEUES).toHaveLength(JOB_CARDS.length - 3);
   });
 });

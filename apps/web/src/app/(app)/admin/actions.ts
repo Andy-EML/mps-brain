@@ -12,7 +12,8 @@ import {
   type CounterCategory,
   type UserRole,
 } from '@mps/db/queries';
-import { isQueueName, sendJob } from '@mps/queue';
+import { isQueueName, sendJob, sendJobs } from '@mps/queue';
+import { RUN_ALL_QUEUES } from '@/components/admin-jobs';
 import { requireAdmin } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { requiredEnv } from '@/lib/env';
@@ -173,5 +174,28 @@ export async function triggerJobAction(queue: string): Promise<ActionResult> {
       : { ok: true, message: `${queue} is already queued or running — this run was folded into it.` };
   } catch (err) {
     return { ok: false, message: present(err, `${queue} could not be queued.`) };
+  }
+}
+
+/** "Run all" on `/admin/jobs`: queues `RUN_ALL_QUEUES` in one go. */
+export async function triggerAllJobsAction(): Promise<ActionResult> {
+  const admin = await requireAdmin();
+
+  try {
+    const results = await sendJobs(requiredEnv('DATABASE_URL'), RUN_ALL_QUEUES);
+    const folded = results.filter((r) => r.jobId == null).map((r) => r.queue);
+    const queued = results.length - folded.length;
+    console.log(`[admin] ${admin.username ?? admin.userId} queued all: ${RUN_ALL_QUEUES.join(', ')}`);
+    revalidatePath('/admin/jobs');
+    revalidatePath('/admin');
+    return {
+      ok: true,
+      message:
+        folded.length === 0
+          ? `${queued} jobs queued. Link run and replenishment check follow on their own.`
+          : `${queued} jobs queued; ${folded.join(', ')} already queued or running.`,
+    };
+  } catch (err) {
+    return { ok: false, message: present(err, 'The jobs could not be queued.') };
   }
 }

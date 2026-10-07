@@ -49,3 +49,23 @@ export async function sendJob(connectionString: string, queue: QueueName): Promi
     await boss.stop({ graceful: false, wait: true });
   }
 }
+
+/**
+ * `sendJob` for several queues over one connection — the Jobs page's "Run all". Returns one entry
+ * per queue, in order: the new job's id, or `null` when it was folded into one already queued.
+ */
+export async function sendJobs(
+  connectionString: string,
+  queues: readonly QueueName[],
+): Promise<Array<{ queue: QueueName; jobId: string | null }>> {
+  const boss = createBoss(connectionString, 'client');
+  boss.on('error', (err) => console.error('[pg-boss]', err));
+  try {
+    await boss.start();
+    const results: Array<{ queue: QueueName; jobId: string | null }> = [];
+    for (const queue of queues) results.push({ queue, jobId: await boss.send(queue, {}) });
+    return results;
+  } finally {
+    await boss.stop({ graceful: false, wait: true });
+  }
+}

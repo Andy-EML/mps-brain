@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { getAppStateValue, listQueueSchedules, listSyncRuns } from '@mps/db/queries';
 import { AdminNav } from '@/components/admin-nav';
-import { JOB_CARDS, apiName, scheduleLabel, tokenExpiry } from '@/components/admin-jobs';
+import { JOB_CARDS, RUN_ALL_QUEUES, apiName, scheduleLabel, tokenExpiry } from '@/components/admin-jobs';
 import { JobRunTable } from '@/components/job-run-table';
-import { JobTriggerButton } from '@/components/job-trigger-button';
+import { JobTriggerButton, RunAllJobsButton } from '@/components/job-trigger-button';
 import { PageHeader } from '@/components/page-header';
 import { ToneBadge } from '@/components/tone-badge';
 import { requireAdmin } from '@/lib/auth';
@@ -61,7 +61,12 @@ export default async function AdminJobsPage() {
       </section>
 
       <section className="mt-5">
-        <h2 className="mb-3 text-[15px] font-medium">Run a job now</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-[15px] font-medium">Run a job now</h2>
+          <RunAllJobsButton
+            confirm={`Run all? This queues ${RUN_ALL_QUEUES.length} jobs that call the live DRMS and Vantage APIs, including the counter snapshot, the slowest job. Link run and replenishment check follow on their own. The registration sender is not included.`}
+          />
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {JOB_CARDS.map((card) => (
             <div key={card.queue} className="flex flex-col rounded-xl border border-line bg-card px-5 py-4">

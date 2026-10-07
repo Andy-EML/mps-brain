@@ -1,9 +1,9 @@
 'use client';
 
 import { useTransition } from 'react';
-import { Loader2, Play } from 'lucide-react';
+import { FastForward, Loader2, Play } from 'lucide-react';
 import { toast } from 'sonner';
-import { triggerJobAction } from '@/app/(app)/admin/actions';
+import { triggerAllJobsAction, triggerJobAction } from '@/app/(app)/admin/actions';
 import { Button } from '@/components/ui/button';
 
 export interface JobTriggerButtonProps {
@@ -39,6 +39,29 @@ export function JobTriggerButton({ queue, confirm }: JobTriggerButtonProps) {
     >
       {pending ? <Loader2 aria-hidden className="animate-spin" /> : <Play aria-hidden />}
       {pending ? 'Queueing…' : 'Run now'}
+    </Button>
+  );
+}
+
+/** "Run all": queues every fetch and collection job (`RUN_ALL_QUEUES`). Always asks first. */
+export function RunAllJobsButton({ confirm }: { confirm: string }) {
+  const [pending, start] = useTransition();
+
+  return (
+    <Button
+      size="sm"
+      disabled={pending}
+      onClick={() => {
+        if (!window.confirm(confirm)) return;
+        start(async () => {
+          const result = await triggerAllJobsAction();
+          if (result.ok) toast.success(result.message);
+          else toast.error(result.message);
+        });
+      }}
+    >
+      {pending ? <Loader2 aria-hidden className="animate-spin" /> : <FastForward aria-hidden />}
+      {pending ? 'Queueing…' : 'Run all'}
     </Button>
   );
 }
