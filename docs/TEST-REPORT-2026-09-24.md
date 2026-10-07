@@ -46,35 +46,26 @@ only widens the ceiling for setup/teardown hooks — a genuinely hung hook still
 +    hookTimeout: 60_000,
 ```
 
-## Step 2 — Worker end-to-end against local Postgres: **PENDING USER**
+## Step 2 — Worker end-to-end against local Postgres: **DONE 2026-09-25**
 
-Not run in this pass. It needs:
-- Migration `0008` applied to the shared local DB (the ledger's test site, `C:\dev\mps-brain-test`,
-  only has `0007`; migrations are never applied to a real DB without the user).
-- A second worker running next to the live dev worker in `C:\dev\mps-brain` (the implementer rules
-  forbid running the worker or touching `.env`).
-- The user's sign-in for anything that reads session state.
+Branch worker run from the worktree; it migrated the local DB on boot (0008 applied, 9 migrations).
+`drms-alarms` and `vantage-orders` queued by hand (`sync_runs` 486–487, both success), then
+`replenish-evaluate` (488, success; two triggers folded into one by the stately queue): devices 833,
+proposed 251, superseded 39, suppressed 230. All four sanity checks PASS — 377 pending proposals on
+275 devices, no CMY on mono devices, none alongside an open order. The SQL and results are in
+`docs/TEST-REPORT-2026-09-25-replenish-sanity.md`.
 
-When this runs: `drms-snapshot` (or reuse existing data), `drms-alarms`, `vantage-orders`, then
-confirm `replenish-evaluate` ran after each (`sync_runs`) and record its stats. Sanity-check
-proposals against the fleet — every proposed colour strictly below its effective threshold or with
-a ready alarm; no CMY on mono devices; no proposal where `getOrderStates` shows an open order — and
-write the SQL used into a follow-up to this report.
+Finding carried forward: a pending **alarm-triggered** proposal never supersedes itself when its
+alarm ages out of the 7-day window (only threshold proposals recover, `replenish-evaluate.ts`
+around line 133). Five from 2026-09-21 sit in the queue for that reason.
 
-## Step 3 — UI pass, page by page: **PENDING USER**
+## Step 3 — UI pass: **DONE 2026-09-25 to 2026-10-07, with the user**
 
-Not run in this pass, for the same reasons as step 2 (needs the migrated shared DB, a second
-worker, and sign-in). Scope when it runs: Fleet tile → `/orders`, review/approve/reject, in-progress
-with the switched-off state, device card + edit + reset, bulk edit including select-all-matching
-and confirm, settings page defaults + customer override — noting anything left untested, the way
-`docs/TEST-REPORT-2026-09-18.md` did.
-
-Build-only verification already covers UI tasks 10–13 (ledger ruling, "verify with tests +
-typecheck + lint + a production build ... NOT a live run"), and a one-off browser check on
-`C:\dev\mps-brain-test` (ledger, 2026-09-21 ~16:10, 166 proposals, migration 0007) found all pages
-rendering on real data with no console errors, plus three cosmetic findings that were fixed in
-Tasks 16–17 (product name vs display name, sidebar truncation, banner wording). Steps 2–3 above
-are the first full pass since the branch's later tasks (15–17, final review fix wave) landed.
+The user worked through `/orders` on real data from the branch web app. Changes it produced, all on
+this branch: accordion review list (`0ed1a0d`), every toner level on the review chips (`56ba575`),
+device back-navigation and recent sales orders on review (`cc01c25`), "Run all" on the Jobs page
+(`e09fdf9`), and the mono toner classification fix found along the way (`35403c7`, with the
+one-off `reclassify-order-lines.ts --apply` run by the user: 58 lines unknown → black).
 
 ## Step 4 — Live ordering: **DEFERRED TO ROADMAP by the user**
 
