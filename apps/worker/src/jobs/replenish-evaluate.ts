@@ -14,6 +14,7 @@ import { deviceAlarms, drmsEquipment, replenishmentProposals, type Db } from '@m
 import { counterPivotSubquery, effectiveSettingsSubquery, getOrderStates, type ColourOrderState } from '@mps/db/queries';
 import { and, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobResult } from '../sync-runs';
+import { evaluateSiteStock } from './site-stock-evaluate';
 
 /**
  * The Vantage order that makes a pending proposal redundant, as its reference (`'SO…'`), or null.
@@ -50,6 +51,8 @@ export interface ReplenishEvaluateDeps {
 export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise<JobResult> {
   const { db } = deps;
   const now = (deps.now ?? (() => new Date()))();
+  // Site stock first: it raises shelf top-ups and says which colours a shelf now covers.
+  const siteStock = await evaluateSiteStock(db, now);
   const eff = effectiveSettingsSubquery(db);
   const pivot = counterPivotSubquery(db);
 
@@ -102,13 +105,14 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
     })
     .from(replenishmentProposals)
     .where(
-      sql`${replenishmentProposals.status} in ('pending', 'approved') or (${replenishmentProposals.status} = 'rejected' and ${replenishmentProposals.decidedAt} >= ${rejectedSince})`,
+      // Shelf top-ups belong to the site-stock job; the device loop never touches them.
+      sql`${replenishmentProposals.shelfId} is null and (${replenishmentProposals.status} in ('pending', 'approved') or (${replenishmentProposals.status} = 'rejected' and ${replenishmentProposals.decidedAt} >= ${rejectedSince}))`,
     );
 
   const linkedIds = [...new Set(devices.map((d) => d.vantageEquipmentId).filter((id): id is number => id !== null))];
   const orderStates = await getOrderStates(db, linkedIds, now);
 
-  const stats = { devices: devices.length, proposed: 0, superseded: 0, suppressed: 0, autoOff: 0, unlinked: 0 };
+  const stats = { devices: devices.length, proposed: 0, superseded: 0, suppressed: 0, autoOff: 0, unlinked: 0, siteStock: siteStock.stats };
 
   for (const d of devices) {
     const thresholds: Record<TonerColour, number> = { black: Number(d.tBlack), cyan: Number(d.tCyan), magenta: Number(d.tMagenta), yellow: Number(d.tYellow) };
@@ -118,6 +122,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       magenta: d.magenta === null ? null : Number(d.magenta),
       yellow: d.yellow === null ? null : Number(d.yellow),
     };
+    const coveredColours = siteStock.covered.get(d.drmsId) ?? new Set<ReplenishColour>();
     const mine = proposalRows.filter((p) => p.drmsId === d.drmsId);
     const states = d.vantageEquipmentId === null ? undefined : orderStates.get(d.vantageEquipmentId);
 
@@ -129,6 +134,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       if (p.status !== 'pending') continue;
       const ordered = states ? orderedInVantage(states[p.colour], p.createdAt) : null;
       if (ordered !== null) toSupersede.push({ id: p.id, note: `ordered in Vantage (${ordered})` });
+      else if (coveredColours.has(p.colour)) toSupersede.push({ id: p.id, note: 'covered by site stock' });
       else if (!d.autoReplenish) toSupersede.push({ id: p.id, note: 'auto-replenish switched off' });
       else if (p.trigger === 'threshold' && p.colour !== 'waste' && isRecovered(levels[p.colour], thresholds[p.colour])) {
         toSupersede.push({ id: p.id, note: 'level recovered' });
@@ -167,6 +173,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       levels,
       alarms: alarmsByDevice.get(d.drmsId) ?? [],
       history,
+      siteStockCovered: [...coveredColours],
       now,
     });
     if (result.skipped === 'auto_off') stats.autoOff++;

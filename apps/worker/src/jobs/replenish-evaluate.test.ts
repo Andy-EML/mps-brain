@@ -1,4 +1,4 @@
-import { deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
+import { cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { updateDeviceSettings } from '@mps/db/queries';
 import { eq } from 'drizzle-orm';
@@ -167,6 +167,58 @@ describe('runReplenishEvaluate', () => {
       const r = await runReplenishEvaluate({ db: t.db, now: () => LATER });
       expect(r.stats).toMatchObject({ superseded: 0 });
       expect(await cyan()).toEqual([['pending', null]]);
+    });
+  });
+
+  describe('site stock', () => {
+    async function shelfFor(holdingBlack: number, holdingWaste = 0) {
+      const [fam] = await t.db.insert(cartridgeFamilies).values({ name: 'Fam', isColour: true }).returning();
+      await t.db.insert(cartridgeFamilyModels).values({ model: 'bizhub C300i', familyId: fam!.id });
+      await t.db.update(drmsEquipment).set({ modelName: 'bizhub C300i' }).where(eq(drmsEquipment.drmsId, 'colour'));
+      await t.db.update(vantageEquipment).set({ vantageCustomerId: 100 }).where(eq(vantageEquipment.vantageId, 1));
+      await t.db.insert(siteStockShelves).values({ vantageCustomerId: 100, familyId: fam!.id, holdingBlack, holdingWaste, countingFrom: new Date('2026-09-01T00:00:00Z') });
+    }
+    const states = async () =>
+      (await t.db.select().from(replenishmentProposals).orderBy(replenishmentProposals.id)).map((p) => [p.colour, p.trigger, p.status, p.note]);
+
+    it('supersedes a pending threshold proposal for a covered colour, and stops proposing it', async () => {
+      await levels('colour', 'c1', 12, 50);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      await shelfFor(3);
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ superseded: 1, proposed: 0, siteStock: { shelves: 1 } });
+      expect(await states()).toEqual([['black', 'threshold', 'superseded', 'covered by site stock']]);
+    });
+
+    it('still proposes a colour the shelf does not hold', async () => {
+      await shelfFor(3, 0);
+      await t.db.insert(deviceAlarms).values({
+        alarmId: 'w1', drmsEquipmentId: 'colour', receivedTime: new Date('2026-09-20T08:00:00Z'), category: 'waste',
+        status: 'ReadyForErpDelivery', description: 'Waste Toner Bottle Almost Full', raw: {},
+      });
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await states()).toEqual([['waste', 'alarm', 'pending', null]]);
+    });
+
+    it('proposes normally again once the device moves to another customer', async () => {
+      await shelfFor(3);
+      await levels('colour', 'c1', 12, 50);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await states()).toEqual([]);
+      await t.db.update(vantageEquipment).set({ vantageCustomerId: 200 }).where(eq(vantageEquipment.vantageId, 1));
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await states()).toEqual([['black', 'threshold', 'pending', null]]);
+    });
+
+    it('leaves a shelf top-up alone in the device loop', async () => {
+      await shelfFor(1);
+      await t.db.insert(deviceAlarms).values({
+        alarmId: 'k1', drmsEquipmentId: 'colour', receivedTime: new Date('2026-09-03T08:00:00Z'), category: 'toner',
+        status: 'ReadyForErpDelivery', description: 'Toner Empty(BK)', raw: {},
+      });
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await states()).toEqual([['black', 'site_stock', 'pending', null]]);
     });
   });
 
