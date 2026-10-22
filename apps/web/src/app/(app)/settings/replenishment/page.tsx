@@ -4,6 +4,7 @@ import { Breadcrumb } from '@/components/breadcrumb';
 import { AddCustomerOverrideDialog, ResetCustomerDialog } from '@/components/customer-override-dialogs';
 import { PageHeader } from '@/components/page-header';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
+import { SettingsTabs } from '@/components/settings-tabs';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatDate, formatNumber, pluralise } from '@/lib/format';
@@ -93,6 +94,8 @@ export default async function ReplenishmentSettingsPage({ searchParams }: PagePr
         title="Replenishment settings"
         subtitle="A device uses its own setting first, then its customer's, then these defaults."
       />
+
+      <SettingsTabs current="/settings/replenishment" />
 
       {pageError ? (
         <p role="alert" className="mb-4 rounded-xl bg-destructive/10 px-5 py-3.5 text-sm text-destructive">

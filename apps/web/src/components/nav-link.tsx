@@ -17,11 +17,14 @@ export interface NavLinkProps {
   exact?: boolean;
   /** Hover tooltip, for a short label standing in for the page's full name; defaults to `label`. */
   title?: string;
+  /** Highlight for every path under this one instead of `href` (Settings: all of `/settings`). */
+  section?: string;
 }
 
-export function NavLink({ href, label, icon, count, tone = 'critical', exact, title }: NavLinkProps) {
+export function NavLink({ href, label, icon, count, tone = 'critical', exact, title, section }: NavLinkProps) {
   const pathname = usePathname();
-  const active = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+  const base = section ?? href;
+  const active = exact ? pathname === href : pathname === base || pathname.startsWith(`${base}/`);
 
   return (
     <Link

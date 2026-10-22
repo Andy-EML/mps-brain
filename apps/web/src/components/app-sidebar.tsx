@@ -63,7 +63,7 @@ export function AppSidebar({
         />
         <NavLink href="/alerts" label="Alerts" icon={<Bell />} count={openAlerts} tone="critical" />
         <NavLink href="/issues" label="Link issues" icon={<Link2Off />} count={openIssues} tone="warn" />
-        <NavLink href="/settings/replenishment" label="Settings" icon={<SlidersHorizontal />} />
+        <NavLink href="/settings/replenishment" section="/settings" label="Settings" icon={<SlidersHorizontal />} />
         {role === 'admin' ? <NavLink href="/admin" label="Admin" icon={<Settings />} /> : null}
       </nav>
 
