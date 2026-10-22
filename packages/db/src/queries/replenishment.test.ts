@@ -421,4 +421,17 @@ describe('site stock top-ups adjust shelf counts', () => {
     const audits = await t.db.select().from(auditLog);
     expect(audits.at(-1)!.details).toMatchObject({ shelfAdjust: [{ shelfId, colour: 'black', by: 3 }] });
   });
+
+  it('will not retry a failed top-up over a newer live top-up for the same shelf on another device', async () => {
+    const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 3 }], userId, now: NOW });
+    await t.db.update(replenishmentOrders).set({ status: 'failed', error: 'Vantage said no' }).where(eq(replenishmentOrders.id, orderId));
+    await t.db.update(replenishmentProposals).set({ status: 'failed' }).where(eq(replenishmentProposals.orderId, orderId));
+    await t.db.insert(drmsEquipment).values({ drmsId: 'd3', modelName: 'bizhub C300i', serial: 'S3', isColour: true, raw: {} });
+    await t.db
+      .insert(replenishmentProposals)
+      .values({ drmsEquipmentId: 'd3', colour: 'black', trigger: 'site_stock', status: 'pending', quantity: 1, shelfId, createdAt: NOW });
+    await expect(retryOrder(t.db, { orderId, userId })).rejects.toMatchObject({ code: 'bad_state', message: expect.stringContaining('shelf') });
+    const [o] = await t.db.select().from(replenishmentOrders).where(eq(replenishmentOrders.id, orderId));
+    expect(o).toMatchObject({ status: 'failed', error: 'Vantage said no' });
+  });
 });

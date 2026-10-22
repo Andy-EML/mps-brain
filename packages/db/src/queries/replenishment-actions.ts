@@ -264,7 +264,8 @@ export async function resolveOrder(
  * rebuilt from the proposals still `failed` (a colour rejected since would otherwise be POSTed).
  * Refused when the engine has since raised a new live proposal for one of its colours —
  * a failed proposal is not "live", so that can happen — because re-approving would give the
- * device two live proposals for one colour.
+ * device two live proposals for one colour. A failed shelf top-up also clashes with a newer live
+ * top-up for that shelf and colour, which may sit on another device of the shelf.
  */
 export async function retryOrder(db: Db, args: { orderId: number; userId: number; now?: Date }): Promise<void> {
   const now = args.now ?? new Date();
@@ -273,14 +274,29 @@ export async function retryOrder(db: Db, args: { orderId: number; userId: number
     if (order.status !== 'failed') throw new ReplenishmentError('Only a failed order can be retried.', 'bad_state');
 
     const p = replenishmentProposals;
-    const failed = await tx.select({ colour: p.colour, quantity: p.quantity }).from(p).where(and(eq(p.orderId, args.orderId), eq(p.status, 'failed')));
+    const failed = await tx
+      .select({ colour: p.colour, quantity: p.quantity, shelfId: p.shelfId })
+      .from(p)
+      .where(and(eq(p.orderId, args.orderId), eq(p.status, 'failed')));
     if (failed.length === 0) throw new ReplenishmentError('This order has nothing left to retry.', 'bad_state');
+    const live = inArray(p.status, ['pending', 'approved']);
     const [clash] = await tx
       .select({ colour: p.colour })
       .from(p)
-      .where(and(eq(p.drmsEquipmentId, order.drmsId), inArray(p.colour, failed.map((f) => f.colour)), inArray(p.status, ['pending', 'approved'])));
+      .where(and(eq(p.drmsEquipmentId, order.drmsId), inArray(p.colour, failed.map((f) => f.colour)), live));
     if (clash) {
       throw new ReplenishmentError(`A newer ${clash.colour} proposal for this device is already in the queue; decide that one instead.`, 'bad_state');
+    }
+    const shelfIds = [...new Set(failed.map((f) => f.shelfId).filter((id): id is number => id !== null))];
+    for (const shelfId of shelfIds) {
+      const colours = failed.filter((f) => f.shelfId === shelfId).map((f) => f.colour);
+      const [shelfClash] = await tx
+        .select({ colour: p.colour })
+        .from(p)
+        .where(and(eq(p.shelfId, shelfId), inArray(p.colour, colours), live));
+      if (shelfClash) {
+        throw new ReplenishmentError(`A newer ${shelfClash.colour} top-up for this shelf is already in the queue; decide that one instead.`, 'bad_state');
+      }
     }
 
     const o = replenishmentOrders;
