@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Boxes } from 'lucide-react';
 import { notFound } from 'next/navigation';
 import {
   getCounterHistory,
@@ -10,6 +10,8 @@ import {
   listDeviceAlarms,
   listDeviceOrders,
   listDeviceReplenishment,
+  listShelfForDevice,
+  listShelfSummariesByIds,
   type AlertRow,
   type DeviceOrders,
 } from '@mps/db/queries';
@@ -25,6 +27,7 @@ import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
 import { replenishmentErrorMessage } from '@/components/replenishment';
 import { ReplenishmentCard } from '@/components/replenishment-card';
+import { coveredColours } from '@/components/shelf';
 import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
@@ -183,7 +186,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   // The meters this device has: a mono device never reports `Full Color:Total`, so the page does
   // not ask for it either — nothing downstream can then put an all-em-dash Colour column back.
   const meters = meterChannels(detail.device.isColour);
-  const [history, alarms, alerts, orders, settings, replenishment] = await Promise.all([
+  const [history, alarms, alerts, orders, settings, replenishment, shelfLink] = await Promise.all([
     getCounterHistory(db, id, meters.map((m) => m.counter), HISTORY_DAYS),
     listDeviceAlarms(db, id, { limit: ALARM_LIMIT }),
     listAlerts(db, { drmsId: id }),
@@ -193,7 +196,10 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
       : listDeviceOrders(db, vantageEquipmentId, { limit: ORDER_LIMIT }),
     getDeviceSettings(db, id),
     listDeviceReplenishment(db, id),
+    listShelfForDevice(db, id),
   ]);
+  // The shelf's holdings say which consumables it takes off normal replenishment.
+  const [shelf] = shelfLink ? await listShelfSummariesByIds(db, [shelfLink.shelfId]) : [];
 
   const { device, record, link } = detail;
   const now = new Date();
@@ -266,6 +272,14 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
             {/* Still monitored, but never counts towards "Needs toner" or raises a proposal. */}
             {settings && !settings.autoReplenish.value ? (
               <ToneBadge tone="muted">Manual replenishment</ToneBadge>
+            ) : null}
+            {shelfLink ? (
+              <Link href={`/site-stock/${shelfLink.shelfId}`} className="rounded-full hover:opacity-80">
+                <ToneBadge tone="muted" dot={false}>
+                  <Boxes aria-hidden className="size-3.5" />
+                  Site stock: {shelfLink.siteName} · {shelfLink.familyName}
+                </ToneBadge>
+              </Link>
             ) : null}
           </>
         }
@@ -417,6 +431,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
               unlinked={vantageEquipmentId == null}
               error={settingsError}
               decisionError={decisionError}
+              siteStock={shelf ? { shelfId: shelf.id, covered: coveredColours(shelf.isColour, shelf.holding) } : null}
             />
           ) : null}
 

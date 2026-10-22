@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import type { ReplenishColour } from '@mps/core';
 import type { EffectiveSettings, QueueOrder, QueueProposal, SettingSource } from '@mps/db/queries';
 import { updateDeviceSettingsAction } from '@/app/(app)/devices/[id]/actions';
 import {
@@ -11,6 +12,7 @@ import {
 } from '@/components/replenishment';
 import { ReviewForm } from '@/components/replenishment-queue';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
+import { coveredColoursText } from '@/components/shelf';
 import { ToneBadge } from '@/components/tone-badge';
 import { formatDate } from '@/lib/format';
 
@@ -28,6 +30,8 @@ export interface ReplenishmentCardProps {
   error?: string | null;
   /** A sentence for `?error=` from an approve/reject made on this card. */
   decisionError?: string | null;
+  /** The site stock shelf this device draws from, and the consumables it holds (none: no note). */
+  siteStock?: { shelfId: number; covered: ReplenishColour[] } | null;
 }
 
 const COLOURS = ['black', 'cyan', 'magenta', 'yellow'] as const;
@@ -53,6 +57,7 @@ export function ReplenishmentCard({
   unlinked,
   error,
   decisionError,
+  siteStock,
 }: ReplenishmentCardProps) {
   const pending = proposals.filter((p) => p.status === 'pending');
   const decided = proposals.filter((p) => p.status !== 'pending');
@@ -89,6 +94,16 @@ export function ReplenishmentCard({
       {error ? (
         <p role="alert" className="mt-3 rounded-lg bg-critical/5 px-3 py-2 text-[13px] text-critical">
           {error}
+        </p>
+      ) : null}
+
+      {siteStock && siteStock.covered.length > 0 ? (
+        <p className="mt-3 rounded-lg bg-brand-soft/60 px-3 py-2 text-[13px]">
+          Normal proposals off for {coveredColoursText(siteStock.covered)} —{' '}
+          <Link href={`/site-stock/${siteStock.shelfId}`} className="font-medium text-brand hover:underline">
+            on a site stock shelf
+          </Link>
+          .
         </p>
       ) : null}
 

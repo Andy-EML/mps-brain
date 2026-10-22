@@ -9,6 +9,7 @@ export const DEVICE_ORIGINS = {
   devices: { label: 'Devices', href: '/devices' },
   fleet: { label: 'Fleet overview', href: '/' },
   orders: { label: 'Toner orders', href: '/orders' },
+  'site-stock': { label: 'Site stock', href: '/site-stock' },
   reconnect: { label: 'Reconnect', href: '/reconnect' },
   registrations: { label: 'DRMS registrations', href: '/registrations' },
   alerts: { label: 'Alerts', href: '/alerts' },

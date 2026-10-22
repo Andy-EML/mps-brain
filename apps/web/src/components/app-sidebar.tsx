@@ -1,5 +1,6 @@
 import {
   Bell,
+  Boxes,
   ClipboardCheck,
   LayoutGrid,
   Link2Off,
@@ -45,6 +46,7 @@ export function AppSidebar({
         <NavLink href="/" label="Fleet overview" icon={<LayoutGrid />} exact />
         <NavLink href="/devices" label="Devices" icon={<Printer />} />
         <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
+        <NavLink href="/site-stock" label="Site stock" icon={<Boxes />} />
         {/* "Needs reconnecting" truncated beside its badge; the page keeps the full name as its title. */}
         <NavLink
           href="/reconnect"
