@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { QueueDevice, QueueProposal } from '@mps/db/queries';
-import { approveAllFields, pagesSinceText, reviewChips, reviewOrderLines } from './review-row';
+import { approveAllFields, pagesSinceText, proposalGroups, reviewChips, reviewOrderLines, topUpChips, topUpWhy } from './review-row';
 
 const proposal = (over: Partial<QueueProposal> = {}): QueueProposal => ({
   id: 1,
@@ -66,6 +66,53 @@ describe('reviewChips', () => {
       ['W', null, true, true],
     ]);
     expect(chips.map((c) => c.label)).toEqual(['Black 12% (proposed, DRMS alarm)', 'Waste toner box (proposed, DRMS alarm)']);
+  });
+});
+
+describe('site stock top-ups', () => {
+  const shelf = { id: 4, siteName: 'Hereford', familyName: 'C450i / C550i / C650i', machines: 2 };
+  const topUp = (over: Partial<QueueProposal>) =>
+    proposal({ trigger: 'site_stock', shelfId: 4, level: null, currentLevel: null, ...over });
+
+  it("splits the top-up lines from the device's own proposals", () => {
+    const own = proposal({ id: 1, colour: 'magenta' });
+    const k = topUp({ id: 2, colour: 'black', quantity: 3 });
+    expect(proposalGroups({ shelf, proposals: [k, own] })).toEqual({ topUp: [k], own: [own] });
+  });
+
+  it("treats every proposal as the device's own when the shelf is missing (dangling) or another one", () => {
+    const k = topUp({ id: 2 });
+    expect(proposalGroups({ shelf: null, proposals: [k] })).toEqual({ topUp: [], own: [k] });
+    expect(proposalGroups({ shelf: { ...shelf, id: 9 }, proposals: [k] })).toEqual({ topUp: [], own: [k] });
+  });
+
+  it('shows one chip per top-up line with the cartridges to send, in K C M Y W order', () => {
+    const chips = topUpChips([
+      topUp({ id: 3, colour: 'yellow', quantity: 1 }),
+      topUp({ id: 2, colour: 'black', quantity: 3 }),
+      topUp({ id: 5, colour: 'waste', quantity: 2 }),
+      topUp({ id: 4, colour: 'cyan', quantity: 1 }),
+    ]);
+    expect(chips.map((c) => [c.colour, c.text])).toEqual([
+      ['black', 'K × 3'],
+      ['cyan', 'C × 1'],
+      ['yellow', 'Y × 1'],
+      ['waste', 'W × 2'],
+    ]);
+    expect(chips[0]!.label).toBe('Black × 3 (site stock top-up)');
+  });
+
+  it('clamps a stored quantity on the chip to what the form will post', () => {
+    expect(topUpChips([topUp({ quantity: 40 })])[0]!.text).toBe('K × 20');
+  });
+
+  it('explains the top-up by its newest line', () => {
+    const lines = [
+      topUp({ id: 2, colour: 'black', createdAt: new Date('2026-10-19T10:00:00Z') }),
+      topUp({ id: 3, colour: 'cyan', createdAt: new Date('2026-10-12T10:00:00Z') }),
+    ];
+    expect(topUpWhy(lines, 'Reception C450i')).toBe('Last black spare went in 19 Oct 2026 (Reception C450i)');
+    expect(topUpWhy([], 'Reception C450i')).toBeNull();
   });
 });
 

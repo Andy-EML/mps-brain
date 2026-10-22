@@ -2,7 +2,7 @@ import type { OrderColour, ReplenishColour } from '@mps/core';
 import type { PagesSince, QueueDevice, QueueProposal, ReviewOrderLine } from '@mps/db/queries';
 // Relative, not `@/…`: Vitest has no `@/` alias and this module is unit-tested.
 import { formatDate, formatNumber, formatPercent } from '../lib/format';
-import { colourLabel } from './replenishment';
+import { colourLabel, triggerLabel } from './replenishment';
 
 /**
  * Pure helpers for the collapsed rows of the `/orders` Review tab. Free of JSX so they can be
@@ -63,6 +63,53 @@ export function reviewChips(
         [colourLabel(colour), levelLabel].filter(Boolean).join(' ') + (notes.length ? ` (${notes.join(', ')})` : '');
       return { key: colour, colour, letter: LETTER[colour], levelText, proposed, alarm, label };
     });
+}
+
+/**
+ * A device's pending proposals split into its site stock top-up (lines for the device's shelf)
+ * and its own. With no shelf — none, or a dangling `shelfId` the query could not resolve — every
+ * proposal is the device's own, so the row degrades to a normal one.
+ */
+export function proposalGroups(device: Pick<QueueDevice, 'shelf' | 'proposals'>): {
+  topUp: QueueProposal[];
+  own: QueueProposal[];
+} {
+  const shelfId = device.shelf?.id;
+  const topUp: QueueProposal[] = [];
+  const own: QueueProposal[] = [];
+  for (const p of device.proposals) (shelfId !== undefined && p.shelfId === shelfId ? topUp : own).push(p);
+  return { topUp, own };
+}
+
+export interface TopUpChip {
+  key: number;
+  colour: ReplenishColour;
+  /** `K × 3`: the cartridges to send to the shelf. */
+  text: string;
+  /** Accessible name and tooltip: `Black × 3 (site stock top-up)`. */
+  label: string;
+}
+
+/** One chip per top-up line, in K C M Y W order, at the quantity the Approve all form posts. */
+export function topUpChips(proposals: readonly QueueProposal[]): TopUpChip[] {
+  return [...proposals]
+    .sort((a, b) => ORDER[a.colour] - ORDER[b.colour] || a.id - b.id)
+    .map((p) => {
+      const quantity = clampQuantity(p.quantity);
+      return {
+        key: p.id,
+        colour: p.colour,
+        text: `${LETTER[p.colour]} × ${quantity}`,
+        label: `${colourLabel(p.colour)} × ${quantity} (site stock top-up)`,
+      };
+    });
+}
+
+/** The site row's "why": the newest top-up line's trigger, `Last black spare went in … (device)`. */
+export function topUpWhy(proposals: readonly QueueProposal[], deviceName: string): string | null {
+  let newest: QueueProposal | undefined;
+  for (const p of proposals) if (!newest || p.createdAt.getTime() > newest.createdAt.getTime()) newest = p;
+  return newest ? triggerLabel(newest, deviceName) : null;
 }
 
 /**

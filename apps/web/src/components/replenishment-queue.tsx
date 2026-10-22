@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useFormStatus } from 'react-dom';
 import Link from 'next/link';
-import { BellRing, ChevronRight, Minus, Plus } from 'lucide-react';
+import { BellRing, Boxes, ChevronRight, Minus, Plus } from 'lucide-react';
 import type { QueueDevice, QueueOrder, QueueProposal, QueueTab } from '@mps/db/queries';
 import { cn } from 'cn';
 import {
@@ -23,12 +23,21 @@ import {
   triggerLabel,
 } from '@/components/replenishment';
 import { ReviewDetailPanel, Swatch, type DetailState } from '@/components/review-detail-panel';
-import { MAX_QUANTITY, approveAllFields, clampQuantity, reviewChips } from '@/components/review-row';
+import {
+  MAX_QUANTITY,
+  approveAllFields,
+  clampQuantity,
+  proposalGroups,
+  reviewChips,
+  topUpChips,
+  topUpWhy,
+} from '@/components/review-row';
+import { ConsumablePill } from '@/components/shelf-pills';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { deviceHref } from '@/lib/device-origin';
-import { formatDate, formatDateTime, formatPercent } from '@/lib/format';
+import { formatDate, formatDateTime, formatPercent, pluralise } from '@/lib/format';
 import { hrefWith } from '@/lib/href';
 
 export interface ReplenishmentQueueProps {
@@ -75,15 +84,48 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
   );
 }
 
-/** `back` is this tab's URL, so the device page's Back link returns to the same tab. */
+type QueueShelf = NonNullable<QueueDevice['shelf']>;
+
+/** `Site stock` beside a site name, or on an order or line that topped a shelf up. */
+function SiteStockBadge() {
+  return (
+    <ToneBadge tone="muted" dot={false} className="gap-1 px-2 py-0.5 text-[12px]">
+      <Boxes aria-hidden className="size-3" />
+      Site stock
+    </ToneBadge>
+  );
+}
+
+/** `2 machines · C450i / C550i / C650i`. */
+function shelfMeta(shelf: QueueShelf): string {
+  return `${shelf.machines} ${pluralise(shelf.machines, 'machine')} · ${shelf.familyName}`;
+}
+
+/**
+ * `back` is this tab's URL, so the device page's Back link returns to the same tab. A device that
+ * tops up a site stock shelf is headed by the site (linked to the shelf), the device beneath it.
+ */
 function DeviceHeading({ device, back }: { device: QueueDevice; back: string }) {
   const where = [device.customerName, device.location].filter(Boolean).join(' · ');
   // The fallback display name already ends in the model; an equipment Name usually does not.
   const showModel = device.model !== null && !device.displayName.includes(device.model);
+  const shelf = device.shelf;
   return (
     <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
       <div className="min-w-0">
-        <Link href={deviceHref(device.drmsId, 'orders', back)} className="text-[15px] font-medium text-brand hover:underline">
+        {shelf ? (
+          <p className="mb-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Link href={`/site-stock/${shelf.id}`} className="text-[15px] font-medium text-brand hover:underline">
+              {shelf.siteName}
+            </Link>
+            <SiteStockBadge />
+            <span className="text-[13px] text-muted-foreground">{shelfMeta(shelf)}</span>
+          </p>
+        ) : null}
+        <Link
+          href={deviceHref(device.drmsId, 'orders', back)}
+          className={cn('font-medium text-brand hover:underline', shelf ? 'text-[13px]' : 'text-[15px]')}
+        >
           {device.displayName}
         </Link>
         {showModel ? <span className="ml-2 text-[13px] text-muted-foreground">{device.model}</span> : null}
@@ -122,6 +164,11 @@ function ReviewRow({ device }: { device: QueueDevice }) {
   const unlinked = device.vantageEquipmentId === null;
   const where = [device.customerName, device.location].filter(Boolean).join(' · ');
   const showModel = device.model !== null && !device.displayName.includes(device.model);
+  const { topUp, own } = proposalGroups(device);
+  // A row with top-up lines is headed by the site; without them (or with a dangling shelf) it is a normal row.
+  const site = topUp.length > 0 ? device.shelf : null;
+  // On a site row the device's own proposals add only their proposed chips, after the top-up's.
+  const ownChips = site ? reviewChips({ ...device, proposals: own }).filter((c) => c.proposed) : reviewChips(device);
 
   function load() {
     setDetail({ status: 'loading' });
@@ -151,15 +198,31 @@ function ReviewRow({ device }: { device: QueueDevice }) {
             aria-hidden
             className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')}
           />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate">
-              <span className="text-[15px] font-medium">{device.displayName}</span>
-              {showModel ? <span className="ml-2 text-[13px] text-muted-foreground">{device.model}</span> : null}
+          {site ? (
+            <span className="min-w-0 flex-1">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-[15px] font-medium">{site.siteName}</span>
+                <SiteStockBadge />
+              </span>
+              <span className="block truncate text-[13px] text-muted-foreground">{shelfMeta(site)}</span>
+              <span className="block truncate text-[13px] text-muted-foreground">{topUpWhy(topUp, device.displayName)}</span>
             </span>
-            {where ? <span className="block truncate text-[13px] text-muted-foreground">{where}</span> : null}
-          </span>
+          ) : (
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">
+                <span className="text-[15px] font-medium">{device.displayName}</span>
+                {showModel ? <span className="ml-2 text-[13px] text-muted-foreground">{device.model}</span> : null}
+              </span>
+              {where ? <span className="block truncate text-[13px] text-muted-foreground">{where}</span> : null}
+            </span>
+          )}
           <span className="flex shrink-0 flex-wrap items-center gap-1.5">
-            {reviewChips(device).map((chip) => (
+            {site
+              ? topUpChips(topUp).map((chip) => (
+                  <ConsumablePill key={`top-up-${chip.key}`} colour={chip.colour} text={chip.text} label={chip.label} />
+                ))
+              : null}
+            {ownChips.map((chip) => (
               <span
                 key={chip.key}
                 title={chip.label}
@@ -186,18 +249,29 @@ function ReviewRow({ device }: { device: QueueDevice }) {
           {approveAllFields(device.drmsId, device.proposals).map(([name, value], i) => (
             <input key={i} type="hidden" name={name} value={value} />
           ))}
-          <ApproveAllButton unlinked={unlinked} count={device.proposals.length} name={device.displayName} />
+          <ApproveAllButton unlinked={unlinked} count={device.proposals.length} name={site?.siteName ?? device.displayName} />
         </form>
       </div>
       <div id={panelId} hidden={!open} className="pt-3 pb-2 pl-7">
         {detail !== null ? (
           <>
-            <ReviewForm drmsId={device.drmsId} proposals={device.proposals} unlinked={unlinked} />
+            <ReviewForm
+              drmsId={device.drmsId}
+              proposals={device.proposals}
+              unlinked={unlinked}
+              deviceName={device.displayName}
+              shelf={site}
+            />
             <ReviewDetailPanel state={detail} proposals={device.proposals} onRetry={load} />
-            <p className="mt-4 text-[13px]">
+            <p className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
               <Link href={deviceHref(device.drmsId, 'orders')} className="text-brand hover:underline">
                 Open device page
               </Link>
+              {site ? (
+                <Link href={`/site-stock/${site.id}`} className="text-brand hover:underline">
+                  Open site stock shelf
+                </Link>
+              ) : null}
             </p>
           </>
         ) : null}
@@ -230,6 +304,13 @@ export interface ReviewFormProps {
   unlinked: boolean;
   /** Set on the device page, so a refused decision comes back there (see `decisionBackPath`). */
   back?: 'device';
+  /** The machine the proposals are on, named in a top-up's reason; left out on the device page. */
+  deviceName?: string;
+  /**
+   * The site stock shelf the device tops up, when it has top-up lines: they are listed first under
+   * the site, the device's own proposals beneath. Still one form — both groups are this device's.
+   */
+  shelf?: QueueShelf | null;
 }
 
 /**
@@ -237,16 +318,41 @@ export interface ReviewFormProps {
  * selected + reason. Used by the queue's Review tab and the device page's Replenishment card; both
  * post to the same actions, which revalidate both pages.
  */
-export function ReviewForm({ drmsId, proposals, unlinked, back }: ReviewFormProps) {
+export function ReviewForm({ drmsId, proposals, unlinked, back, deviceName, shelf }: ReviewFormProps) {
+  const { topUp, own } = proposalGroups({ shelf: shelf ?? null, proposals });
+  const rows = (list: QueueProposal[]) => (
+    <div className="grid gap-2">
+      {list.map((p) => (
+        <ProposalRow key={p.id} proposal={p} deviceName={deviceName} />
+      ))}
+    </div>
+  );
   return (
     <form action={approveAction}>
       <input type="hidden" name="drmsId" value={drmsId} />
       {back ? <input type="hidden" name="back" value={back} /> : null}
-      <div className="grid gap-2">
-        {proposals.map((p) => (
-          <ProposalRow key={p.id} proposal={p} />
-        ))}
-      </div>
+      {shelf && topUp.length > 0 ? (
+        <div className="grid gap-4">
+          <section aria-label={`Site stock top-up for ${shelf.siteName}`}>
+            <h3 className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] font-medium">
+              <span>Site stock top-up</span>
+              <Link href={`/site-stock/${shelf.id}`} className="text-brand hover:underline">
+                {shelf.siteName}
+              </Link>
+              <span className="font-normal text-muted-foreground">{shelfMeta(shelf)}</span>
+            </h3>
+            {rows(topUp)}
+          </section>
+          {own.length > 0 ? (
+            <section aria-label={`Proposals for ${deviceName ?? 'this machine'}`}>
+              <h3 className="mb-2 text-[13px] font-medium">This machine{deviceName ? ` · ${deviceName}` : ''}</h3>
+              {rows(own)}
+            </section>
+          ) : null}
+        </div>
+      ) : (
+        rows(proposals)
+      )}
       {unlinked ? (
         <p className="mt-3 text-[13px] text-critical">
           Not linked to Vantage equipment, so nothing can be ordered for it. Link it, or reject these proposals.
@@ -259,7 +365,14 @@ export function ReviewForm({ drmsId, proposals, unlinked, back }: ReviewFormProp
   );
 }
 
-function ProposalRow({ proposal: p }: { proposal: QueueProposal }) {
+/** The reason's colour: red for a low level, amber for a DRMS alarm, plain for a site stock top-up. */
+const TRIGGER_TEXT: Record<QueueProposal['trigger'], string> = {
+  threshold: 'text-critical',
+  alarm: 'text-warn',
+  site_stock: 'text-muted-foreground',
+};
+
+function ProposalRow({ proposal: p, deviceName }: { proposal: QueueProposal; deviceName?: string }) {
   const [quantity, setQuantity] = useState(String(clampQuantity(p.quantity)));
   const context = orderContext(p);
   const checkboxId = `proposal-${p.id}`;
@@ -277,9 +390,10 @@ function ProposalRow({ proposal: p }: { proposal: QueueProposal }) {
       <label htmlFor={checkboxId} className="min-w-0 flex-1">
         <span className="block text-sm font-medium">{colourLabel(p.colour)}</span>
         <span className="block text-[13px] text-muted-foreground">
-          <span className={p.trigger === 'alarm' ? 'text-warn' : 'text-critical'}>{triggerLabel(p)}</span>
+          <span className={TRIGGER_TEXT[p.trigger]}>{triggerLabel(p, deviceName)}</span>
           {p.thresholdSource && p.trigger === 'threshold' ? <> · {sourceLabel(p.thresholdSource)}</> : null}
-          {p.currentLevel !== null ? <> · now {formatPercent(p.currentLevel)}</> : null}
+          {/* A top-up restocks the shelf: this machine's own level says nothing about it. */}
+          {p.currentLevel !== null && p.trigger !== 'site_stock' ? <> · now {formatPercent(p.currentLevel)}</> : null}
         </span>
         {context ? (
           <span className={cn('block text-[13px]', context.open ? 'text-warn' : 'text-muted-foreground')}>
@@ -471,6 +585,7 @@ function OrderLine({ order, proposals }: { order: QueueOrder; proposals: QueuePr
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
       <ToneBadge tone={orderStatusTone(order.status)}>{orderStatusLabel(order.status)}</ToneBadge>
+      {proposals.some((p) => p.shelfId !== null) ? <SiteStockBadge /> : null}
       <span className="text-sm">{linesText(proposals)}</span>
       <span className="text-[13px] text-muted-foreground">
         Approved {formatDateTime(order.createdAt)}
@@ -507,20 +622,24 @@ function PendingButton({
 function Ordered({ device }: { device: QueueDevice }) {
   return (
     <div className="grid gap-2">
-      {device.orders.map((order) => (
-        <div
-          key={order.id}
-          className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line px-4 py-3"
-        >
-          <span className="font-mono text-sm">{order.vantageReference ?? '—'}</span>
-          <span className="text-sm">{linesText(proposalsOf(device, order))}</span>
-          <span className="text-[13px] text-muted-foreground">
-            {formatDate(order.submittedAt ?? order.createdAt)}
-            {order.createdBy ? ` · approved by ${order.createdBy}` : ''}
-          </span>
-          {order.isOnHold ? <ToneBadge tone="warn">On hold in Vantage</ToneBadge> : null}
-        </div>
-      ))}
+      {device.orders.map((order) => {
+        const proposals = proposalsOf(device, order);
+        return (
+          <div
+            key={order.id}
+            className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line px-4 py-3"
+          >
+            <span className="font-mono text-sm">{order.vantageReference ?? '—'}</span>
+            {proposals.some((p) => p.shelfId !== null) ? <SiteStockBadge /> : null}
+            <span className="text-sm">{linesText(proposals)}</span>
+            <span className="text-[13px] text-muted-foreground">
+              {formatDate(order.submittedAt ?? order.createdAt)}
+              {order.createdBy ? ` · approved by ${order.createdBy}` : ''}
+            </span>
+            {order.isOnHold ? <ToneBadge tone="warn">On hold in Vantage</ToneBadge> : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -534,7 +653,8 @@ function Rejected({ device }: { device: QueueDevice }) {
         <div key={p.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line px-4 py-3">
           <Swatch colour={p.colour} />
           <span className="text-sm font-medium">{colourLabel(p.colour)}</span>
-          <span className="text-[13px] text-muted-foreground">{triggerLabel(p)}</span>
+          {p.shelfId !== null ? <SiteStockBadge /> : null}
+          <span className="text-[13px] text-muted-foreground">{triggerLabel(p, device.displayName)}</span>
           <span className="text-[13px] text-muted-foreground">
             {p.status === 'superseded'
               ? `${supersededText(p.note)} · ${formatDateTime(p.decidedAt)}`

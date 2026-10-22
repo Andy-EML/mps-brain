@@ -28,10 +28,22 @@ export interface TriggerFields {
   level?: number | null;
   threshold?: number | null;
   alarmDescription?: string | null;
+  /** For a site stock top-up: the consumable whose last spare went in, and when (the proposal time). */
+  colour?: ReplenishColour;
+  createdAt?: Date | string | null;
 }
 
-/** Why the proposal exists: `4% · below 10%`, or `DRMS alarm: Toner Near Empty(C)`. */
-export function triggerLabel(p: TriggerFields): string {
+/**
+ * Why the proposal exists: `4% · below 10%`, `DRMS alarm: Toner Near Empty(C)`, or for a site
+ * stock top-up `Last black spare went in 19 Oct 2026 (Reception C450i)` — `deviceName` is the
+ * machine that raised it, left out when not given (the device page is that machine).
+ */
+export function triggerLabel(p: TriggerFields, deviceName?: string): string {
+  if (p.trigger === 'site_stock') {
+    const what = p.colour ? `Last ${colourLabel(p.colour).toLowerCase()} spare` : 'Last spare';
+    const where = deviceName ? ` (${deviceName})` : '';
+    return `${what} went in ${formatDate(p.createdAt)}${where}`;
+  }
   if (p.trigger === 'alarm') {
     const description = p.alarmDescription?.trim();
     return description ? `DRMS alarm: ${description}` : 'DRMS alarm';

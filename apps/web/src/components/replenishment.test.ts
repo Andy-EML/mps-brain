@@ -37,6 +37,23 @@ describe('triggerLabel', () => {
     expect(triggerLabel({ trigger: 'threshold', level: null, threshold: 10 })).toBe('— · below 10%');
     expect(triggerLabel({ trigger: 'threshold', level: 4, threshold: null })).toBe('4%');
   });
+
+  it('says when and where the last spare went in for a site stock top-up, on the London date', () => {
+    // 23:30 UTC on 19 Oct is 00:30 on 20 Oct in London (BST).
+    const createdAt = new Date('2026-10-19T23:30:00Z');
+    expect(triggerLabel({ trigger: 'site_stock', colour: 'black', createdAt }, 'Reception C450i')).toBe(
+      'Last black spare went in 20 Oct 2026 (Reception C450i)',
+    );
+    expect(triggerLabel({ trigger: 'site_stock', colour: 'waste', createdAt }, 'Reception C450i')).toBe(
+      'Last waste toner box spare went in 20 Oct 2026 (Reception C450i)',
+    );
+  });
+
+  it('drops the device for a top-up when no name is given', () => {
+    expect(triggerLabel({ trigger: 'site_stock', colour: 'cyan', createdAt: new Date('2026-10-01T09:00:00Z') })).toBe(
+      'Last cyan spare went in 1 Oct 2026',
+    );
+  });
 });
 
 describe('sourceLabel', () => {
