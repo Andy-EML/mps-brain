@@ -57,7 +57,7 @@ const FAMILY_ERRORS: Record<SiteStockErrorCode, string> = {
   not_found: 'That family no longer exists. Refresh the page and try again.',
   bad_value: 'Check the form: a family needs a name, and a rated yield is a whole number of pages, 1 or more.',
   duplicate: 'Another family already has that name, or one of those models already belongs to another family.',
-  in_use: 'Shelves still use this family. Delete them first.',
+  in_use: 'Shelves still use this family. Delete them first; to make it mono, set their cyan, magenta and yellow to 0 first.',
   empty: 'Nothing was changed.',
 };
 

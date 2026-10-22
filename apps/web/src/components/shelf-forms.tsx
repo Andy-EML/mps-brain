@@ -4,7 +4,7 @@ import { useId, useState, useTransition } from 'react';
 import { useFormStatus } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { Loader2, Minus, Pencil, Plus, Search, Trash2 } from 'lucide-react';
-import { MAX_HOLDING, type ReplenishColour, type ShelfConsumableCounts } from '@mps/core';
+import { MAX_HOLDING, MAX_USED, type ReplenishColour, type ShelfConsumableCounts } from '@mps/core';
 import type { VantageCustomerMatch } from '@mps/db/queries';
 import { cn } from 'cn';
 import {
@@ -446,6 +446,7 @@ function CorrectCountsDialog({ shelfId, isColour, used, error }: CorrectCountsDi
                   type="number"
                   inputMode="numeric"
                   min={0}
+                  max={MAX_USED}
                   step={1}
                   value={values[c]}
                   onChange={(e) => setValues((v) => ({ ...v, [c]: e.target.value }))}

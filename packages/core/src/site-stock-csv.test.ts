@@ -34,6 +34,11 @@ describe('validateImport', () => {
     expect(run(row({ hold_cyan: '-1' })).errors[0]!.message).toContain('hold_cyan');
     expect(run(row({ used_waste: '-1' })).errors[0]!.message).toContain('used_waste');
   });
+  it('caps used at 999', () => {
+    expect(run(row({ used_black: '999' })).errors).toEqual([]);
+    expect(run(row({ used_black: '1000' })).errors[0]!.message).toContain('used_black must be 0 to 999');
+    expect(run(row({ used_cyan: '99999999999' })).errors[0]!.message).toContain('used_cyan must be 0 to 999');
+  });
   it('rejects a bad customer id and an empty family', () => {
     expect(run(row({ vantage_customer_id: '0' })).errors).toHaveLength(1);
     expect(run(row({ family: ' ' })).errors).toHaveLength(1);

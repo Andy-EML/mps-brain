@@ -3,7 +3,7 @@
  * adds) and row validation. Pure — no I/O.
  */
 import { REPLENISH_COLOURS } from './replenishment';
-import { MAX_HOLDING, type ShelfConsumableCounts } from './site-stock';
+import { MAX_HOLDING, MAX_USED, type ShelfConsumableCounts } from './site-stock';
 
 export const SITE_STOCK_CSV_HEADERS = [
   'vantage_customer_id',
@@ -143,8 +143,8 @@ export function validateImport(rows: string[][]): { rows: ImportRow[]; errors: I
           problems.push(`${name} must be 0 to ${MAX_HOLDING}`);
           continue;
         }
-        if (prefix === 'used' && n < 0) {
-          problems.push(`${name} must be 0 or more`);
+        if (prefix === 'used' && (n < 0 || n > MAX_USED)) {
+          problems.push(`${name} must be 0 to ${MAX_USED}`);
           continue;
         }
         (prefix === 'hold' ? holding : used)[colour] = n;

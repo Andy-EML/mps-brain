@@ -112,7 +112,7 @@ describe('parseFamilyForm', () => {
 
 describe('familyErrorMessage', () => {
   it('turns a known code into its sentence and anything else into a fallback', () => {
-    expect(familyErrorMessage('in_use')).toBe('Shelves still use this family. Delete them first.');
+    expect(familyErrorMessage('in_use')).toBe('Shelves still use this family. Delete them first; to make it mono, set their cyan, magenta and yellow to 0 first.');
     expect(familyErrorMessage('<script>')).toBe('The family was not saved. Refresh the page and try again.');
   });
 });

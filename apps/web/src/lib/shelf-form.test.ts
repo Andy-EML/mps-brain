@@ -22,9 +22,11 @@ describe('parseCounts', () => {
     expect(parseCounts(form([['holding-black', '3'], ['holding-waste', '']]), 'holding')).toEqual({ black: 3, waste: 0 });
   });
 
-  it('caps a holding at 20 but not a used count', () => {
+  it('caps a holding at 20 and a used count at 999', () => {
     expect(codeOf(() => parseCounts(form([['holding-black', '21']]), 'holding'))).toBe('bad_value');
     expect(parseCounts(form([['used-black', '21']]), 'used')).toEqual({ black: 21 });
+    expect(parseCounts(form([['used-black', '999']]), 'used')).toEqual({ black: 999 });
+    expect(codeOf(() => parseCounts(form([['used-black', '1000']]), 'used'))).toBe('bad_value');
   });
 
   it('refuses anything but a whole number 0 or more', () => {

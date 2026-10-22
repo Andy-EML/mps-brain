@@ -60,6 +60,8 @@ describe('encodeImportRows / decodeImportRows', () => {
     expect(decodeImportRows(tamper(3, 21))).toBeNull(); // holding over the max
     expect(decodeImportRows(tamper(3, 1.5))).toBeNull(); // holding not whole
     expect(decodeImportRows(tamper(8, -1))).toBeNull(); // used below 0
+    expect(decodeImportRows(tamper(8, 1000))).toBeNull(); // used over 999
+    expect(decodeImportRows(tamper(8, 999))).not.toBeNull();
     expect(decodeImportRows(tamper(12, null))).toBeNull(); // used missing
   });
 });

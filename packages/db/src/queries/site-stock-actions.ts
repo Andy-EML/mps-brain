@@ -1,4 +1,4 @@
-import { MAX_HOLDING, REPLENISH_COLOURS, type ImportRow, type ReplenishColour, type ShelfConsumableCounts } from '@mps/core';
+import { MAX_HOLDING, MAX_USED, REPLENISH_COLOURS, type ImportRow, type ReplenishColour, type ShelfConsumableCounts } from '@mps/core';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import {
@@ -40,10 +40,10 @@ function checkCounts(kind: 'holding' | 'used', counts: Partials | undefined): Pa
   for (const c of REPLENISH_COLOURS) {
     const v = counts?.[c];
     if (v === undefined) continue;
-    const max = kind === 'holding' ? MAX_HOLDING : Number.MAX_SAFE_INTEGER;
+    const max = kind === 'holding' ? MAX_HOLDING : MAX_USED;
     if (!Number.isInteger(v) || v < 0 || v > max) {
       throw new SiteStockError(
-        kind === 'holding' ? `A holding is a whole number from 0 to ${MAX_HOLDING}.` : 'A used count is a whole number, 0 or more.',
+        kind === 'holding' ? `A holding is a whole number from 0 to ${MAX_HOLDING}.` : `A used count is a whole number from 0 to ${MAX_USED}.`,
         'bad_value',
       );
     }
@@ -106,6 +106,17 @@ export async function saveFamily(db: Db, args: SaveFamilyArgs): Promise<{ family
     const f = cartridgeFamilies;
     const [clash] = await tx.select({ id: f.id }).from(f).where(sql`lower(${f.name}) = ${name.toLowerCase()}`);
     if (clash && clash.id !== args.id) throw new SiteStockError(`A family called "${name}" already exists.`, 'duplicate');
+    if (args.id !== undefined && !args.isColour) {
+      const s = siteStockShelves;
+      const [colourHeld] = await tx
+        .select({ id: s.id })
+        .from(s)
+        .where(and(eq(s.familyId, args.id), sql`(${s.holdingCyan} > 0 or ${s.holdingMagenta} > 0 or ${s.holdingYellow} > 0)`))
+        .limit(1);
+      if (colourHeld) {
+        throw new SiteStockError('A shelf for this family still holds cyan, magenta or yellow. Set those to 0 before making it mono.', 'in_use');
+      }
+    }
 
     let familyId: number;
     if (args.id === undefined) {

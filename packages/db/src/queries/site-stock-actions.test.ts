@@ -114,6 +114,18 @@ describe('site stock writes', () => {
       expect((await t.db.select().from(cartridgeFamilyModels)).map((m) => m.model)).toEqual(['bizhub C300i']);
       expect(await audits('family.delete')).toHaveLength(1);
     });
+
+    it('refuses to make a family mono while one of its shelves holds cyan, magenta or yellow', async () => {
+      const { shelfId } = await createShelf(t.db, { vantageCustomerId: 1, familyId: famId, holding: { black: 2, magenta: 1 }, userId: alice, now: NOW });
+      const mono = { id: famId, name: 'C-series', isColour: false, models: ['bizhub C300i'], ratedYield: {}, userId: alice, now: LATER };
+      await expect(saveFamily(t.db, mono)).rejects.toMatchObject({ code: 'in_use' });
+      expect((await t.db.select().from(cartridgeFamilies))[0]).toMatchObject({ isColour: true });
+      expect(await audits('family.update')).toHaveLength(0);
+
+      await updateShelf(t.db, { shelfId, holding: { magenta: 0 }, userId: alice });
+      await saveFamily(t.db, mono);
+      expect((await t.db.select().from(cartridgeFamilies))[0]).toMatchObject({ isColour: false });
+    });
   });
 
   describe('shelves', () => {
@@ -155,6 +167,13 @@ describe('site stock writes', () => {
       await expect(updateShelf(t.db, { shelfId: 9999, holding: { black: 1 }, userId: alice })).rejects.toMatchObject({ code: 'not_found' });
       expect((await shelves())[0]!.holdingBlack).toBe(3);
       expect(await audits('shelf.update')).toHaveLength(0);
+    });
+
+    it('caps a used count at 999 on create and on the manual correction', async () => {
+      await expect(createShelf(t.db, { vantageCustomerId: 1, familyId: famId, holding: {}, used: { black: 1000 }, userId: alice })).rejects.toMatchObject({ code: 'bad_value', message: expect.stringContaining('0 to 999') });
+      const { shelfId } = await createShelf(t.db, { vantageCustomerId: 1, familyId: famId, holding: { black: 3 }, used: { black: 999 }, userId: alice });
+      await expect(updateShelf(t.db, { shelfId, used: { cyan: 1000 }, userId: alice })).rejects.toMatchObject({ code: 'bad_value' });
+      expect((await shelves())[0]).toMatchObject({ usedBlack: 999, usedCyan: 0 });
     });
   });
 

@@ -11,6 +11,8 @@ export const FRESH_CARTRIDGE_LEVEL = 80;
 export const RECOUNT_DAYS = 14;
 /** (agreed) A shelf holds, and a top-up orders, at most this many of one consumable. */
 export const MAX_HOLDING = 20;
+/** Upper bound on a shelf's `used_*` count when set by hand or imported (keeps it well inside an int). */
+export const MAX_USED = 999;
 
 const DAY_MS = 86_400_000;
 

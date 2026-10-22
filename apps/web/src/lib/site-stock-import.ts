@@ -1,4 +1,4 @@
-import { MAX_HOLDING, REPLENISH_COLOURS, type ImportRow, type ShelfConsumableCounts } from '@mps/core';
+import { MAX_HOLDING, MAX_USED, REPLENISH_COLOURS, type ImportRow, type ShelfConsumableCounts } from '@mps/core';
 
 /**
  * The site stock CSV import's plumbing between its two steps. *Preview* parses and validates the
@@ -65,7 +65,7 @@ export function decodeImportRows(text: FormDataEntryValue | null): ImportRow[] |
     for (const [i, c] of REPLENISH_COLOURS.entries()) {
       const h = counts[i];
       const u = counts[REPLENISH_COLOURS.length + i];
-      if (!isWhole(h, 0, MAX_HOLDING) || !isWhole(u, 0)) return null;
+      if (!isWhole(h, 0, MAX_HOLDING) || !isWhole(u, 0, MAX_USED)) return null;
       holding[c] = h;
       used[c] = u;
     }

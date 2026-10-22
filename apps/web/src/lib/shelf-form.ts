@@ -1,4 +1,4 @@
-import { MAX_HOLDING, REPLENISH_COLOURS, type ShelfConsumableCounts } from '@mps/core';
+import { MAX_HOLDING, MAX_USED, REPLENISH_COLOURS, type ShelfConsumableCounts } from '@mps/core';
 import { SiteStockError, type SiteStockErrorCode } from '@mps/db/queries';
 
 /**
@@ -24,7 +24,7 @@ export function parseId(formData: FormData, name: string, what: string): number 
 
 /**
  * The counts present in the form. A holding is a whole number 0–`MAX_HOLDING`; a used count a whole
- * number 0 or more. A blank field is 0.
+ * number 0–`MAX_USED`. A blank field is 0.
  */
 export function parseCounts(formData: FormData, prefix: 'holding' | 'used'): Partial<ShelfConsumableCounts> {
   const out: Partial<ShelfConsumableCounts> = {};
@@ -32,9 +32,9 @@ export function parseCounts(formData: FormData, prefix: 'holding' | 'used'): Par
     if (!formData.has(`${prefix}-${c}`)) continue;
     const raw = text(formData, `${prefix}-${c}`);
     const value = raw === '' ? 0 : /^\d{1,6}$/.test(raw) ? Number(raw) : NaN;
-    if (!Number.isInteger(value) || (prefix === 'holding' && value > MAX_HOLDING)) {
+    if (!Number.isInteger(value) || value > (prefix === 'holding' ? MAX_HOLDING : MAX_USED)) {
       throw new SiteStockError(
-        prefix === 'holding' ? `A holding is a whole number from 0 to ${MAX_HOLDING}.` : 'A used count is a whole number, 0 or more.',
+        prefix === 'holding' ? `A holding is a whole number from 0 to ${MAX_HOLDING}.` : `A used count is a whole number from 0 to ${MAX_USED}.`,
         'bad_value',
       );
     }
@@ -45,7 +45,7 @@ export function parseCounts(formData: FormData, prefix: 'holding' | 'used'): Par
 
 const SHELF_ERRORS: Record<SiteStockErrorCode, string> = {
   not_found: 'That shelf, customer or family no longer exists. Refresh the page and try again.',
-  bad_value: `Check the numbers: a holding is a whole number from 0 to ${MAX_HOLDING}, a used count 0 or more. A mono shelf holds black and waste only.`,
+  bad_value: `Check the numbers: a holding is a whole number from 0 to ${MAX_HOLDING}, a used count 0 to ${MAX_USED}. A mono shelf holds black and waste only.`,
   duplicate: 'This customer already has a shelf for that family.',
   in_use: 'A top-up for this shelf is approved and waiting to be ordered. Settle it on Toner orders first.',
   empty: 'Nothing was changed.',
