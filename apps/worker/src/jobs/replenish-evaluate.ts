@@ -102,11 +102,13 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       trigger: replenishmentProposals.trigger,
       decidedAt: replenishmentProposals.decidedAt,
       createdAt: replenishmentProposals.createdAt,
+      shelfId: replenishmentProposals.shelfId,
     })
     .from(replenishmentProposals)
     .where(
-      // Shelf top-ups belong to the site-stock job; the device loop never touches them.
-      sql`${replenishmentProposals.shelfId} is null and (${replenishmentProposals.status} in ('pending', 'approved') or (${replenishmentProposals.status} = 'rejected' and ${replenishmentProposals.decidedAt} >= ${rejectedSince}))`,
+      // Shelf top-ups belong to the site-stock job: the device loop never supersedes them and their
+      // rejections are not the device's, but a live one still counts as live for its device + colour.
+      sql`${replenishmentProposals.status} in ('pending', 'approved') or (${replenishmentProposals.shelfId} is null and ${replenishmentProposals.status} = 'rejected' and ${replenishmentProposals.decidedAt} >= ${rejectedSince})`,
     );
 
   const linkedIds = [...new Set(devices.map((d) => d.vantageEquipmentId).filter((id): id is number => id !== null))];
@@ -131,7 +133,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
     // otherwise a same-run alarm proposal for the recovered colour would be silently dropped.
     const toSupersede: { id: number; note: string }[] = [];
     for (const p of mine) {
-      if (p.status !== 'pending') continue;
+      if (p.status !== 'pending' || p.shelfId !== null) continue;
       const ordered = states ? orderedInVantage(states[p.colour], p.createdAt) : null;
       if (ordered !== null) toSupersede.push({ id: p.id, note: `ordered in Vantage (${ordered})` });
       else if (coveredColours.has(p.colour)) toSupersede.push({ id: p.id, note: 'covered by site stock' });

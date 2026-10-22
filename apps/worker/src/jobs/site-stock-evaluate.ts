@@ -6,11 +6,14 @@ import {
   deviceAlarms,
   replenishmentProposals,
   siteStockEvents,
+  siteStockMembers,
   siteStockShelves,
   type Db,
 } from '@mps/db';
 import { TONER_NAMES, shelfDevicesSubquery } from '@mps/db/queries';
 import { and, asc, desc, eq, gt, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+
+type ShelfRow = typeof siteStockShelves.$inferSelect;
 
 export interface SiteStockStats {
   shelves: number;
@@ -42,11 +45,19 @@ function countsOf(prefix: 'holding' | 'used', row: object): ShelfConsumableCount
   return out;
 }
 
+/** Colours a shelf tracks: held (> 0), and cyan, magenta and yellow only for a colour family. */
+function trackedColours(shelf: ShelfRow, isColour: boolean): Set<ReplenishColour> {
+  const holding = countsOf('holding', shelf);
+  return new Set(REPLENISH_COLOURS.filter((c) => holding[c] > 0 && (isColour || c === 'black' || c === 'waste')));
+}
+
 /**
  * Counts new cartridge uses from DRMS "empty" alarms against each shelf, raises a top-up proposal
  * for any shelf that has used up a consumable, and reports which colours each device's shelf now
  * covers (so the per-device engine stops proposing them). Idempotent: an alarm is evaluated once
- * per shelf (`site_stock_events` is unique on shelf + alarm).
+ * per shelf (`site_stock_events` is unique on shelf + alarm). A device counts against a shelf only
+ * from when it joined it (`site_stock_members`), and a pending top-up the shelf no longer covers
+ * is superseded before any new one is raised.
  */
 export async function evaluateSiteStock(
   db: Db,
@@ -67,17 +78,37 @@ export async function evaluateSiteStock(
     .innerJoin(cartridgeFamilies, eq(cartridgeFamilies.id, sd.familyId))
     .orderBy(asc(sd.drmsId));
 
-  // Colours a shelf tracks: held (> 0), and CMY only for a colour family.
-  const shelfOf = new Map<string, { shelfId: number; tracked: Set<ReplenishColour> }>();
+  // Membership start: a device seen on a shelf for the first time joins it now; one no longer on
+  // its shelf leaves (a later return is a fresh join).
+  const memberKey = (shelfId: number, drmsId: string) => `${shelfId}:${drmsId}`;
+  const current = new Set(members.map((m) => memberKey(m.shelfId, m.drmsId)));
+  const recorded = await db.select().from(siteStockMembers);
+  const since = new Map<string, Date>();
+  for (const r of recorded) {
+    if (current.has(memberKey(r.shelfId, r.drmsEquipmentId))) since.set(memberKey(r.shelfId, r.drmsEquipmentId), r.since);
+    else await db.delete(siteStockMembers).where(and(eq(siteStockMembers.shelfId, r.shelfId), eq(siteStockMembers.drmsEquipmentId, r.drmsEquipmentId)));
+  }
+  const joined = members.filter((m) => !since.has(memberKey(m.shelfId, m.drmsId)));
+  if (joined.length > 0) {
+    await db
+      .insert(siteStockMembers)
+      .values(joined.map((m) => ({ shelfId: m.shelfId, drmsEquipmentId: m.drmsId, since: now })))
+      .onConflictDoNothing();
+    for (const m of joined) since.set(memberKey(m.shelfId, m.drmsId), now);
+  }
+
+  // `from`: alarms before the shelf's counting start, or before the device joined it, never count.
+  const shelfOf = new Map<string, { shelfId: number; tracked: Set<ReplenishColour>; from: Date }>();
   for (const m of members) {
-    const holding = countsOf('holding', shelfById.get(m.shelfId)!);
-    const tracked = new Set(REPLENISH_COLOURS.filter((c) => holding[c] > 0 && (m.isColour || c === 'black' || c === 'waste')));
-    shelfOf.set(m.drmsId, { shelfId: m.shelfId, tracked });
+    const shelf = shelfById.get(m.shelfId)!;
+    const tracked = trackedColours(shelf, m.isColour);
+    const joinedAt = since.get(memberKey(m.shelfId, m.drmsId))!;
+    shelfOf.set(m.drmsId, { shelfId: m.shelfId, tracked, from: joinedAt > shelf.countingFrom ? joinedAt : shelf.countingFrom });
     covered.set(m.drmsId, tracked);
   }
 
   if (shelfOf.size > 0) {
-    const minFrom = shelves.reduce((a, s) => (s.countingFrom < a ? s.countingFrom : a), shelves[0]!.countingFrom);
+    const minFrom = [...shelfOf.values()].reduce((a, s) => (s.from < a ? s.from : a), [...shelfOf.values()][0]!.from);
     // Oldest first, so an earlier count feeds the decision on a later alarm in the same run.
     const alarms = await db
       .select({
@@ -99,7 +130,7 @@ export async function evaluateSiteStock(
     for (const a of alarms) {
       const member = shelfOf.get(a.drmsId)!;
       const shelf = shelfById.get(member.shelfId)!;
-      if (a.receivedAt < shelf.countingFrom || seenKeys.has(`${shelf.id}:${a.alarmId}`)) continue;
+      if (a.receivedAt < member.from || seenKeys.has(`${shelf.id}:${a.alarmId}`)) continue;
       const colour = siteStockUse(a.description);
       if (colour === null || !member.tracked.has(colour)) continue;
       stats.considered++;
@@ -163,17 +194,44 @@ export async function evaluateSiteStock(
   }
 
   // Top-ups: one batch per shelf, never while that shelf already has one pending or approved.
-  const fresh = await db.select().from(siteStockShelves);
+  const freshRows = await db
+    .select({ shelf: siteStockShelves, isColour: cartridgeFamilies.isColour })
+    .from(siteStockShelves)
+    .innerJoin(cartridgeFamilies, eq(cartridgeFamilies.id, siteStockShelves.familyId));
+  const trackedByShelf = new Map(freshRows.map((r) => [r.shelf.id, trackedColours(r.shelf, r.isColour)]));
+  const memberByDevice = new Map(members.map((m) => [m.drmsId, m]));
+
+  // A pending top-up whose colour the shelf no longer tracks, or whose device has left the shelf,
+  // is superseded so the device's own proposals take the colour back (and no order goes to a
+  // device off the site). Not a rejection: the same run may raise it again on a current member.
+  const pendingTopUps = await db
+    .select({ id: replenishmentProposals.id, shelfId: replenishmentProposals.shelfId, drmsId: replenishmentProposals.drmsEquipmentId, colour: replenishmentProposals.colour })
+    .from(replenishmentProposals)
+    .where(and(eq(replenishmentProposals.status, 'pending'), isNotNull(replenishmentProposals.shelfId)));
+  for (const p of pendingTopUps) {
+    const tracked = trackedByShelf.get(p.shelfId!);
+    if (!tracked) continue;
+    const note = !tracked.has(p.colour) ? 'no longer held' : memberByDevice.get(p.drmsId)?.shelfId !== p.shelfId ? 'no longer on shelf' : null;
+    if (note === null) continue;
+    await db
+      .update(replenishmentProposals)
+      .set({ status: 'superseded', decidedAt: now, note })
+      .where(and(eq(replenishmentProposals.id, p.id), eq(replenishmentProposals.status, 'pending')));
+  }
+
   const live = await db
     .selectDistinct({ shelfId: replenishmentProposals.shelfId })
     .from(replenishmentProposals)
     .where(and(inArray(replenishmentProposals.status, ['pending', 'approved']), isNotNull(replenishmentProposals.shelfId)));
   const liveShelves = new Set(live.map((l) => l.shelfId));
-  const memberByDevice = new Map(members.map((m) => [m.drmsId, m]));
 
-  for (const shelf of fresh) {
+  for (const { shelf } of freshRows) {
     if (liveShelves.has(shelf.id)) continue;
-    const holding = countsOf('holding', shelf);
+    // Only tracked colours: a mono family's stale cyan, magenta or yellow never triggers or joins.
+    const tracked = trackedByShelf.get(shelf.id)!;
+    const raw = countsOf('holding', shelf);
+    const holding = {} as ShelfConsumableCounts;
+    for (const c of REPLENISH_COLOURS) holding[c] = tracked.has(c) ? raw[c] : 0;
     const used = countsOf('used', shelf);
     const lines = topUpLines(holding, used);
     if (lines.length === 0) continue;

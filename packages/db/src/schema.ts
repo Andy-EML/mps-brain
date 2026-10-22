@@ -10,6 +10,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -510,6 +511,24 @@ export const siteStockShelves = pgTable(
       sql`used_black >= 0 and used_cyan >= 0 and used_magenta >= 0 and used_yellow >= 0 and used_waste >= 0`,
     ),
   ],
+);
+
+/**
+ * When a device joined a shelf. Only its alarms from then on count against the shelf, so a device
+ * that joins later (model added to the family, relinked, moved customer) brings no old Empties.
+ */
+export const siteStockMembers = pgTable(
+  'site_stock_members',
+  {
+    shelfId: integer('shelf_id')
+      .notNull()
+      .references(() => siteStockShelves.id, { onDelete: 'cascade' }),
+    drmsEquipmentId: text('drms_equipment_id')
+      .notNull()
+      .references(() => drmsEquipment.drmsId),
+    since: ts('since').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.shelfId, t.drmsEquipmentId] })],
 );
 
 /** One row per alarm seen for a shelf, counted or not, so a recount is explainable. */

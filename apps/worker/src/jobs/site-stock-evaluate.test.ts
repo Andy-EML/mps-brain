@@ -6,6 +6,7 @@ import {
   drmsEquipment,
   replenishmentProposals,
   siteStockEvents,
+  siteStockMembers,
   siteStockShelves,
   vantageEquipment,
 } from '@mps/db';
@@ -16,6 +17,8 @@ import { saveSnapshot } from './drms-snapshot';
 import { evaluateSiteStock } from './site-stock-evaluate';
 
 const NOW = new Date('2026-09-21T12:00:00Z');
+const COUNTING_FROM = new Date('2026-09-01T00:00:00Z');
+
 
 describe('evaluateSiteStock', () => {
   let t: TestDb;
@@ -44,8 +47,12 @@ describe('evaluateSiteStock', () => {
       .values({ vantageCustomerId: 100, familyId: fam!.id, holdingBlack: 3, holdingCyan: 2, holdingMagenta: 2, holdingYellow: 2, countingFrom: new Date('2026-09-01T00:00:00Z') })
       .returning();
     shelfId = shelf!.id;
+    await join(COUNTING_FROM);
   });
   afterEach(() => t.close());
+
+  /** A run with no new alarms: records today's members as joining the shelf at `at`. */
+  const join = (at: Date) => evaluateSiteStock(t.db, at);
 
   const alarm = (drmsId: string, at: string, description: string, status = 'ReadyForErpDelivery') =>
     t.db.insert(deviceAlarms).values({
@@ -107,6 +114,7 @@ describe('evaluateSiteStock', () => {
     await t.db.insert(vantageEquipment).values({ vantageId: 3, vantageCustomerId: 100, raw: {} });
     await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'dC', vantageEquipmentId: 3, method: 'serial' });
     await t.db.insert(siteStockShelves).values({ vantageCustomerId: 100, familyId: mono!.id, holdingBlack: 2, holdingCyan: 2, countingFrom: new Date('2026-09-01T00:00:00Z') });
+    await join(COUNTING_FROM);
     await alarm('dC', '2026-09-05 08:00:00', 'Toner Empty(C)');
     const { stats, covered } = await evaluateSiteStock(t.db, NOW);
     expect(stats).toMatchObject({ considered: 0, counted: 0 });
@@ -163,6 +171,73 @@ describe('evaluateSiteStock', () => {
     expect(again.stats).toMatchObject({ counted: 1, topUps: 0 });
     expect(await shelf()).toMatchObject({ usedBlack: 4 });
     expect(await t.db.select().from(replenishmentProposals)).toHaveLength(1);
+  });
+
+  it('moves a pending top-up off a device that has left the shelf onto one still on it', async () => {
+    for (const d of ['2026-09-01', '2026-09-16', '2026-10-01']) await alarm('dA', `${d} 08:00:00`, 'Toner Empty(BK)');
+    await evaluateSiteStock(t.db, new Date('2026-10-02T00:00:00Z'));
+    await t.db.update(deviceLinks).set({ unlinkedAt: NOW }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+    const r = await evaluateSiteStock(t.db, new Date('2026-10-03T00:00:00Z'));
+    expect(r.stats.topUps).toBe(1);
+    const rows = await t.db.select().from(replenishmentProposals).orderBy(replenishmentProposals.id);
+    expect(rows.map((p) => [p.drmsEquipmentId, p.colour, p.quantity, p.status, p.note])).toEqual([
+      ['dA', 'black', 3, 'superseded', 'no longer on shelf'],
+      ['dB', 'black', 3, 'pending', null],
+    ]);
+    expect(await shelf()).toMatchObject({ usedBlack: 3 });
+  });
+
+  it('supersedes a cyan top-up and raises none once the family is mono', async () => {
+    await t.db.update(siteStockShelves).set({ usedCyan: 2 });
+    await evaluateSiteStock(t.db, NOW);
+    expect((await t.db.select().from(replenishmentProposals)).map((p) => [p.colour, p.status])).toEqual([['cyan', 'pending']]);
+    await t.db.update(cartridgeFamilies).set({ isColour: false });
+    const r = await evaluateSiteStock(t.db, NOW);
+    expect(r.stats.topUps).toBe(0);
+    expect((await t.db.select().from(replenishmentProposals)).map((p) => [p.colour, p.status, p.note])).toEqual([['cyan', 'superseded', 'no longer held']]);
+  });
+
+  describe('membership start', () => {
+    async function addDevice(drmsId: string, model: string, vantageId: number, customer: number) {
+      await t.db.insert(drmsEquipment).values({ drmsId, modelName: model, status: 'Registered', isColour: true, raw: {} });
+      await t.db.insert(vantageEquipment).values({ vantageId, vantageCustomerId: customer, raw: {} });
+      await t.db.insert(deviceLinks).values({ drmsEquipmentId: drmsId, vantageEquipmentId: vantageId, method: 'serial' });
+    }
+
+    it('does not count Empties from before a model joined the family, but counts later ones', async () => {
+      await addDevice('dD', 'bizhub C250i', 4, 100);
+      await alarm('dD', '2026-09-05 08:00:00', 'Toner Empty(BK)');
+      await evaluateSiteStock(t.db, new Date('2026-09-10T00:00:00Z'));
+      const [fam] = await t.db.select().from(cartridgeFamilies);
+      await t.db.insert(cartridgeFamilyModels).values({ model: 'bizhub C250i', familyId: fam!.id });
+      const joined = await evaluateSiteStock(t.db, new Date('2026-09-12T00:00:00Z'));
+      expect(joined.stats).toMatchObject({ considered: 0, counted: 0 });
+      expect(await events()).toEqual([]);
+      await alarm('dD', '2026-09-13 08:00:00', 'Toner Empty(BK)');
+      const later = await evaluateSiteStock(t.db, new Date('2026-09-14T00:00:00Z'));
+      expect(later.stats).toMatchObject({ considered: 1, counted: 1 });
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('does not count an Empty again on the shelf a device is relinked to', async () => {
+      const [fam] = await t.db.select().from(cartridgeFamilies);
+      const [b] = await t.db
+        .insert(siteStockShelves)
+        .values({ vantageCustomerId: 200, familyId: fam!.id, holdingBlack: 3, countingFrom: COUNTING_FROM })
+        .returning();
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Empty(BK)');
+      await evaluateSiteStock(t.db, new Date('2026-09-06T00:00:00Z'));
+
+      await t.db.insert(vantageEquipment).values({ vantageId: 5, vantageCustomerId: 200, raw: {} });
+      await t.db.update(deviceLinks).set({ unlinkedAt: new Date('2026-09-07T00:00:00Z') }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+      await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'dA', vantageEquipmentId: 5, method: 'serial' });
+      const moved = await evaluateSiteStock(t.db, new Date('2026-09-07T00:00:00Z'));
+      expect(moved.stats).toMatchObject({ considered: 0, counted: 0 });
+      const rows = await t.db.select().from(siteStockShelves).orderBy(siteStockShelves.id);
+      expect(rows.map((r) => [r.id, r.usedBlack])).toEqual([[shelfId, 1], [b!.id, 0]]);
+      const dA = (await t.db.select().from(siteStockMembers)).filter((m) => m.drmsEquipmentId === 'dA');
+      expect(dA.map((m) => [m.shelfId, m.since])).toEqual([[b!.id, new Date('2026-09-07T00:00:00Z')]]);
+    });
   });
 
   it('covers nothing for a device that is not on a shelf', async () => {

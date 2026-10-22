@@ -71,6 +71,13 @@
       "when": 1792682320832,
       "tag": "0009_site_stock",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792692453567,
+      "tag": "0010_site_stock_members",
+      "breakpoints": true
     }
   ]
 }

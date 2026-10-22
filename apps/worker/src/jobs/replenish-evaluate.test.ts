@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveSnapshot } from './drms-snapshot';
 import { orderedInVantage, runReplenishEvaluate } from './replenish-evaluate';
+import { evaluateSiteStock } from './site-stock-evaluate';
 
 const NOW = new Date('2026-09-21T14:00:00Z');
 
@@ -176,7 +177,13 @@ describe('runReplenishEvaluate', () => {
       await t.db.insert(cartridgeFamilyModels).values({ model: 'bizhub C300i', familyId: fam!.id });
       await t.db.update(drmsEquipment).set({ modelName: 'bizhub C300i' }).where(eq(drmsEquipment.drmsId, 'colour'));
       await t.db.update(vantageEquipment).set({ vantageCustomerId: 100 }).where(eq(vantageEquipment.vantageId, 1));
-      await t.db.insert(siteStockShelves).values({ vantageCustomerId: 100, familyId: fam!.id, holdingBlack, holdingWaste, countingFrom: new Date('2026-09-01T00:00:00Z') });
+      const [shelf] = await t.db
+        .insert(siteStockShelves)
+        .values({ vantageCustomerId: 100, familyId: fam!.id, holdingBlack, holdingWaste, countingFrom: new Date('2026-09-01T00:00:00Z') })
+        .returning();
+      // The device joins the shelf when it is made, so its alarms from then on count.
+      await evaluateSiteStock(t.db, new Date('2026-09-01T00:00:00Z'));
+      return shelf!.id;
     }
     const states = async () =>
       (await t.db.select().from(replenishmentProposals).orderBy(replenishmentProposals.id)).map((p) => [p.colour, p.trigger, p.status, p.note]);
@@ -219,6 +226,39 @@ describe('runReplenishEvaluate', () => {
       await runReplenishEvaluate({ db: t.db, now: () => NOW });
       await runReplenishEvaluate({ db: t.db, now: () => NOW });
       expect(await states()).toEqual([['black', 'site_stock', 'pending', null]]);
+    });
+
+    const live = async () => (await t.db.select().from(replenishmentProposals)).filter((p) => p.status === 'pending' || p.status === 'approved');
+    async function pendingTopUp() {
+      const shelfId = await shelfFor(1);
+      await levels('colour', 'c1', 12, 50);
+      await t.db.insert(deviceAlarms).values({
+        alarmId: 'k1', drmsEquipmentId: 'colour', receivedTime: new Date('2026-09-03T08:00:00Z'), category: 'toner',
+        status: 'ReadyForErpDelivery', description: 'Toner Empty(BK)', raw: {},
+      });
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await states()).toEqual([['black', 'site_stock', 'pending', null]]);
+      return shelfId;
+    }
+
+    it('supersedes a pending top-up when the shelf stops holding the colour, and the device proposes it instead', async () => {
+      const shelfId = await pendingTopUp();
+      await t.db.update(siteStockShelves).set({ holdingBlack: 0 }).where(eq(siteStockShelves.id, shelfId));
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await states()).toEqual([
+        ['black', 'site_stock', 'superseded', 'no longer held'],
+        ['black', 'threshold', 'pending', null],
+      ]);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await live()).toHaveLength(1);
+    });
+
+    it('counts an approved top-up as live for its device, so the device proposes nothing alongside it', async () => {
+      const shelfId = await pendingTopUp();
+      await t.db.update(replenishmentProposals).set({ status: 'approved' });
+      await t.db.update(siteStockShelves).set({ holdingBlack: 0 }).where(eq(siteStockShelves.id, shelfId));
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await states()).toEqual([['black', 'site_stock', 'approved', null]]);
     });
   });
 
