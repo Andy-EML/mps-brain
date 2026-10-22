@@ -65,6 +65,7 @@ export function planSeed(wanted: SeedFamily[], existingNames: string[], existing
         taken.add(m);
       }
     }
+    if (models.length === 0 && f.models.length > 0) continue; // every model already owned: nothing to create
     names.add(f.name.toLowerCase());
     plan.create.push({ ...f, models });
   }

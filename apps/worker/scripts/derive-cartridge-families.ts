@@ -33,9 +33,9 @@ export interface PartGroup {
   models: string[];
 }
 
-/** The model's number token, e.g. "bizhub C450i" -> "450i", "ineo+ 300i" -> "300i"; null if none. */
+/** The model's number token, keeping a colour C: "bizhub C450i" -> "c450i", "ineo+ 300i" -> "300i"; null if none. */
 function modelKey(model: string): string | null {
-  const m = /(\d{3,4}[a-z]*)\s*$/i.exec(model.trim());
+  const m = /(c?\d{3,4}[a-z]*)\s*$/i.exec(model.trim());
   return m ? m[1]!.toLowerCase() : null;
 }
 
@@ -47,7 +47,7 @@ function partOf(line: PartLine): string | null {
 
 /**
  * Groups models by cartridge part: a model joins a part when its number token (case-insensitive,
- * optional leading C) appears as a whole token in any line text for that part. Parts that share a
+ * the colour C kept; a bare number only claims a colour model when no mono sibling exists) appears as a whole token in any line text for that part. Parts that share a
  * model are merged (union-find) into one group. Parts matching no model are dropped; models are
  * returned sorted, groups sorted by part.
  */
@@ -61,11 +61,17 @@ export function groupModelsByPart(lines: PartLine[], models: string[]): PartGrou
     tokensByPart.set(part, set);
   }
 
+  // A colour model (c300i) matches its own token, and the bare token (300i) only when no mono
+  // model with that number exists; a mono model matches the bare token only.
+  const monoKeys = new Set(models.map(modelKey).filter((k): k is string => k !== null && !/^c\d/.test(k)));
   const matched = new Map<string, string[]>(); // part -> models
   for (const [part, tokens] of tokensByPart) {
     for (const model of models) {
       const key = modelKey(model);
-      if (key && (tokens.has(key) || tokens.has(`c${key}`))) {
+      if (!key) continue;
+      const bare = key.slice(1);
+      const isC = /^c\d/.test(key);
+      if (tokens.has(key) || (isC && !monoKeys.has(bare) && tokens.has(bare))) {
         matched.set(part, [...(matched.get(part) ?? []), model]);
       }
     }

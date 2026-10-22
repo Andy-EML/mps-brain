@@ -39,6 +39,29 @@ describe('groupModelsByPart', () => {
     expect(groups).toEqual([{ part: 'AAA1111, BBB2222', models: ['bizhub 450i', 'bizhub 550i'] }]);
   });
 
+  it('keeps mono and colour models of the same number apart', () => {
+    const groups = groupModelsByPart(
+      [
+        { details: 'toner 300i', partNumber: 'AAA1111' },
+        { details: 'toner C300i', partNumber: 'BBB2222' },
+      ],
+      ['bizhub 300i', 'bizhub C300i'],
+    );
+    expect(groups).toEqual([
+      { part: 'AAA1111', models: ['bizhub 300i'] },
+      { part: 'BBB2222', models: ['bizhub C300i'] },
+    ]);
+  });
+
+  it('lets a bare number claim a colour model only when no mono sibling exists', () => {
+    expect(groupModelsByPart([{ details: 'toner 300i', partNumber: 'AAA1111' }], ['bizhub C300i'])).toEqual([
+      { part: 'AAA1111', models: ['bizhub C300i'] },
+    ]);
+    expect(groupModelsByPart([{ details: 'toner 300i', partNumber: 'AAA1111' }], ['bizhub 300i', 'bizhub C300i'])).toEqual([
+      { part: 'AAA1111', models: ['bizhub 300i'] },
+    ]);
+  });
+
   it('takes the part code from the details text when no part number is stored', () => {
     const groups = groupModelsByPart([{ details: 'ACV1150 toner for 450i', partNumber: null }], ['bizhub 450i']);
     expect(groups).toEqual([{ part: 'ACV1150', models: ['bizhub 450i'] }]);

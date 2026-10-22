@@ -26,6 +26,14 @@ describe('planSeed', () => {
   });
 });
 
+describe('planSeed all-skipped', () => {
+  it('does not create a family whose models are all already owned', () => {
+    const plan = planSeed([{ name: 'X', isColour: false, models: ['m1'] }], [], ['m1']);
+    expect(plan.create).toEqual([]);
+    expect(plan.skippedModels).toEqual([{ family: 'X', model: 'm1' }]);
+  });
+});
+
 describe('seedCartridgeFamilies', () => {
   let t: TestDb;
   beforeEach(async () => {
