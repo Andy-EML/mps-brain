@@ -1,7 +1,7 @@
 import { CONSUMABLE_TYPE, REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { auditLog, deviceLinks, replenishmentOrders, replenishmentProposals } from '../schema';
+import { auditLog, deviceLinks, replenishmentOrders, replenishmentProposals, siteStockShelves } from '../schema';
 
 /**
  * The toner-order queue's decisions: approve proposals into a queued Vantage order, reject them,
@@ -39,6 +39,34 @@ function orderRequest(lines: { colour: ReplenishColour; quantity: number }[]) {
   return { components };
 }
 
+/** The shelf field that counts uses of each colour since the last recount. */
+const USED_FIELD = {
+  black: 'usedBlack',
+  cyan: 'usedCyan',
+  magenta: 'usedMagenta',
+  yellow: 'usedYellow',
+  waste: 'usedWaste',
+} as const;
+
+export interface ShelfAdjust {
+  shelfId: number;
+  colour: ReplenishColour;
+  by: number;
+}
+
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+/** Moves shelf `used` counts by `sign * by`, never below zero. */
+async function adjustShelfUsed(tx: Tx, adjusts: ShelfAdjust[], sign: 1 | -1): Promise<void> {
+  for (const a of adjusts) {
+    const field = USED_FIELD[a.colour];
+    await tx
+      .update(siteStockShelves)
+      .set({ [field]: sql`greatest(${siteStockShelves[field]} + ${sign * a.by}, 0)` })
+      .where(eq(siteStockShelves.id, a.shelfId));
+  }
+}
+
 export interface ApproveItem {
   proposalId: number;
   quantity: number;
@@ -68,7 +96,7 @@ export async function approveProposals(
 
   return db.transaction(async (tx) => {
     const p = replenishmentProposals;
-    const rows = await tx.select({ id: p.id, drmsId: p.drmsEquipmentId, colour: p.colour, status: p.status }).from(p).where(inArray(p.id, ids));
+    const rows = await tx.select({ id: p.id, drmsId: p.drmsEquipmentId, colour: p.colour, status: p.status, shelfId: p.shelfId }).from(p).where(inArray(p.id, ids));
     if (rows.length !== ids.length) throw new ReplenishmentError('A proposal no longer exists — refresh the page.', 'not_found');
     if (rows.some((r) => r.drmsId !== args.drmsId)) {
       throw new ReplenishmentError('An order is for one device; these proposals belong to more than one.', 'mixed_devices');
@@ -109,13 +137,21 @@ export async function approveProposals(
     // Someone else decided one between our read and our write: throwing rolls the order back too.
     if (updated !== items.length) throw new ReplenishmentError(STALE, 'not_pending');
 
+    // A top-up's cartridges are now on order, so they come off the shelf's used count.
+    const rowOf = new Map(rows.map((r) => [r.id, r]));
+    const shelfAdjust: ShelfAdjust[] = items.flatMap((i) => {
+      const r = rowOf.get(i.proposalId)!;
+      return r.shelfId === null ? [] : [{ shelfId: r.shelfId, colour: r.colour, by: i.quantity }];
+    });
+    await adjustShelfUsed(tx, shelfAdjust, -1);
+
     await tx.insert(auditLog).values({
       at: now,
       userId: args.userId,
       action: 'proposal.approve',
       entity: 'proposal',
       entityIds: ids,
-      details: { orderId, items },
+      details: { orderId, items, ...(shelfAdjust.length > 0 && { shelfAdjust }) },
     });
     return { orderId };
   });
@@ -137,19 +173,29 @@ export async function rejectProposals(
 
   return db.transaction(async (tx) => {
     const p = replenishmentProposals;
+    const before = await tx
+      .select({ id: p.id, status: p.status, colour: p.colour, quantity: p.quantity, shelfId: p.shelfId })
+      .from(p)
+      .where(inArray(p.id, ids));
     const done = await tx
       .update(p)
       .set({ status: 'rejected', decidedBy: args.userId, decidedAt: now, note })
       .where(and(inArray(p.id, ids), inArray(p.status, ['pending', 'failed'])))
       .returning({ id: p.id });
     if (done.length !== ids.length) throw new ReplenishmentError(STALE, 'not_pending');
+    // A failed top-up had already come off the shelf's used count when it was approved; the order
+    // never happened, so put it back. A pending one never touched the shelf.
+    const shelfAdjust: ShelfAdjust[] = before.flatMap((r) =>
+      r.status === 'failed' && r.shelfId !== null ? [{ shelfId: r.shelfId, colour: r.colour, by: r.quantity }] : [],
+    );
+    await adjustShelfUsed(tx, shelfAdjust, 1);
     await tx.insert(auditLog).values({
       at: now,
       userId: args.userId,
       action: 'proposal.reject',
       entity: 'proposal',
       entityIds: ids,
-      details: { note },
+      details: { note, ...(shelfAdjust.length > 0 && { shelfAdjust }) },
     });
     return { rejected: done.length };
   });

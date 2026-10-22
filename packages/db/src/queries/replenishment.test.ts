@@ -2,12 +2,14 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   auditLog,
+  cartridgeFamilies,
   counterSnapshots,
   counterValues,
   deviceLinks,
   drmsEquipment,
   replenishmentOrders,
   replenishmentProposals,
+  siteStockShelves,
   users,
   vantageEquipment,
   vantageSalesOrderLines,
@@ -316,5 +318,86 @@ describe('replenishment queue', () => {
     expect(r.proposals.map((p) => [p.colour, p.status])).toEqual([['black', 'approved'], ['cyan', 'pending']]);
     expect(r.orders.map((o) => o.id)).toEqual([orderId]);
     expect(await listDeviceReplenishment(t.db, 'nope')).toEqual({ proposals: [], orders: [] });
+  });
+});
+
+describe('site stock top-ups adjust shelf counts', () => {
+  let t: TestDb;
+  let userId: number;
+  let shelfId: number;
+  let black: number;
+  let cyan: number;
+
+  beforeEach(async () => {
+    t = await createTestDb();
+    const [u] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning();
+    userId = u!.id;
+    await t.db.insert(drmsEquipment).values({ drmsId: 'd1', modelName: 'bizhub C300i', serial: 'S1', isColour: true, raw: {} });
+    await t.db.insert(vantageEquipment).values({ vantageId: 100, raw: {} });
+    await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'd1', vantageEquipmentId: 100, method: 'serial' });
+    const [fam] = await t.db.insert(cartridgeFamilies).values({ name: 'C-series', isColour: true }).returning();
+    const [shelf] = await t.db
+      .insert(siteStockShelves)
+      .values({ vantageCustomerId: 1, familyId: fam!.id, usedBlack: 3, usedCyan: 2, countingFrom: NOW })
+      .returning();
+    shelfId = shelf!.id;
+    const ps = await t.db
+      .insert(replenishmentProposals)
+      .values(
+        (['black', 'cyan'] as const).map((colour, i) => ({
+          drmsEquipmentId: 'd1',
+          vantageEquipmentId: 100,
+          colour,
+          trigger: 'site_stock' as const,
+          status: 'pending' as const,
+          quantity: [3, 2][i]!,
+          shelfId,
+          createdAt: NOW,
+        })),
+      )
+      .returning();
+    [black, cyan] = ps.map((p) => p.id) as [number, number];
+  });
+  afterEach(() => t.close());
+
+  const shelf = async () => (await t.db.select().from(siteStockShelves).where(eq(siteStockShelves.id, shelfId)))[0]!;
+
+  it('approving a top-up subtracts approved quantities', async () => {
+    // A cyan use was counted after the proposal was raised: used cyan is now 3.
+    await t.db.update(siteStockShelves).set({ usedCyan: 3 }).where(eq(siteStockShelves.id, shelfId));
+    await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 3 }, { proposalId: cyan, quantity: 1 }], userId, now: NOW });
+    expect(await shelf()).toMatchObject({ usedBlack: 0, usedCyan: 2 });
+    const [a] = await t.db.select().from(auditLog);
+    expect(a!.details).toMatchObject({
+      shelfAdjust: expect.arrayContaining([
+        { shelfId, colour: 'black', by: 3 },
+        { shelfId, colour: 'cyan', by: 1 },
+      ]),
+    });
+  });
+
+  it('approving a smaller quantity leaves the remainder, and never goes below zero', async () => {
+    await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 1 }], userId });
+    expect(await shelf()).toMatchObject({ usedBlack: 2, usedCyan: 2 });
+    await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: cyan, quantity: 5 }], userId });
+    expect((await shelf()).usedCyan).toBe(0);
+  });
+
+  it('rejecting a pending top-up leaves counts', async () => {
+    await rejectProposals(t.db, { proposalIds: [black, cyan], userId, now: NOW });
+    expect(await shelf()).toMatchObject({ usedBlack: 3, usedCyan: 2 });
+    const [a] = await t.db.select().from(auditLog);
+    expect(a!.details).not.toHaveProperty('shelfAdjust');
+  });
+
+  it('rejecting a failed top-up restores counts', async () => {
+    const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 3 }, { proposalId: cyan, quantity: 2 }], userId, now: NOW });
+    expect(await shelf()).toMatchObject({ usedBlack: 0, usedCyan: 0 });
+    await t.db.update(replenishmentOrders).set({ status: 'failed' }).where(eq(replenishmentOrders.id, orderId));
+    await t.db.update(replenishmentProposals).set({ status: 'failed' }).where(eq(replenishmentProposals.orderId, orderId));
+    await rejectProposals(t.db, { proposalIds: [black], userId, now: NOW });
+    expect(await shelf()).toMatchObject({ usedBlack: 3, usedCyan: 0 });
+    const audits = await t.db.select().from(auditLog);
+    expect(audits.at(-1)!.details).toMatchObject({ shelfAdjust: [{ shelfId, colour: 'black', by: 3 }] });
   });
 });
