@@ -14,6 +14,7 @@ import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber, pluralise } from '@/lib/format';
 import { shelfErrorMessage } from '@/lib/shelf-form';
+import { importResultMessage, parseImportResult } from '@/lib/site-stock-import';
 
 export const metadata = { title: 'Site stock · MPS Dashboard' };
 
@@ -31,7 +32,8 @@ const CELL = 'px-4 py-3 align-middle text-[13px]';
  * CSV export / import (Task 12's routes). Machines whose model is in no family cannot be on a
  * shelf, so they show as a warning pointing at the families page.
  *
- * `?error=<code>&errorFor=add` comes back from *+ New shelf* and shows inside that dialog.
+ * `?error=<code>&errorFor=add` comes back from *+ New shelf* and shows inside that dialog;
+ * `?imported=<created>-<updated>-<unchanged>` from the CSV import's *Apply*.
  */
 export default async function SiteStockPage({ searchParams }: PageProps<'/site-stock'>) {
   // First statement: the (app) layout's own requireUser() does not gate this page, because Next
@@ -41,6 +43,7 @@ export default async function SiteStockPage({ searchParams }: PageProps<'/site-s
   const search = first(params.search)?.trim() ?? '';
   const errorCode = first(params.error);
   const addError = errorCode && first(params.errorFor) === 'add' ? shelfErrorMessage(errorCode) : null;
+  const imported = parseImportResult(first(params.imported));
 
   const db = getDb();
   const [shelves, families, unmapped] = await Promise.all([
@@ -76,6 +79,12 @@ export default async function SiteStockPage({ searchParams }: PageProps<'/site-s
           </>
         }
       />
+
+      {imported ? (
+        <p role="status" className="mb-4 rounded-xl bg-ok/10 px-5 py-3 text-[13px] text-ok">
+          {importResultMessage(imported)}
+        </p>
+      ) : null}
 
       {unmapped.length > 0 ? (
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-warn/30 bg-warn/5 px-5 py-3 text-[13px]">

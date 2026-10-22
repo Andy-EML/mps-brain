@@ -13,6 +13,9 @@ const nextConfig: NextConfig = {
   transpilePackages: ['@mps/db', '@mps/core', '@mps/queue', '@mps/drms', '@mps/vantage'],
   // Native / server-only modules must stay out of the bundle.
   serverExternalPackages: ['@node-rs/argon2', 'pg', 'pg-boss'],
+  // The site stock CSV import uploads up to 1 MB through a server action, whose default body limit
+  // is exactly 1 MB; leave room for the multipart overhead.
+  experimental: { serverActions: { bodySizeLimit: '2mb' } },
   output: 'standalone',
   // Monorepo: trace from the repo root so the standalone build picks up packages/*.
   outputFileTracingRoot: repoRoot,
