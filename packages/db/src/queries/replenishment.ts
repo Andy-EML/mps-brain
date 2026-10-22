@@ -15,6 +15,7 @@ import {
 } from '../schema';
 import { getOrderStates, type OrderRef } from './order-state';
 import { effectiveSettingsSubquery, type SettingSource } from './settings';
+import { listShelfSummariesByIds } from './site-stock';
 import { counterPivotSubquery, drmsEquipmentName, toNumberOrNull } from './shared';
 
 /**
@@ -48,6 +49,8 @@ export interface QueueProposal {
   decidedAt: Date | null;
   decidedBy: string | null;
   note: string | null;
+  /** The site-stock shelf a top-up proposal belongs to; null for ordinary proposals. */
+  shelfId: number | null;
   /** The MPS order this proposal went into (approved, ordered, failed); null before a decision. */
   orderId: number | null;
   /** The newest order of this colour on the device's current Vantage equipment, open or not. */
@@ -84,6 +87,8 @@ export interface QueueDevice {
    * no reading (always for cyan/magenta/yellow on a mono device).
    */
   tonerLevels: Record<TonerColour, number | null>;
+  /** Set when any of the device's proposals is a shelf top-up. */
+  shelf: { id: number; siteName: string; familyName: string; machines: number } | null;
   proposals: QueueProposal[];
   orders: QueueOrder[];
 }
@@ -110,6 +115,7 @@ function selectProposals(db: Db, where: SQL | undefined) {
       decidedAt: p.decidedAt,
       decidedBy: decider.username,
       note: p.note,
+      shelfId: p.shelfId,
       orderId: p.orderId,
     })
     .from(p)
@@ -140,7 +146,7 @@ function selectOrders(db: Db, where: SQL | undefined, limit?: number) {
 
 type TonerColour = Exclude<ReplenishColour, 'waste'>;
 interface DeviceContext {
-  device: Omit<QueueDevice, 'proposals' | 'orders'>;
+  device: Omit<QueueDevice, 'proposals' | 'orders' | 'shelf'>;
   thresholds: Record<TonerColour, { value: number | null; source: SettingSource }>;
 }
 
@@ -227,11 +233,14 @@ async function assemble(db: Db, proposals: ProposalRow[], orders: OrderRow[], no
   const linked = [...new Set([...contexts.values()].map((c) => c.device.vantageEquipmentId).filter((v): v is number => v !== null))];
   const states = await getOrderStates(db, linked, now);
 
+  const shelfIds = [...new Set(proposals.map((p) => p.shelfId).filter((v): v is number => v !== null))];
+  const shelves = new Map((await listShelfSummariesByIds(db, shelfIds)).map((s) => [s.id, s]));
+
   const devices = new Map<string, QueueDevice>();
   for (const id of ids) {
     const ctx = contexts.get(id);
     if (!ctx) continue;
-    devices.set(id, { ...ctx.device, proposals: [], orders: [] });
+    devices.set(id, { ...ctx.device, shelf: null, proposals: [], orders: [] });
   }
   for (const p of proposals) {
     const ctx = contexts.get(p.drmsId);
@@ -254,10 +263,13 @@ async function assemble(db: Db, proposals: ProposalRow[], orders: OrderRow[], no
       decidedAt: p.decidedAt,
       decidedBy: p.decidedBy,
       note: p.note,
+      shelfId: p.shelfId,
       orderId: p.orderId,
       lastOrder: state?.last ?? null,
       openOrder: state?.open ?? null,
     });
+    const shelf = p.shelfId === null ? undefined : shelves.get(p.shelfId);
+    if (shelf && !device.shelf) device.shelf = { id: shelf.id, siteName: shelf.siteName, familyName: shelf.familyName, machines: shelf.machines };
   }
   for (const o of orders) {
     const { drmsId, ...order } = o;

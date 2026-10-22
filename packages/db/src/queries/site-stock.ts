@@ -71,7 +71,7 @@ function counts(prefix: 'holding' | 'used', r: object): ShelfConsumableCounts {
 /** Head office id sits in the customer JSON as a number or string; anything else is no head office. */
 const headOfficeId = sql<number | null>`case when ${vantageCustomers.raw}->>'HeadOfficeId' ~ '^[0-9]{1,9}$' then (${vantageCustomers.raw}->>'HeadOfficeId')::int end`;
 
-async function summaries(db: Db, shelfId?: number): Promise<ShelfSummary[]> {
+async function summaries(db: Db, shelfIds?: number[]): Promise<ShelfSummary[]> {
   const rows = await db
     .select({
       id: siteStockShelves.id,
@@ -97,7 +97,7 @@ async function summaries(db: Db, shelfId?: number): Promise<ShelfSummary[]> {
     .from(siteStockShelves)
     .innerJoin(cartridgeFamilies, eq(cartridgeFamilies.id, siteStockShelves.familyId))
     .leftJoin(vantageCustomers, eq(vantageCustomers.vantageId, siteStockShelves.vantageCustomerId))
-    .where(shelfId === undefined ? undefined : eq(siteStockShelves.id, shelfId));
+    .where(shelfIds === undefined ? undefined : inArray(siteStockShelves.id, shelfIds));
   if (rows.length === 0) return [];
 
   const sd = shelfDevicesSubquery(db);
@@ -146,6 +146,11 @@ async function summaries(db: Db, shelfId?: number): Promise<ShelfSummary[]> {
   }));
 }
 
+/** Summaries for just these shelves (e.g. the ones a queue's proposals point at). */
+export function listShelfSummariesByIds(db: Db, ids: number[]): Promise<ShelfSummary[]> {
+  return ids.length === 0 ? Promise.resolve([]) : summaries(db, ids);
+}
+
 export async function listShelves(db: Db, args: { search?: string } = {}): Promise<ShelfSummary[]> {
   let all = await summaries(db);
   const q = args.search?.trim().toLowerCase();
@@ -167,7 +172,7 @@ const nameOf = (d: NamedDevice) =>
   deviceDisplayName({ equipmentName: d.equipmentName, customerName: d.customerName, model: d.model, serial: d.serial, drmsId: d.drmsId });
 
 export async function getShelf(db: Db, id: number): Promise<ShelfDetail | null> {
-  const [summary] = await summaries(db, id);
+  const [summary] = await summaries(db, [id]);
   if (!summary) return null;
   const sd = shelfDevicesSubquery(db);
   const devs = await db

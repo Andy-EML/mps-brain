@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   auditLog,
   cartridgeFamilies,
+  cartridgeFamilyModels,
   counterSnapshots,
   counterValues,
   deviceLinks,
@@ -11,6 +12,7 @@ import {
   replenishmentProposals,
   siteStockShelves,
   users,
+  vantageCustomers,
   vantageEquipment,
   vantageSalesOrderLines,
   vantageSalesOrders,
@@ -361,6 +363,25 @@ describe('site stock top-ups adjust shelf counts', () => {
   afterEach(() => t.close());
 
   const shelf = async () => (await t.db.select().from(siteStockShelves).where(eq(siteStockShelves.id, shelfId)))[0]!;
+
+  it('shows the shelf on a top-up device in the review queue, and none on a normal one', async () => {
+    await t.db.insert(vantageCustomers).values({ vantageId: 1, name: 'Site One', raw: {} });
+    await t.db.update(drmsEquipment).set({ status: 'REGISTERED' });
+    await t.db.update(vantageEquipment).set({ vantageCustomerId: 1 });
+    await t.db.insert(cartridgeFamilyModels).values({ familyId: (await t.db.select().from(cartridgeFamilies))[0]!.id, model: 'bizhub C300i' });
+    await t.db.insert(drmsEquipment).values({ drmsId: 'd2', modelName: 'bizhub 301i', serial: 'S2', isColour: false, raw: {} });
+    await t.db.insert(vantageEquipment).values({ vantageId: 101, raw: {} });
+    await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'd2', vantageEquipmentId: 101, method: 'serial' });
+    await t.db.insert(replenishmentProposals).values({ drmsEquipmentId: 'd2', vantageEquipmentId: 101, colour: 'black', trigger: 'threshold', status: 'pending', createdAt: NOW });
+
+    const devices = await listReplenishmentQueue(t.db, { tab: 'review', now: NOW });
+    const topUp = devices.find((d) => d.drmsId === 'd1')!;
+    const normal = devices.find((d) => d.drmsId === 'd2')!;
+    expect(topUp.shelf).toEqual({ id: shelfId, siteName: 'Site One', familyName: 'C-series', machines: 1 });
+    expect(topUp.proposals.map((p) => p.shelfId)).toEqual([shelfId, shelfId]);
+    expect(normal.shelf).toBeNull();
+    expect(normal.proposals[0]!.shelfId).toBeNull();
+  });
 
   it('approving a top-up subtracts approved quantities', async () => {
     // A cyan use was counted after the proposal was raised: used cyan is now 3.
