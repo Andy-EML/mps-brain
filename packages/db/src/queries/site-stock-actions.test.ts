@@ -158,6 +158,31 @@ describe('site stock writes', () => {
     });
   });
 
+  describe('mono families', () => {
+    let monoId: number;
+    beforeEach(async () => {
+      ({ familyId: monoId } = await saveFamily(t.db, { name: 'Mono', isColour: false, models: [], ratedYield: {}, userId: alice }));
+    });
+
+    it('createShelf and updateShelf refuse colour holdings but allow black and waste', async () => {
+      await expect(createShelf(t.db, { vantageCustomerId: 1, familyId: monoId, holding: { cyan: 1 }, userId: alice })).rejects.toMatchObject({ code: 'bad_value' });
+      const { shelfId } = await createShelf(t.db, { vantageCustomerId: 1, familyId: monoId, holding: { black: 2, waste: 1 }, userId: alice });
+      await expect(updateShelf(t.db, { shelfId, holding: { yellow: 1 }, userId: alice })).rejects.toMatchObject({ code: 'bad_value' });
+      await expect(updateShelf(t.db, { shelfId, holding: { magenta: 3 }, userId: alice })).rejects.toMatchObject({ code: 'bad_value' });
+      await updateShelf(t.db, { shelfId, holding: { black: 4, cyan: 0 }, userId: alice });
+      expect((await shelves())[0]).toMatchObject({ holdingBlack: 4, holdingCyan: 0 });
+    });
+
+    it('import reports an error row and applies nothing', async () => {
+      const rows = [row(2, 1, 'mono', { black: 1 }), row(3, 2, 'Mono', { magenta: 2 })];
+      const out = await previewImport(t.db, rows);
+      expect(out.map((o) => o.action)).toEqual(['create', 'error']);
+      expect(out[1]!.message).toMatch(/mono/i);
+      await expect(applyImport(t.db, { rows, userId: alice })).rejects.toMatchObject({ code: 'bad_value' });
+      expect(await shelves()).toHaveLength(0);
+    });
+  });
+
   describe('deleteShelf', () => {
     let shelfId: number;
     const proposal = (colour: 'black' | 'cyan' | 'magenta', status: 'pending' | 'approved' | 'rejected') =>

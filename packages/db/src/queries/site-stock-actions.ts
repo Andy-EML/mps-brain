@@ -65,6 +65,12 @@ function fullCounts(prefix: 'holding' | 'used', row: object): ShelfConsumableCou
   return out;
 }
 
+const MONO_MESSAGE = 'A mono family holds black and waste only.';
+
+function monoViolation(holding: Partials): boolean {
+  return (['cyan', 'magenta', 'yellow'] as const).some((c) => (holding[c] ?? 0) > 0);
+}
+
 async function audit(tx: Db, a: { userId: number | null; action: string; entity: string; ids: number[]; details: object; now: Date }) {
   await tx.insert(auditLog).values({ at: a.now, userId: a.userId, action: a.action, entity: a.entity, entityIds: a.ids, details: a.details });
 }
@@ -165,8 +171,9 @@ export async function createShelf(
       .from(vantageCustomers)
       .where(eq(vantageCustomers.vantageId, args.vantageCustomerId));
     if (!cust) throw new SiteStockError('That customer is not in Vantage.', 'not_found');
-    const [fam] = await tx.select({ id: cartridgeFamilies.id }).from(cartridgeFamilies).where(eq(cartridgeFamilies.id, args.familyId));
+    const [fam] = await tx.select({ isColour: cartridgeFamilies.isColour }).from(cartridgeFamilies).where(eq(cartridgeFamilies.id, args.familyId));
     if (!fam) throw new SiteStockError('That family no longer exists.', 'not_found');
+    if (!fam.isColour && monoViolation(holding)) throw new SiteStockError(MONO_MESSAGE, 'bad_value');
     const [dupe] = await tx
       .select({ id: s.id })
       .from(s)
@@ -214,6 +221,8 @@ export async function updateShelf(
     const s = siteStockShelves;
     const [before] = await tx.select().from(s).where(eq(s.id, args.shelfId));
     if (!before) throw new SiteStockError('That shelf no longer exists.', 'not_found');
+    const [fam] = await tx.select({ isColour: cartridgeFamilies.isColour }).from(cartridgeFamilies).where(eq(cartridgeFamilies.id, before.familyId));
+    if (fam && !fam.isColour && monoViolation(holding)) throw new SiteStockError(MONO_MESSAGE, 'bad_value');
     const done = await tx
       .update(s)
       .set({ ...columns('holding', holding), ...columns('used', used), updatedBy: args.userId, updatedAt: now })
@@ -319,8 +328,10 @@ async function plan(db: Db, rows: ImportRow[]): Promise<Planned[]> {
         .where(inArray(vantageCustomers.vantageId, customerIds))
     : [];
   const customerName = new Map(customers.map((c) => [c.id, c.name ?? '']));
-  const families = await db.select({ id: cartridgeFamilies.id, name: cartridgeFamilies.name }).from(cartridgeFamilies);
-  const familyByName = new Map(families.map((f) => [f.name.toLowerCase(), f.id]));
+  const families = await db
+    .select({ id: cartridgeFamilies.id, name: cartridgeFamilies.name, isColour: cartridgeFamilies.isColour })
+    .from(cartridgeFamilies);
+  const familyByName = new Map(families.map((f) => [f.name.toLowerCase(), f]));
   const shelves = customerIds.length ? await db.select().from(siteStockShelves).where(inArray(siteStockShelves.vantageCustomerId, customerIds)) : [];
   const shelfByKey = new Map(shelves.map((s) => [`${s.vantageCustomerId}:${s.familyId}`, s]));
 
@@ -328,8 +339,10 @@ async function plan(db: Db, rows: ImportRow[]): Promise<Planned[]> {
     const base = { line: row.line, vantageCustomerId: row.vantageCustomerId, siteName: customerName.get(row.vantageCustomerId) ?? '', family: row.family };
     const fail = (message: string): Planned => ({ preview: { ...base, action: 'error', message, changes: [] }, row });
     if (!customerName.has(row.vantageCustomerId)) return fail(`Unknown customer id ${row.vantageCustomerId}`);
-    const familyId = familyByName.get(row.family.toLowerCase());
-    if (familyId === undefined) return fail(`Unknown family "${row.family}"`);
+    const family = familyByName.get(row.family.toLowerCase());
+    if (family === undefined) return fail(`Unknown family "${row.family}"`);
+    if (!family.isColour && monoViolation(row.holding)) return fail(MONO_MESSAGE);
+    const familyId = family.id;
 
     const shelf = shelfByKey.get(`${row.vantageCustomerId}:${familyId}`);
     if (!shelf) {
