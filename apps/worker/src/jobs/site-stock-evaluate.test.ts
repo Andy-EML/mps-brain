@@ -10,6 +10,7 @@ import {
   vantageEquipment,
 } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveSnapshot } from './drms-snapshot';
 import { evaluateSiteStock } from './site-stock-evaluate';
@@ -96,6 +97,50 @@ describe('evaluateSiteStock', () => {
     expect(stats).toMatchObject({ considered: 1, counted: 1 });
     expect(await events()).toHaveLength(1);
     expect(await shelf()).toMatchObject({ usedBlack: 1, usedWaste: 0 });
+    expect(await t.db.select().from(replenishmentProposals)).toEqual([]);
+  });
+
+  it('ignores cyan, magenta and yellow empties on a mono family (no event row)', async () => {
+    const [mono] = await t.db.insert(cartridgeFamilies).values({ name: 'Mono', isColour: false }).returning();
+    await t.db.insert(cartridgeFamilyModels).values({ model: 'bizhub 301i', familyId: mono!.id });
+    await t.db.insert(drmsEquipment).values({ drmsId: 'dC', modelName: 'bizhub 301i', status: 'Registered', raw: {} });
+    await t.db.insert(vantageEquipment).values({ vantageId: 3, vantageCustomerId: 100, raw: {} });
+    await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'dC', vantageEquipmentId: 3, method: 'serial' });
+    await t.db.insert(siteStockShelves).values({ vantageCustomerId: 100, familyId: mono!.id, holdingBlack: 2, holdingCyan: 2, countingFrom: new Date('2026-09-01T00:00:00Z') });
+    await alarm('dC', '2026-09-05 08:00:00', 'Toner Empty(C)');
+    const { stats, covered } = await evaluateSiteStock(t.db, NOW);
+    expect(stats).toMatchObject({ considered: 0, counted: 0 });
+    expect(await events()).toEqual([]);
+    expect([...covered.get('dC')!]).toEqual(['black']);
+  });
+
+  it('does not re-raise a rejected top-up until a further use is counted', async () => {
+    for (const d of ['2026-09-01', '2026-09-16', '2026-10-01']) await alarm('dA', `${d} 08:00:00`, 'Toner Empty(BK)');
+    await evaluateSiteStock(t.db, new Date('2026-10-02T00:00:00Z'));
+    await t.db.update(replenishmentProposals).set({ status: 'rejected', decidedAt: new Date('2026-10-02T06:00:00Z') });
+    const same = await evaluateSiteStock(t.db, new Date('2026-10-03T00:00:00Z'));
+    expect(same.stats.topUps).toBe(0);
+    expect(await t.db.select().from(replenishmentProposals)).toHaveLength(1);
+    await alarm('dB', '2026-10-03 09:00:00', 'Toner Empty(BK)');
+    const again = await evaluateSiteStock(t.db, new Date('2026-10-04T00:00:00Z'));
+    expect(again.stats).toMatchObject({ counted: 1, topUps: 1 });
+    const live = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.status, 'pending'));
+    expect(live.map((p) => [p.colour, p.quantity, p.drmsEquipmentId])).toEqual([['black', 4, 'dB']]);
+  });
+
+  it('puts the top-up on a device still on the shelf when the triggering device has left', async () => {
+    await t.db.update(siteStockShelves).set({ holdingBlack: 4 });
+    await alarm('dB', '2026-09-01 08:00:00', 'Toner Empty(BK)');
+    await alarm('dB', '2026-09-16 08:00:00', 'Toner Empty(BK)');
+    await alarm('dA', '2026-10-01 08:00:00', 'Toner Empty(BK)');
+    await evaluateSiteStock(t.db, new Date('2026-10-02T00:00:00Z'));
+    expect(await shelf()).toMatchObject({ usedBlack: 3 });
+    await t.db.update(deviceLinks).set({ unlinkedAt: NOW }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+    await t.db.update(siteStockShelves).set({ holdingBlack: 3 });
+    const r = await evaluateSiteStock(t.db, new Date('2026-10-03T00:00:00Z'));
+    expect(r.stats.topUps).toBe(1);
+    const [p] = await t.db.select().from(replenishmentProposals);
+    expect(p).toMatchObject({ drmsEquipmentId: 'dB', vantageEquipmentId: 2 });
   });
 
   it('is idempotent', async () => {

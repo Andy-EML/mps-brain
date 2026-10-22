@@ -186,7 +186,7 @@ describe('runReplenishEvaluate', () => {
       await runReplenishEvaluate({ db: t.db, now: () => NOW });
       await shelfFor(3);
       const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
-      expect(r.stats).toMatchObject({ superseded: 1, proposed: 0, siteStock: { shelves: 1 } });
+      expect(r.stats).toMatchObject({ superseded: 1, proposed: 0, siteStockShelves: 1 });
       expect(await states()).toEqual([['black', 'threshold', 'superseded', 'covered by site stock']]);
     });
 

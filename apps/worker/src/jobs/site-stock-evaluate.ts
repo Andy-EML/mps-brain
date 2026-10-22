@@ -147,7 +147,7 @@ export async function evaluateSiteStock(
         });
         const inserted = await tx
           .insert(siteStockEvents)
-          .values({ shelfId: shelf.id, alarmId: a.alarmId, drmsEquipmentId: a.drmsId, colour, receivedAt: a.receivedAt, counted, reason })
+          .values({ shelfId: shelf.id, alarmId: a.alarmId, drmsEquipmentId: a.drmsId, colour, receivedAt: a.receivedAt, counted, reason, createdAt: now })
           .onConflictDoNothing()
           .returning({ id: siteStockEvents.id });
         if (inserted.length > 0 && counted) {
@@ -178,8 +178,24 @@ export async function evaluateSiteStock(
     const lines = topUpLines(holding, used);
     if (lines.length === 0) continue;
 
+    // A rejected top-up leaves the counts as they are; only a use counted after the rejection re-evaluates.
+    const [rejected] = await db
+      .select({ decidedAt: replenishmentProposals.decidedAt })
+      .from(replenishmentProposals)
+      .where(and(eq(replenishmentProposals.shelfId, shelf.id), eq(replenishmentProposals.status, 'rejected'), isNotNull(replenishmentProposals.decidedAt)))
+      .orderBy(desc(replenishmentProposals.decidedAt))
+      .limit(1);
+    if (rejected?.decidedAt) {
+      const [newer] = await db
+        .select({ id: siteStockEvents.id })
+        .from(siteStockEvents)
+        .where(and(eq(siteStockEvents.shelfId, shelf.id), eq(siteStockEvents.counted, true), gt(siteStockEvents.createdAt, rejected.decidedAt)))
+        .limit(1);
+      if (!newer) continue;
+    }
+
     const triggered = REPLENISH_COLOURS.filter((c) => holding[c] > 0 && used[c] >= holding[c]);
-    const [trigger] = await db
+    const triggers = await db
       .select({
         drmsId: siteStockEvents.drmsEquipmentId,
         alarmId: siteStockEvents.alarmId,
@@ -188,9 +204,11 @@ export async function evaluateSiteStock(
       .from(siteStockEvents)
       .leftJoin(deviceAlarms, eq(deviceAlarms.alarmId, siteStockEvents.alarmId))
       .where(and(eq(siteStockEvents.shelfId, shelf.id), eq(siteStockEvents.counted, true), inArray(siteStockEvents.colour, triggered)))
-      .orderBy(desc(siteStockEvents.receivedAt), desc(siteStockEvents.id))
-      .limit(1);
-    // Counts set by hand (CSV import) have no event behind them: fall back to a member device.
+      .orderBy(desc(siteStockEvents.receivedAt), desc(siteStockEvents.id));
+    // The triggering device must still be on the shelf (linked); counts set by hand (CSV import)
+    // have no event behind them: fall back to a member device.
+    const onShelf = (id: string | null) => id !== null && memberByDevice.get(id)?.shelfId === shelf.id;
+    const trigger = triggers.find((e) => onShelf(e.drmsId));
     const drmsId = trigger?.drmsId ?? members.find((m) => m.shelfId === shelf.id)?.drmsId;
     if (!drmsId) continue;
 

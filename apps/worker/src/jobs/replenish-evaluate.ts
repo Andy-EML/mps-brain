@@ -112,7 +112,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   const linkedIds = [...new Set(devices.map((d) => d.vantageEquipmentId).filter((id): id is number => id !== null))];
   const orderStates = await getOrderStates(db, linkedIds, now);
 
-  const stats = { devices: devices.length, proposed: 0, superseded: 0, suppressed: 0, autoOff: 0, unlinked: 0, siteStock: siteStock.stats };
+  const stats = { devices: devices.length, proposed: 0, superseded: 0, suppressed: 0, autoOff: 0, unlinked: 0, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps };
 
   for (const d of devices) {
     const thresholds: Record<TonerColour, number> = { black: Number(d.tBlack), cyan: Number(d.tCyan), magenta: Number(d.tMagenta), yellow: Number(d.tYellow) };
