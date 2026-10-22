@@ -69,6 +69,8 @@ export interface DeviceReplenishInput {
   levels: Record<TonerColour, number | null>;
   alarms: ConsumableAlarm[];
   history: Partial<Record<ReplenishColour, ColourHistory>>;
+  /** Consumables the device's site shelf covers; a trigger on one is held back, the shelf tops up instead. */
+  siteStockCovered?: ReplenishColour[];
   now: Date;
 }
 
@@ -81,7 +83,7 @@ export interface ProposalCandidate {
   alarmDescription: string | null;
 }
 
-export type SuppressReason = 'live_proposal' | 'open_order' | 'recently_completed' | 'recently_rejected';
+export type SuppressReason = 'live_proposal' | 'open_order' | 'recently_completed' | 'recently_rejected' | 'site_stock';
 
 export interface DeviceEvaluation {
   candidates: ProposalCandidate[];
@@ -144,7 +146,9 @@ export function evaluateDevice(input: DeviceReplenishInput): DeviceEvaluation {
     const byThreshold = level !== null && threshold !== null && level < threshold;
     if (!byThreshold && !alarm) continue;
 
-    const reason = suppression(input.history[colour], input.now, alarm);
+    const reason = input.siteStockCovered?.includes(colour)
+      ? 'site_stock'
+      : suppression(input.history[colour], input.now, alarm);
     if (reason) {
       suppressed.push({ colour, reason });
       continue;

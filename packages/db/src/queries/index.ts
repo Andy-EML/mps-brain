@@ -18,6 +18,7 @@ export * from './replenishment';
 export * from './replenishment-actions';
 export * from './review-detail';
 export * from './settings';
+export * from './site-stock';
 // The counter names the UI has to ask `getCounterHistory` for, plus the latest-toner-and-meter
 // pivot the replenish-evaluate job reads directly. The rest of `./shared` is query-building
 // plumbing and stays internal.

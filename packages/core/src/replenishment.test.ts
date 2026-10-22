@@ -126,6 +126,39 @@ describe('evaluateDevice', () => {
   });
 });
 
+describe('evaluateDevice site stock', () => {
+  it('a covered black below threshold is suppressed as site_stock', () => {
+    const ev = evaluateDevice(input({ levels: { black: 5, cyan: 50, magenta: 50, yellow: 50 }, siteStockCovered: ['black'] }));
+    expect(ev.candidates).toEqual([]);
+    expect(ev.suppressed).toEqual([{ colour: 'black', reason: 'site_stock' }]);
+  });
+  it('uncovered waste on the same device still proposes', () => {
+    const ev = evaluateDevice(
+      input({
+        levels: { black: 5, cyan: 50, magenta: 50, yellow: 50 },
+        alarms: [alarm('Waste Toner Bottle Almost Full', 'waste')],
+        siteStockCovered: ['black'],
+      }),
+    );
+    expect(ev.candidates.map((c) => c.colour)).toEqual(['waste']);
+    expect(ev.suppressed).toEqual([{ colour: 'black', reason: 'site_stock' }]);
+  });
+  it('covered + auto_off -> skipped auto_off', () => {
+    const ev = evaluateDevice(input({ autoReplenish: false, siteStockCovered: ['black'] }));
+    expect(ev).toEqual({ candidates: [], suppressed: [], skipped: 'auto_off' });
+  });
+  it('checks site_stock before other suppressions', () => {
+    const ev = evaluateDevice(
+      input({
+        levels: { black: 5, cyan: 50, magenta: 50, yellow: 50 },
+        siteStockCovered: ['black'],
+        history: { black: { liveProposal: true, hasOpenOrder: false, lastCompletedAt: null, lastRejectedAt: null } },
+      }),
+    );
+    expect(ev.suppressed).toEqual([{ colour: 'black', reason: 'site_stock' }]);
+  });
+});
+
 describe('isRecovered', () => {
   it('is true at or above the threshold and false without a reading', () => {
     expect(isRecovered(10, 10)).toBe(true);
