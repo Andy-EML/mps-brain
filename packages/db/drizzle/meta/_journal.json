@@ -64,6 +64,13 @@
       "when": 1790003163673,
       "tag": "0008_drms_registrations",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792682320832,
+      "tag": "0009_site_stock",
+      "breakpoints": true
     }
   ]
 }

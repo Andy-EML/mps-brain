@@ -15,6 +15,8 @@ import {
   linkIssues,
   replenishmentProposals,
   replenishmentSettings,
+  cartridgeFamilies,
+  siteStockShelves,
   vantageEquipment,
 } from './schema';
 import { createTestDb, type TestDb } from './testing';
@@ -205,6 +207,54 @@ describe('drms_registrations schema', () => {
     await t.db.insert(drmsEquipment).values({ drmsId: 'r2', raw: {} });
     await expect(
       t.db.insert(drmsRegistrations).values({ drmsEquipmentId: 'r2', status: 'ready' as 'waiting' }),
+    ).rejects.toThrow();
+  });
+});
+
+describe('site stock schema', () => {
+  let t: TestDb;
+  beforeEach(async () => {
+    t = await createTestDb();
+  });
+  afterEach(() => t.close());
+
+  const newFamily = async (name: string) =>
+    (await t.db.insert(cartridgeFamilies).values({ name, isColour: true }).returning())[0]!;
+
+  it('site_stock_shelves rejects holding 21 and -1', async () => {
+    const f = await newFamily('TN-A');
+    const base = { vantageCustomerId: 1, familyId: f.id, countingFrom: new Date() };
+    await expect(t.db.insert(siteStockShelves).values({ ...base, holdingBlack: 21 })).rejects.toThrow();
+    await expect(t.db.insert(siteStockShelves).values({ ...base, holdingCyan: -1 })).rejects.toThrow();
+    await expect(t.db.insert(siteStockShelves).values({ ...base, usedWaste: -1 })).rejects.toThrow();
+    await t.db.insert(siteStockShelves).values({ ...base, holdingBlack: 20 });
+  });
+
+  it('site_stock_shelves is unique per customer + family', async () => {
+    const f = await newFamily('TN-B');
+    const g = await newFamily('TN-C');
+    const base = { vantageCustomerId: 1, countingFrom: new Date() };
+    await t.db.insert(siteStockShelves).values({ ...base, familyId: f.id });
+    await expect(t.db.insert(siteStockShelves).values({ ...base, familyId: f.id })).rejects.toThrow();
+    await t.db.insert(siteStockShelves).values({ ...base, familyId: g.id });
+    await t.db.insert(siteStockShelves).values({ ...base, vantageCustomerId: 2, familyId: f.id });
+  });
+
+  it('a shelf top-up and a normal proposal can both be live for the same device + colour', async () => {
+    await t.db.insert(drmsEquipment).values({ drmsId: 'ss1', raw: {} });
+    const f = await newFamily('TN-D');
+    const [shelf] = await t.db
+      .insert(siteStockShelves)
+      .values({ vantageCustomerId: 1, familyId: f.id, countingFrom: new Date() })
+      .returning();
+    const base = { drmsEquipmentId: 'ss1', colour: 'cyan', status: 'pending' } as const;
+    await t.db.insert(replenishmentProposals).values({ ...base, trigger: 'threshold' });
+    await t.db.insert(replenishmentProposals).values({ ...base, trigger: 'site_stock', shelfId: shelf!.id });
+    await expect(
+      t.db.insert(replenishmentProposals).values({ ...base, trigger: 'site_stock', shelfId: shelf!.id, status: 'approved' }),
+    ).rejects.toThrow();
+    await expect(
+      t.db.insert(replenishmentProposals).values({ ...base, trigger: 'alarm', status: 'approved' }),
     ).rejects.toThrow();
   });
 });

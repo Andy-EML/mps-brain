@@ -359,7 +359,7 @@ export const appState = pgTable('app_state', {
 
 export type SettingScope = 'default' | 'customer' | 'device';
 export type ReplenishColour = 'black' | 'cyan' | 'magenta' | 'yellow' | 'waste';
-export type ProposalTrigger = 'threshold' | 'alarm';
+export type ProposalTrigger = 'threshold' | 'alarm' | 'site_stock';
 export type ProposalStatus = 'pending' | 'approved' | 'ordered' | 'failed' | 'rejected' | 'superseded';
 export type OrderStatus = 'queued' | 'submitting' | 'submitted' | 'failed' | 'uncertain';
 
@@ -450,6 +450,87 @@ export const replenishmentOrders = pgTable(
   ],
 );
 
+/** A cartridge family: the models that share one set of cartridges (spec: site stock, "Data"). */
+export const cartridgeFamilies = pgTable('cartridge_families', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  isColour: boolean('is_colour').notNull(),
+  /** Rated page yield per consumable; null when unknown. */
+    ratedYieldBlack: integer('rated_yield_black'),
+    ratedYieldCyan: integer('rated_yield_cyan'),
+    ratedYieldMagenta: integer('rated_yield_magenta'),
+    ratedYieldYellow: integer('rated_yield_yellow'),
+    ratedYieldWaste: integer('rated_yield_waste'),
+  notes: text('notes'),
+  updatedBy: integer('updated_by').references(() => users.id),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+
+/** Exact `drms_equipment.model_name` to family. */
+export const cartridgeFamilyModels = pgTable('cartridge_family_models', {
+  model: text('model').primaryKey(),
+  familyId: integer('family_id')
+    .notNull()
+    .references(() => cartridgeFamilies.id, { onDelete: 'cascade' }),
+});
+
+/** Cartridges held on a customer's shelf, per family; one row per customer + family. */
+export const siteStockShelves = pgTable(
+  'site_stock_shelves',
+  {
+    id: serial('id').primaryKey(),
+    vantageCustomerId: integer('vantage_customer_id').notNull(),
+    familyId: integer('family_id')
+      .notNull()
+      .references(() => cartridgeFamilies.id),
+    holdingBlack: integer('holding_black').notNull().default(0),
+    holdingCyan: integer('holding_cyan').notNull().default(0),
+    holdingMagenta: integer('holding_magenta').notNull().default(0),
+    holdingYellow: integer('holding_yellow').notNull().default(0),
+    holdingWaste: integer('holding_waste').notNull().default(0),
+    usedBlack: integer('used_black').notNull().default(0),
+    usedCyan: integer('used_cyan').notNull().default(0),
+    usedMagenta: integer('used_magenta').notNull().default(0),
+    usedYellow: integer('used_yellow').notNull().default(0),
+    usedWaste: integer('used_waste').notNull().default(0),
+    countingFrom: ts('counting_from').notNull(),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    updatedBy: integer('updated_by').references(() => users.id),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('site_stock_shelves_customer_family_uq').on(t.vantageCustomerId, t.familyId),
+    check(
+      'site_stock_shelves_holding',
+      sql`holding_black between 0 and 20 and holding_cyan between 0 and 20 and holding_magenta between 0 and 20 and holding_yellow between 0 and 20 and holding_waste between 0 and 20`,
+    ),
+    check(
+      'site_stock_shelves_used',
+      sql`used_black >= 0 and used_cyan >= 0 and used_magenta >= 0 and used_yellow >= 0 and used_waste >= 0`,
+    ),
+  ],
+);
+
+/** One row per alarm seen for a shelf, counted or not, so a recount is explainable. */
+export const siteStockEvents = pgTable(
+  'site_stock_events',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    shelfId: integer('shelf_id')
+      .notNull()
+      .references(() => siteStockShelves.id, { onDelete: 'cascade' }),
+    alarmId: text('alarm_id').notNull(),
+    drmsEquipmentId: text('drms_equipment_id').references(() => drmsEquipment.drmsId),
+    colour: text('colour', { enum: ['black', 'cyan', 'magenta', 'yellow', 'waste'] }),
+    receivedAt: ts('received_at').notNull(),
+    counted: boolean('counted').notNull(),
+    reason: text('reason').notNull(),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('site_stock_events_shelf_alarm_uq').on(t.shelfId, t.alarmId)],
+);
+
 /** One per device + colour per episode; see the status table in the spec. */
 export const replenishmentProposals = pgTable(
   'replenishment_proposals',
@@ -460,7 +541,7 @@ export const replenishmentProposals = pgTable(
       .references(() => drmsEquipment.drmsId),
     vantageEquipmentId: integer('vantage_equipment_id'),
     colour: text('colour', { enum: ['black', 'cyan', 'magenta', 'yellow', 'waste'] }).notNull(),
-    trigger: text('trigger', { enum: ['threshold', 'alarm'] }).notNull(),
+    trigger: text('trigger', { enum: ['threshold', 'alarm', 'site_stock'] }).notNull(),
     /** Toner % when proposed; null for waste (DRMS has no waste counter). */
     level: doublePrecision('level'),
     threshold: integer('threshold'),
@@ -475,11 +556,16 @@ export const replenishmentProposals = pgTable(
     decidedBy: integer('decided_by').references(() => users.id),
     decidedAt: ts('decided_at'),
     note: text('note'),
+    /** Set for a site-stock top-up; those are live independently of a device's own proposal. */
+    shelfId: integer('shelf_id').references(() => siteStockShelves.id),
   },
   (t) => [
     uniqueIndex('replenishment_proposals_live_uq')
       .on(t.drmsEquipmentId, t.colour)
-      .where(sql`status in ('pending', 'approved')`),
+      .where(sql`status in ('pending', 'approved') and shelf_id is null`),
+    uniqueIndex('replenishment_proposals_shelf_live_uq')
+      .on(t.shelfId, t.colour)
+      .where(sql`status in ('pending', 'approved') and shelf_id is not null`),
     index('replenishment_proposals_status_idx').on(t.status, t.createdAt),
     check('replenishment_proposals_quantity', sql`quantity between 1 and 20`),
   ],
