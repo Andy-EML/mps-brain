@@ -1,11 +1,11 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
-import { deviceListConditions, joinDeviceList, type DeviceListOptions } from './devices';
+import { deviceListConditions, deviceListOrder, joinDeviceList, type DeviceListFilters } from './devices';
 
 /**
  * The devices list's bulk selection. "Select all N matching" is resolved here, on the server, from
- * the same search and filter the list was drawn with — never from an id list the browser sends —
+ * the same search, tab and filters the list was drawn with — never from an id list the browser sends —
  * and `describeSelection` is what the confirmation step shows before anything is written.
  */
 
@@ -13,7 +13,7 @@ import { deviceListConditions, joinDeviceList, type DeviceListOptions } from './
 const NAME_LIMIT = 50;
 
 export interface ResolvedSelection {
-  /** In the list's own order (`drmsId`), so it matches paging through `listDevices`. */
+  /** In the list's own order (`deviceListOrder`), so it matches paging through `listDevices`. */
   drmsIds: string[];
   /** Distinct Vantage customers; every device without one counts together as one more. */
   customers: number;
@@ -36,11 +36,8 @@ function countCustomers(rows: { vantageCustomerId: number | null }[]): number {
   return ids.size;
 }
 
-/** Every device the devices list shows for this search and filter, across all its pages. */
-export async function resolveDeviceSelection(
-  db: Db,
-  o: Pick<DeviceListOptions, 'search' | 'filter'>,
-): Promise<ResolvedSelection> {
+/** Every device the devices list shows for this search, tab and filters, across all its pages. */
+export async function resolveDeviceSelection(db: Db, o: DeviceListFilters): Promise<ResolvedSelection> {
   const conds = deviceListConditions(db, o);
   const rows = await joinDeviceList(
     db
@@ -54,7 +51,7 @@ export async function resolveDeviceSelection(
     conds,
   )
     .where(conds.where)
-    .orderBy(asc(drmsEquipment.drmsId));
+    .orderBy(...deviceListOrder());
 
   return {
     drmsIds: rows.map((r) => r.drmsId),

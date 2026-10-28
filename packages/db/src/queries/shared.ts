@@ -120,8 +120,7 @@ export function lastAlarmSubquery(db: Db) {
 /**
  * True when any cartridge the device has is strictly below its effective threshold for that
  * colour — THE "needs toner" test, shared by the fleet summary and the devices-list `needs-toner`
- * / `manual` filters (paired with `eff.autoReplenish`). `urgencyRank`'s ordering keeps its own
- * fixed 5%/20% display scale, unrelated to this. Null-safe on both sides: a colour pivot column
+ * / `manual` filters (paired with `eff.autoReplenish`). Null-safe on both sides: a colour pivot column
  * that's null (no cartridge — see `colourPivot` above — or simply no reading yet) never matches,
  * and neither does an `effectiveSettingsSubquery` row that failed to join (every DRMS device has
  * one in practice, but a left join is what the caller uses, so this stays correct even if that

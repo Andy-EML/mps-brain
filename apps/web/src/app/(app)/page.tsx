@@ -37,7 +37,7 @@ export default async function FleetOverviewPage() {
     getTonerHealth(db),
     getCustomerCount(db),
     getIssueCounts(db, { status: 'open' }),
-    listDevices(db, { limit: PREVIEW_ROWS, sort: 'urgent' }),
+    listDevices(db, { limit: PREVIEW_ROWS }),
     getConsumableWarnings(db),
     getCollectionStatus(db),
     getReplenishmentStats(db, now),
@@ -125,7 +125,7 @@ export default async function FleetOverviewPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3.5">
           <p className="text-sm text-muted-foreground">
             Showing {formatNumber(preview.rows.length)} of {formatNumber(summary.devices)}{' '}
-            {pluralise(summary.devices, 'device')}, most urgent first
+            {pluralise(summary.devices, 'device')}, customer A–Z
           </p>
           <Link href="/devices" className="text-sm font-medium text-brand hover:underline">
             View all devices

@@ -1,6 +1,8 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  cartridgeFamilies,
+  cartridgeFamilyModels,
   counterNames,
   counterSnapshots,
   counterValues,
@@ -9,6 +11,7 @@ import {
   deviceLinks,
   drmsEquipment,
   linkIssues,
+  siteStockShelves,
   vantageEquipment,
   vantageSalesOrderLines,
   vantageSalesOrders,
@@ -17,7 +20,7 @@ import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '..
 import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './admin';
 import { countAlerts, listAlerts } from './alerts';
 import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms, listDeviceOrders } from './device';
-import { listDevices } from './devices';
+import { listDeviceFilterOptions, listDevices } from './devices';
 import { getCollectionStatus, getConsumableWarnings, getCustomerCount, getFleetSummary, getTonerHealth } from './fleet';
 import { getIssueCounts, listIssues, searchVantageEquipment } from './issues';
 import { updateDeviceSettings } from './settings';
@@ -483,47 +486,107 @@ describe('queries', () => {
       expect(total).toBe(3);
     });
 
-    it('sort: "urgent" orders critical toner, then low, then offline, then unlinked, in SQL', async () => {
-      // A healthy, linked, online device whose id sorts alphabetically before every fixture id, so
-      // the default (drmsId) order and the urgent order disagree — proving the ordering really
-      // happens in SQL rather than by accident matching insertion order.
-      await t.db.insert(drmsEquipment).values({
-        drmsId: 'A0-HEALTHY',
-        serial: 'SNHEALTHY1',
-        modelName: 'bizhub C301i',
-        isColour: true,
-        status: 'Registered',
-        customerName: 'Healthy Co',
-        lastCounterReceivedTime: new Date(),
-        raw: {},
-      });
-      const [snap] = await t.db
-        .insert(counterSnapshots)
-        .values({ drmsEquipmentId: 'A0-HEALTHY', counterId: 'healthy-c1', receivedTime: new Date(), raw: {} })
-        .returning({ id: counterSnapshots.id });
-      await t.db.insert(counterValues).values([
-        { snapshotId: snap!.id, name: 'BlackTonerLevel', value: 80 },
-        { snapshotId: snap!.id, name: 'CyanTonerLevel', value: 80 },
-        { snapshotId: snap!.id, name: 'MagentaTonerLevel', value: 80 },
-        { snapshotId: snap!.id, name: 'YellowTonerLevel', value: 80 },
+    it('orders by customer A–Z (case-insensitive, no customer last), then equipment Name, then serial', async () => {
+      // Ids chosen so drms-id order disagrees with the expected one at every step.
+      await t.db.insert(drmsEquipment).values([
+        // Lower-case customer: still sorts with the As, not after every capital.
+        { drmsId: 'Z1', serial: 'SNZ1', modelName: 'bizhub C301i', isColour: true, customerName: 'aardvark Ltd', raw: {} },
+        // Same customer as Z3, told apart by equipment Name.
+        { drmsId: 'A2', serial: 'SNA2', modelName: 'bizhub C301i', isColour: true, customerName: 'Zulu Co', raw: { Name: 'Zulu Co Upstairs' } },
+        { drmsId: 'Z3', serial: 'SNZ3', modelName: 'bizhub C301i', isColour: true, customerName: 'Zulu Co', raw: { Name: 'Zulu Co Downstairs' } },
+        // Same customer and no Name: serial decides.
+        { drmsId: 'A4', serial: 'SNB', modelName: 'bizhub C301i', isColour: true, customerName: 'Middle Ltd', raw: {} },
+        { drmsId: 'Z4', serial: 'SNA', modelName: 'bizhub C301i', isColour: true, customerName: 'Middle Ltd', raw: {} },
+        // No customer at all: last.
+        { drmsId: 'A0', serial: 'SNNONE', modelName: 'bizhub C301i', isColour: true, customerName: null, raw: {} },
       ]);
-      await t.db.insert(vantageEquipment).values({
-        vantageId: 1003,
-        serial: 'SNHEALTHY1',
-        serialNorm: 'snhealthy1',
-        customerName: 'Healthy Co (Vantage)',
-        raw: {},
+
+      const { rows } = await listDevices(t.db);
+      // D1/D2 sort by their Vantage names ("Acme Ltd (Vantage)", "Beta Co (Vantage)"), D3 by DRMS's.
+      expect(rows.map((r) => r.drmsId)).toEqual(['Z1', f.drms.online, f.drms.offline, f.drms.unlinked, 'Z4', 'A4', 'Z3', 'A2', 'A0']);
+
+      // Paging walks the same order.
+      const page2 = await listDevices(t.db, { limit: 3, offset: 3 });
+      expect(page2.rows.map((r) => r.drmsId)).toEqual([f.drms.unlinked, 'Z4', 'A4']);
+    });
+
+    describe('customer, colour, model and replenishment filters', () => {
+      beforeEach(async () => {
+        // A mono device of its own model and customer, beside the fixture's three colour ones.
+        await t.db.insert(drmsEquipment).values({
+          drmsId: 'M1',
+          serial: 'SNMONO0001',
+          modelName: 'bizhub 4050i',
+          isColour: false,
+          status: 'Registered',
+          customerName: 'Delta Ltd',
+          raw: {},
+        });
       });
-      await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'A0-HEALTHY', vantageEquipmentId: 1003, method: 'serial' });
 
-      // D1 has critical toner (black=3%); D2 is offline with no counters; D3 has no counters and no
-      // link; A0-HEALTHY is fine on every count, so it ranks last despite sorting first by id.
-      const { rows } = await listDevices(t.db, { sort: 'urgent' });
-      expect(rows.map((r) => r.drmsId)).toEqual([f.drms.online, f.drms.offline, f.drms.unlinked, 'A0-HEALTHY']);
+      it('customer matches the name the row shows: Vantage when linked, else DRMS', async () => {
+        const vantage = await listDevices(t.db, { customer: 'Acme Ltd (Vantage)' });
+        expect(vantage.rows.map((r) => r.drmsId)).toEqual([f.drms.online]);
+        expect(vantage.total).toBe(1);
 
-      // Without the option, the existing drmsId ordering is unaffected.
-      const unsorted = await listDevices(t.db);
-      expect(unsorted.rows.map((r) => r.drmsId)).toEqual(['A0-HEALTHY', f.drms.online, f.drms.offline, f.drms.unlinked]);
+        // A linked device is not found by the DRMS name it no longer shows.
+        expect((await listDevices(t.db, { customer: 'Acme Ltd' })).total).toBe(0);
+
+        const drms = await listDevices(t.db, { customer: 'Gamma Inc' });
+        expect(drms.rows.map((r) => r.drmsId)).toEqual([f.drms.unlinked]);
+      });
+
+      it('colour splits colour devices from mono ones by the stored flag', async () => {
+        const colour = await listDevices(t.db, { colour: 'colour' });
+        expect(colour.rows.map((r) => r.drmsId)).toEqual([f.drms.online, f.drms.offline, f.drms.unlinked]);
+        const mono = await listDevices(t.db, { colour: 'mono' });
+        expect(mono.rows.map((r) => r.drmsId)).toEqual(['M1']);
+      });
+
+      it('model matches the DRMS model name exactly', async () => {
+        const c3320 = await listDevices(t.db, { model: 'bizhub C3320i' });
+        expect(c3320.rows.map((r) => r.drmsId)).toEqual([f.drms.online, f.drms.offline]);
+        expect((await listDevices(t.db, { model: 'bizhub C3320' })).total).toBe(0);
+      });
+
+      it('auto-off finds every device with auto-replenishment off, whatever its toner', async () => {
+        expect((await listDevices(t.db, { replenish: 'auto-off' })).total).toBe(0);
+        // D2 has no toner readings at all, so neither the needs-toner nor the manual tab shows it.
+        await updateDeviceSettings(t.db, { drmsIds: [f.drms.online, f.drms.offline], patch: { autoReplenish: false }, userId: f.user.id });
+
+        const off = await listDevices(t.db, { replenish: 'auto-off' });
+        expect(off.rows.map((r) => r.drmsId)).toEqual([f.drms.online, f.drms.offline]);
+        // The manual tab still narrows it to the ones below threshold.
+        const manual = await listDevices(t.db, { replenish: 'auto-off', filter: 'manual' });
+        expect(manual.rows.map((r) => r.drmsId)).toEqual([f.drms.online]);
+      });
+
+      it('site-stock finds the devices on a shelf now', async () => {
+        expect((await listDevices(t.db, { replenish: 'site-stock' })).total).toBe(0);
+        const [fam] = await t.db.insert(cartridgeFamilies).values({ name: 'C3320i', isColour: true }).returning();
+        await t.db.insert(cartridgeFamilyModels).values({ model: 'bizhub C3320i', familyId: fam!.id });
+        // Customer 1 is Acme's Vantage customer: D1 is on the shelf, D2 (Beta, same model) is not.
+        await t.db.insert(siteStockShelves).values({ vantageCustomerId: 1, familyId: fam!.id, countingFrom: new Date() });
+
+        const shelved = await listDevices(t.db, { replenish: 'site-stock' });
+        expect(shelved.rows.map((r) => r.drmsId)).toEqual([f.drms.online]);
+        expect(shelved.total).toBe(1);
+      });
+
+      it('combines with each other, the tabs and the search', async () => {
+        expect((await listDevices(t.db, { colour: 'mono', customer: 'Delta Ltd' })).total).toBe(1);
+        expect((await listDevices(t.db, { colour: 'colour', customer: 'Delta Ltd' })).total).toBe(0);
+        const offlineC3320 = await listDevices(t.db, { model: 'bizhub C3320i', filter: 'offline' });
+        expect(offlineC3320.rows.map((r) => r.drmsId)).toEqual([f.drms.offline]);
+        expect((await listDevices(t.db, { model: 'bizhub C3320i', search: 'sn0000001' })).total).toBe(1);
+      });
+
+      it('listDeviceFilterOptions offers each shown customer name and model once, A–Z', async () => {
+        expect(await listDeviceFilterOptions(t.db)).toEqual({
+          customers: ['Acme Ltd (Vantage)', 'Beta Co (Vantage)', 'Delta Ltd', 'Gamma Inc'],
+          models: ['bizhub 4050i', 'bizhub C300i', 'bizhub C3320i'],
+        });
+      });
     });
 
     describe('lastAlarmAt', () => {

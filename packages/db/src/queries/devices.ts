@@ -1,9 +1,10 @@
 import { deviceDisplayName, informativeEquipmentName } from '@mps/core';
-import { and, asc, count, eq, ilike, isNotNull, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, count, eq, ilike, inArray, isNotNull, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
 import { effectiveSettingsSubquery } from './settings';
+import { shelfDevicesSubquery } from './site-stock';
 import { belowThreshold, counterPivotSubquery, drmsEquipmentName, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
 export interface DeviceRow {
@@ -51,15 +52,33 @@ export interface DeviceListOptions {
   search?: string;
   filter?: 'all' | 'needs-toner' | 'manual' | 'offline' | 'unlinked';
   /**
-   * `'urgent'` orders critical toner first, then low toner, then offline, then unlinked, then
-   * everything else — the fleet overview's "most urgent first" preview. Ties break on device name
-   * (falling back to serial, then drms id), case-insensitively. Mirrors `attentionRank` in
-   * `apps/web/src/components/toner.ts`, but computed in SQL so it works over the whole table, not
-   * just a capped scan. Default (omitted) keeps the existing `drmsId` order.
+   * One customer, by the name the list shows: the linked Vantage customer's, else the one DRMS
+   * reports (`deviceCustomerName`). Exact match — the value comes from `listDeviceFilterOptions`.
    */
-  sort?: 'urgent';
+  customer?: string;
+  /** Colour or mono devices only, by the stored `is_colour` flag (`isColourModel` at DRMS pull). */
+  colour?: 'colour' | 'mono';
+  /** One DRMS model name, exactly. */
+  model?: string;
+  /**
+   * `auto-off`: the effective setting has auto-replenishment switched off, whatever the toner
+   * levels (the `manual` tab is the subset of these below threshold). `site-stock`: the device is on
+   * a site stock shelf now, by `shelfDevicesSubquery`.
+   */
+  replenish?: 'auto-off' | 'site-stock';
   limit?: number;
   offset?: number;
+}
+
+/** What picks the devices, as opposed to which page of them: everything but limit and offset. */
+export type DeviceListFilters = Omit<DeviceListOptions, 'limit' | 'offset'>;
+
+/**
+ * The customer name a device row shows: the linked Vantage customer's, else the DRMS one. Needs
+ * the joins from `joinDeviceList` (or the same two link/Vantage left joins).
+ */
+export function deviceCustomerName() {
+  return sql<string | null>`coalesce(${vantageEquipment.customerName}, ${drmsEquipment.customerName})`;
 }
 
 function deviceRowFields(
@@ -169,9 +188,11 @@ function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
  * The search and filter half of the devices list: the counter pivot and effective-settings
  * subqueries it reads, and the WHERE built from them. `listDevices` and `resolveDeviceSelection`
  * (the bulk bar's "select all matching") both build on this, so the list an operator sees and the
- * devices a bulk edit reaches can never disagree. Join the subqueries with `joinDeviceList`.
+ * devices a bulk edit reaches can never disagree. The tab (`filter`), the search and the customer,
+ * colour, model and replenishment filters all AND together. Join the subqueries with
+ * `joinDeviceList`.
  */
-export function deviceListConditions(db: Db, o: Pick<DeviceListOptions, 'search' | 'filter'> = {}) {
+export function deviceListConditions(db: Db, o: DeviceListFilters = {}) {
   const cutoff = offlineCutoff();
   const pivot = counterPivotSubquery(db);
   const eff = effectiveSettingsSubquery(db);
@@ -197,6 +218,15 @@ export function deviceListConditions(db: Db, o: Pick<DeviceListOptions, 'search'
   } else if (o.filter === 'unlinked') {
     conds.push(isNull(deviceLinks.vantageEquipmentId));
   }
+  if (o.customer) conds.push(eq(deviceCustomerName(), o.customer));
+  if (o.colour) conds.push(eq(drmsEquipment.isColour, o.colour === 'colour'));
+  if (o.model) conds.push(eq(drmsEquipment.modelName, o.model));
+  if (o.replenish === 'auto-off') {
+    conds.push(eq(eff.autoReplenish, false));
+  } else if (o.replenish === 'site-stock') {
+    const shelved = shelfDevicesSubquery(db);
+    conds.push(inArray(drmsEquipment.drmsId, db.select({ drmsId: shelved.drmsId }).from(shelved)));
+  }
   const where = conds.length > 0 ? and(...conds) : undefined;
   return { cutoff, pivot, eff, where };
 }
@@ -220,6 +250,20 @@ export function joinDeviceList<T extends PgSelect>(qb: T, c: ReturnType<typeof d
     .leftJoin(c.eff, eq(c.eff.drmsId, drmsEquipment.drmsId)) as unknown as T;
 }
 
+/**
+ * The devices list's order: customer A–Z (as the row shows it, case-insensitive, no customer
+ * last), then DRMS's equipment Name (usually the site), then serial, then drms id so a page break
+ * never falls between ties. Needs the joins from `joinDeviceList`.
+ */
+export function deviceListOrder(): SQL[] {
+  return [
+    sql`lower(${deviceCustomerName()}) asc nulls last`,
+    sql`lower(${drmsEquipmentName()}) asc nulls last`,
+    sql`${drmsEquipment.serial} asc nulls last`,
+    sql`${drmsEquipment.drmsId} asc`,
+  ];
+}
+
 export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ rows: DeviceRow[]; total: number }> {
   const limit = o.limit ?? 50;
   const offset = o.offset ?? 0;
@@ -227,28 +271,11 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
   const { cutoff, pivot, where } = conds;
   const alarms = lastAlarmSubquery(db);
 
-  // Mirrors `attentionRank` in apps/web/src/components/toner.ts: critical toner first, then low,
-  // then offline, then unlinked, then "some data" ahead of "no counters at all". Each WHEN is
-  // exclusive of the ones before it (e.g. the low branch only matches once critical has already
-  // failed), so the priority order falls straight out of CASE's first-match semantics.
-  const urgencyRank = sql<number>`
-    case
-      when ${pivot.black} < 5 or ${pivot.cyan} < 5 or ${pivot.magenta} < 5 or ${pivot.yellow} < 5 then 0
-      when ${pivot.black} < 20 or ${pivot.cyan} < 20 or ${pivot.magenta} < 20 or ${pivot.yellow} < 20 then 1
-      when ${drmsEquipment.lastCounterReceivedTime} is not null and ${drmsEquipment.lastCounterReceivedTime} < ${cutoff} then 2
-      when ${deviceLinks.vantageEquipmentId} is null then 3
-      when ${pivot.black} is null and ${pivot.cyan} is null and ${pivot.magenta} is null and ${pivot.yellow} is null then 5
-      else 4
-    end
-  `;
-  const urgencyTieBreak = sql`lower(coalesce(${drmsEquipment.productName}, ${drmsEquipment.serial}, ${drmsEquipment.drmsId}))`;
-  const orderBy = o.sort === 'urgent' ? [urgencyRank, urgencyTieBreak] : [asc(drmsEquipment.drmsId)];
-
   const rowsQuery = joinDeviceList(db.select(deviceRowFields(pivot, alarms)).from(drmsEquipment).$dynamic(), conds)
     // Already grouped to one row per device, so this cannot multiply rows (or the count below).
     .leftJoin(alarms, eq(alarms.drmsId, drmsEquipment.drmsId))
     .where(where)
-    .orderBy(...orderBy)
+    .orderBy(...deviceListOrder())
     .limit(limit)
     .offset(offset);
 
@@ -256,4 +283,37 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
 
   const [rows, [totalRow]] = await Promise.all([rowsQuery, countQuery]);
   return { rows: rows.map((r) => toDeviceRow(r as unknown as RawDeviceRow, cutoff)), total: totalRow?.n ?? 0 };
+}
+
+export interface DeviceFilterOptions {
+  /** Every customer name a device row can show, A–Z (case-insensitive). */
+  customers: string[];
+  /** Every DRMS model name in the fleet, A–Z. */
+  models: string[];
+}
+
+/**
+ * The choices behind the devices list's customer and model pickers: only names some device
+ * actually carries, so every choice finds at least one device.
+ */
+export async function listDeviceFilterOptions(db: Db): Promise<DeviceFilterOptions> {
+  const customer = deviceCustomerName();
+  const [customers, models] = await Promise.all([
+    db
+      .selectDistinct({ name: customer, sortKey: sql<string>`lower(${customer})` })
+      .from(drmsEquipment)
+      .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
+      .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
+      .where(isNotNull(customer))
+      .orderBy(sql`lower(${customer})`, customer),
+    db
+      .selectDistinct({ model: drmsEquipment.modelName, sortKey: sql<string>`lower(${drmsEquipment.modelName})` })
+      .from(drmsEquipment)
+      .where(isNotNull(drmsEquipment.modelName))
+      .orderBy(sql`lower(${drmsEquipment.modelName})`, drmsEquipment.modelName),
+  ]);
+  return {
+    customers: customers.map((r) => r.name).filter((n): n is string => n !== null && n.trim() !== ''),
+    models: models.map((r) => r.model).filter((m): m is string => m !== null && m.trim() !== ''),
+  };
 }

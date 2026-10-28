@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { drmsEquipment } from '../schema';
 import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '../testing';
 import { describeSelection, resolveDeviceSelection } from './device-selection';
-import { listDevices, type DeviceListOptions } from './devices';
+import { listDevices, type DeviceListFilters } from './devices';
 
 // Same frozen clock as queries.test.ts: the offline filter compares against Date.now().
 const FIXED_NOW = new Date('2026-09-18T12:00:00Z');
@@ -33,7 +33,7 @@ describe('device selection', () => {
   });
 
   describe('resolveDeviceSelection', () => {
-    const cases: Pick<DeviceListOptions, 'search' | 'filter'>[] = [
+    const cases: DeviceListFilters[] = [
       {},
       { filter: 'all' },
       { filter: 'needs-toner' },
@@ -44,6 +44,12 @@ describe('device selection', () => {
       { search: 'sn0000002' },
       { search: 'ltd', filter: 'unlinked' },
       { search: 'nothing matches this' },
+      { customer: 'Delta Ltd' },
+      { colour: 'mono' },
+      { colour: 'colour', filter: 'unlinked' },
+      { model: 'bizhub C3320i' },
+      { replenish: 'auto-off' },
+      { replenish: 'site-stock' },
     ];
 
     it.each(cases)('returns exactly the ids listDevices pages through for %o', async (o) => {
@@ -59,7 +65,8 @@ describe('device selection', () => {
       expect(all.customers).toBe(3);
 
       const unlinked = await resolveDeviceSelection(t.db, { filter: 'unlinked' });
-      expect(unlinked.drmsIds).toEqual([f.drms.unlinked, 'M1']);
+      // Customer A–Z, as the list shows them: Delta Ltd, then Gamma Inc.
+      expect(unlinked.drmsIds).toEqual(['M1', f.drms.unlinked]);
       expect(unlinked.customers).toBe(1);
 
       const acme = await resolveDeviceSelection(t.db, { search: 'acme' });
