@@ -383,6 +383,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
             <OrderHistory
               orders={orders.orders}
               lastByColour={orders.lastByColour}
+              isColour={device.isColour}
               emptyMessage={
                 vantageEquipmentId == null
                   ? 'Orders are held against Vantage equipment — link this device to see what has been sent.'

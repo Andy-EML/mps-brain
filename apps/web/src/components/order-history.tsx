@@ -111,12 +111,16 @@ function OrderRow({ order }: { order: DeviceOrderRow }) {
 export interface OrderHistoryProps {
   orders: DeviceOrderRow[];
   lastByColour: DeviceOrders['lastByColour'];
+  /** A mono device's headline drops cyan/magenta/yellow, unless such an order exists anyway. */
+  isColour: boolean;
   /** Shown instead of the table when there is nothing to list. */
   emptyMessage?: string;
   className?: string;
 }
 
-export function OrderHistory({ orders, lastByColour, emptyMessage, className }: OrderHistoryProps) {
+const CMY = new Set<string>(['cyan', 'magenta', 'yellow']);
+
+export function OrderHistory({ orders, lastByColour, isColour, emptyMessage, className }: OrderHistoryProps) {
   if (orders.length === 0) {
     return (
       <p className={cn('px-5 py-10 text-center text-sm text-muted-foreground', className)}>
@@ -128,7 +132,7 @@ export function OrderHistory({ orders, lastByColour, emptyMessage, className }: 
   return (
     <div className={className}>
       <div className="grid gap-2 px-5 py-4 sm:grid-cols-2 xl:grid-cols-3">
-        {ORDER_COLOURS.map((colour) => (
+        {ORDER_COLOURS.filter((colour) => isColour || !CMY.has(colour) || lastByColour[colour]).map((colour) => (
           <ColourSummaryRow key={colour} colour={colour} entry={lastByColour[colour]} />
         ))}
       </div>
