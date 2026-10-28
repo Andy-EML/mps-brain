@@ -1,6 +1,6 @@
 import { isCollectionOutage } from '@mps/core';
 import { deviceAlerts, drmsEquipment, type Db } from '@mps/db';
-import { effectiveSettingsSubquery } from '@mps/db/queries';
+import { effectiveSettingsSubquery, HIDDEN_ALERT_REASON, notHiddenDevice } from '@mps/db/queries';
 import { and, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 
 const OFFLINE_TYPE = 'offline';
@@ -47,10 +47,13 @@ export async function evaluateOfflineAlerts(db: Db, opts: { now: Date; threshold
   const cutoff = new Date(now.getTime() - thresholdHours * 3_600_000);
   const eff = effectiveSettingsSubquery(db);
 
+  // Hidden devices are no candidates at all — not for an alert and not toward the outage ratio,
+  // which has to agree with `getCollectionStatus`, which leaves them out too.
   const candidateFilter = and(
     isNull(drmsEquipment.missingSince),
     sql`upper(${drmsEquipment.status}) <> 'DELETED'`,
     isNotNull(drmsEquipment.lastCounterReceivedTime),
+    notHiddenDevice(drmsEquipment.drmsId),
   );
 
   // Carries `alertsEnabled` alongside each candidate so the outage ratio below can use the full
@@ -147,10 +150,22 @@ export async function evaluateOfflineAlerts(db: Db, opts: { now: Date; threshold
       );
   }
 
+  // A hidden device keeps no open alert of any type. `hideDevices` clears them as it hides; this
+  // catches one opened by a run that overlapped the hide. Like the alerts-off step, regardless of
+  // the outage guard, and tagged with why.
+  const hiddenCleared = await db
+    .update(deviceAlerts)
+    .set({
+      clearedAt: now,
+      details: sql`${deviceAlerts.details} || ${JSON.stringify({ clearedReason: HIDDEN_ALERT_REASON })}::jsonb`,
+    })
+    .where(and(isNull(deviceAlerts.clearedAt), sql`not (${notHiddenDevice(deviceAlerts.drmsEquipmentId)})`))
+    .returning({ id: deviceAlerts.id });
+
   const [{ n } = { n: 0 }] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(deviceAlerts)
     .where(and(eq(deviceAlerts.type, OFFLINE_TYPE), isNull(deviceAlerts.clearedAt)));
 
-  return { opened: toOpen.length, cleared: toClear.length + alertsOff.length, open: n, skippedDueToOutage };
+  return { opened: toOpen.length, cleared: toClear.length + alertsOff.length + hiddenCleared.length, open: n, skippedDueToOutage };
 }

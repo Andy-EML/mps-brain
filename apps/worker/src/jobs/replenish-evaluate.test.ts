@@ -1,7 +1,7 @@
-import { cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
+import { users, cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
-import { updateDeviceSettings } from '@mps/db/queries';
-import { eq } from 'drizzle-orm';
+import { hideDevices, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
+import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveSnapshot } from './drms-snapshot';
 import { orderedInVantage, runReplenishEvaluate } from './replenish-evaluate';
@@ -267,4 +267,59 @@ describe('runReplenishEvaluate', () => {
     const [u] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning();
     return u!.id;
   }
+});
+
+describe('runReplenishEvaluate with hidden devices', () => {
+  let t: TestDb;
+  let userId: number;
+  beforeEach(async () => {
+    t = await createTestDb();
+    const [user] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning({ id: users.id });
+    userId = user!.id;
+    await t.db.insert(drmsEquipment).values([
+      { drmsId: 'shown', status: 'Registered', isColour: false, raw: {} },
+      { drmsId: 'hidden', status: 'Registered', isColour: false, raw: {} },
+    ]);
+    await t.db.insert(vantageEquipment).values([{ vantageId: 1, raw: {} }, { vantageId: 2, raw: {} }]);
+    await t.db.insert(deviceLinks).values([
+      { drmsEquipmentId: 'shown', vantageEquipmentId: 1, method: 'serial' },
+      { drmsEquipmentId: 'hidden', vantageEquipmentId: 2, method: 'serial' },
+    ]);
+    for (const id of ['shown', 'hidden']) {
+      await saveSnapshot(t.db, id, {
+        CounterId: `${id}-1`,
+        ReceivedTime: '2026-09-21 09:00:00',
+        Counters: [{ Name: 'BlackTonerLevel', Value: 3 }],
+        ModeSizeCounters: [],
+      } as never, NOW);
+    }
+  });
+  afterEach(() => t.close());
+
+  it('proposes nothing for a hidden device', async () => {
+    await hideDevices(t.db, { drmsIds: ['hidden'], userId, now: NOW });
+    const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+    expect(r.stats).toMatchObject({ devices: 1, proposed: 1 });
+    const rows = await t.db.select().from(replenishmentProposals);
+    expect(rows.map((p) => p.drmsEquipmentId)).toEqual(['shown']);
+  });
+
+  it('supersedes a pending proposal left on a hidden device, and proposes again once unhidden', async () => {
+    await hideDevices(t.db, { drmsIds: ['hidden'], userId, now: NOW });
+    // As if a run that overlapped the hide had raised it.
+    await t.db.insert(replenishmentProposals).values({ drmsEquipmentId: 'hidden', colour: 'black', trigger: 'threshold', status: 'pending', createdAt: NOW });
+    const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+    expect(r.stats).toMatchObject({ superseded: 1 });
+    const [left] = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.drmsEquipmentId, 'hidden'));
+    expect(left).toMatchObject({ status: 'superseded', note: 'device hidden' });
+
+    await unhideDevices(t.db, { drmsIds: ['hidden'], userId, now: NOW });
+    const again = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+    expect(again.stats).toMatchObject({ devices: 2, proposed: 1 });
+    const live = await t.db
+      .select()
+      .from(replenishmentProposals)
+      .where(and(eq(replenishmentProposals.drmsEquipmentId, 'hidden'), eq(replenishmentProposals.status, 'pending')));
+    expect(live).toHaveLength(1);
+  });
 });

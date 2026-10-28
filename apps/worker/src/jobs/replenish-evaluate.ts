@@ -11,7 +11,14 @@ import {
   type TonerColour,
 } from '@mps/core';
 import { deviceAlarms, drmsEquipment, replenishmentProposals, type Db } from '@mps/db';
-import { counterPivotSubquery, effectiveSettingsSubquery, getOrderStates, type ColourOrderState } from '@mps/db/queries';
+import {
+  counterPivotSubquery,
+  effectiveSettingsSubquery,
+  getOrderStates,
+  notHiddenDevice,
+  supersedeHiddenProposals,
+  type ColourOrderState,
+} from '@mps/db/queries';
 import { and, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import type { JobResult } from '../sync-runs';
 import { evaluateSiteStock } from './site-stock-evaluate';
@@ -47,12 +54,18 @@ export interface ReplenishEvaluateDeps {
  * Runs the engine over every monitored device and persists the result. Proposes only — nothing
  * here talks to Vantage. Safe to run any number of times: the live-proposal unique index and the
  * engine's `live_proposal` suppression both stop duplicates.
+ *
+ * Hidden devices (`hidden_devices`) are not evaluated at all, so they get no proposals; any pending
+ * one still on them (raised by a run that overlapped the hide) is superseded first. Site stock is
+ * left as it is: a hidden device's Empty alarms still count against its shelf, and a top-up it
+ * raised is the shelf's, not the device's.
  */
 export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise<JobResult> {
   const { db } = deps;
   const now = (deps.now ?? (() => new Date()))();
   // Site stock first: it raises shelf top-ups and says which colours a shelf now covers.
   const siteStock = await evaluateSiteStock(db, now);
+  const hiddenSuperseded = await supersedeHiddenProposals(db, now);
   const eff = effectiveSettingsSubquery(db);
   const pivot = counterPivotSubquery(db);
 
@@ -74,7 +87,13 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
     .from(drmsEquipment)
     .innerJoin(eff, eq(eff.drmsId, drmsEquipment.drmsId))
     .leftJoin(pivot, eq(pivot.drmsId, drmsEquipment.drmsId))
-    .where(and(sql`upper(${drmsEquipment.status}) in ('REGISTERED', 'DISCOVERED')`, isNull(drmsEquipment.missingSince)));
+    .where(
+      and(
+        sql`upper(${drmsEquipment.status}) in ('REGISTERED', 'DISCOVERED')`,
+        isNull(drmsEquipment.missingSince),
+        notHiddenDevice(drmsEquipment.drmsId),
+      ),
+    );
 
   const since = new Date(now.getTime() - ALARM_WINDOW_DAYS * 86_400_000);
   const alarmRows = await db
@@ -114,7 +133,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   const linkedIds = [...new Set(devices.map((d) => d.vantageEquipmentId).filter((id): id is number => id !== null))];
   const orderStates = await getOrderStates(db, linkedIds, now);
 
-  const stats = { devices: devices.length, proposed: 0, superseded: 0, suppressed: 0, autoOff: 0, unlinked: 0, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps };
+  const stats = { devices: devices.length, proposed: 0, superseded: hiddenSuperseded, suppressed: 0, autoOff: 0, unlinked: 0, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps };
 
   for (const d of devices) {
     const thresholds: Record<TonerColour, number> = { black: Number(d.tBlack), cyan: Number(d.tCyan), magenta: Number(d.tMagenta), yellow: Number(d.tYellow) };

@@ -1,5 +1,6 @@
 import { deviceAlerts, drmsEquipment, users } from '@mps/db';
-import { updateDeviceSettings } from '@mps/db/queries';
+import { hideDevices, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
+import { isCollectionOutage } from '@mps/core';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { asc, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -303,5 +304,60 @@ describe('evaluateOfflineAlerts', () => {
       const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
       expect(result).toEqual({ opened: 0, cleared: 0, open: 0, skippedDueToOutage: false });
     });
+  });
+});
+
+describe('evaluateOfflineAlerts with hidden devices', () => {
+  let t: TestDb;
+  let userId: number;
+  const NOW = new Date('2026-09-18T12:00:00Z');
+  const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+  beforeEach(async () => {
+    t = await createTestDb();
+    const [user] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning({ id: users.id });
+    userId = user!.id;
+    // Fresh devices so the fleet is never mid-outage; one stale device to alert on.
+    await seedDrms(t.db, [
+      { drmsId: 'A1', lastCounterReceivedTime: hoursAgo(1) },
+      { drmsId: 'A2', lastCounterReceivedTime: hoursAgo(1) },
+      { drmsId: 'STALE', lastCounterReceivedTime: hoursAgo(30) },
+    ]);
+  });
+  afterEach(() => t.close());
+
+  it('opens no alert for a hidden device, and opens one again once it is unhidden', async () => {
+    await hideDevices(t.db, { drmsIds: ['STALE'], userId, now: NOW });
+    expect(await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 })).toEqual({
+      opened: 0,
+      cleared: 0,
+      open: 0,
+      skippedDueToOutage: false,
+    });
+
+    await unhideDevices(t.db, { drmsIds: ['STALE'], userId, now: NOW });
+    expect(await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 })).toMatchObject({ opened: 1, open: 1 });
+  });
+
+  it('clears an alert of any type left open on a hidden device, tagged with why', async () => {
+    await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+    await hideDevices(t.db, { drmsIds: ['STALE'], userId, now: NOW });
+    // As if a run that overlapped the hide had opened these.
+    await t.db.insert(deviceAlerts).values([
+      { drmsEquipmentId: 'STALE', type: 'offline', firstDetectedAt: NOW },
+      { drmsEquipmentId: 'STALE', type: 'SC-541', firstDetectedAt: NOW },
+    ]);
+    const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+    expect(result).toMatchObject({ opened: 0, cleared: 2, open: 0 });
+    const rows = await t.db.select().from(deviceAlerts).where(eq(deviceAlerts.drmsEquipmentId, 'STALE'));
+    expect(rows.every((r) => r.clearedAt !== null)).toBe(true);
+    expect(rows.filter((r) => (r.details as { clearedReason?: string }).clearedReason === 'device hidden')).toHaveLength(3);
+  });
+
+  it('leaves hidden devices out of the outage ratio', async () => {
+    // Two of three stale would be an outage; hiding one leaves one of two.
+    await t.db.update(drmsEquipment).set({ lastCounterReceivedTime: hoursAgo(30) }).where(eq(drmsEquipment.drmsId, 'A2'));
+    await hideDevices(t.db, { drmsIds: ['A2'], userId, now: NOW });
+    const result = await evaluateOfflineAlerts(t.db, { now: NOW, thresholdHours: 24 });
+    expect(result.skippedDueToOutage).toBe(isCollectionOutage({ devicesExpectingReadings: 2, devicesStale: 1 }));
   });
 });
