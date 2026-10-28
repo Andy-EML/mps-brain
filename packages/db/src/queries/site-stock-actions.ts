@@ -7,6 +7,7 @@ import {
   cartridgeFamilyModels,
   replenishmentProposals,
   replenishmentSettings,
+  siteStockMembers,
   siteStockShelves,
   vantageCustomers,
 } from '../schema';
@@ -165,6 +166,24 @@ export async function deleteFamily(db: Db, args: { id: number; userId: number; n
   });
 }
 
+/**
+ * Records the devices on newly created shelves as members since the shelf's `counting_from`, so
+ * Empties received before the evaluator's first run still count. Uses the one membership
+ * definition (`shelfDevicesSubquery`); runs in the creating transaction. Only creation seeds:
+ * `counting_from` is never changed on an existing shelf (updateShelf and the import's update path
+ * write holdings and used counts only), so there is nothing to re-seed later.
+ */
+async function seedMembers(tx: Db, shelfIds: number[], countingFrom: Date): Promise<void> {
+  if (shelfIds.length === 0) return;
+  const sd = shelfDevicesSubquery(tx);
+  const devices = await tx.select({ shelfId: sd.shelfId, drmsId: sd.drmsId }).from(sd).where(inArray(sd.shelfId, shelfIds));
+  if (devices.length === 0) return;
+  await tx
+    .insert(siteStockMembers)
+    .values(devices.map((d) => ({ shelfId: d.shelfId, drmsEquipmentId: d.drmsId, since: countingFrom })))
+    .onConflictDoNothing();
+}
+
 // ---- shelves --------------------------------------------------------------------------------
 
 export async function createShelf(
@@ -206,6 +225,7 @@ export async function createShelf(
       })
       .returning({ id: s.id });
     const shelfId = row!.id;
+    await seedMembers(tx as unknown as Db, [shelfId], now);
     await audit(tx as unknown as Db, {
       userId: args.userId,
       action: 'shelf.create',
@@ -415,6 +435,7 @@ export async function applyImport(
         unchanged++;
       }
     }
+    await seedMembers(tx as unknown as Db, createdIds, now);
     await audit(tx as unknown as Db, {
       userId: args.userId,
       action: 'shelf.import',

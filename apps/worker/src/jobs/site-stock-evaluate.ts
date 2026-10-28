@@ -78,15 +78,21 @@ export async function evaluateSiteStock(
     .innerJoin(cartridgeFamilies, eq(cartridgeFamilies.id, sd.familyId))
     .orderBy(asc(sd.drmsId));
 
-  // Membership start: a device seen on a shelf for the first time joins it now; one no longer on
-  // its shelf leaves (a later return is a fresh join).
+  // Membership start: a device seen on a shelf for the first time joins it now (a new shelf's
+  // devices were already recorded at its counting_from). A recorded pair that is no longer current
+  // is kept, so a transient drop does not reset the start on return; it is deleted only when the
+  // device is now a current member of a different shelf (a real move: the new shelf starts afresh).
   const memberKey = (shelfId: number, drmsId: string) => `${shelfId}:${drmsId}`;
   const current = new Set(members.map((m) => memberKey(m.shelfId, m.drmsId)));
+  const currentShelfOf = new Map(members.map((m) => [m.drmsId, m.shelfId]));
   const recorded = await db.select().from(siteStockMembers);
   const since = new Map<string, Date>();
   for (const r of recorded) {
-    if (current.has(memberKey(r.shelfId, r.drmsEquipmentId))) since.set(memberKey(r.shelfId, r.drmsEquipmentId), r.since);
-    else await db.delete(siteStockMembers).where(and(eq(siteStockMembers.shelfId, r.shelfId), eq(siteStockMembers.drmsEquipmentId, r.drmsEquipmentId)));
+    const key = memberKey(r.shelfId, r.drmsEquipmentId);
+    if (current.has(key)) since.set(key, r.since);
+    else if (currentShelfOf.has(r.drmsEquipmentId)) {
+      await db.delete(siteStockMembers).where(and(eq(siteStockMembers.shelfId, r.shelfId), eq(siteStockMembers.drmsEquipmentId, r.drmsEquipmentId)));
+    }
   }
   const joined = members.filter((m) => !since.has(memberKey(m.shelfId, m.drmsId)));
   if (joined.length > 0) {

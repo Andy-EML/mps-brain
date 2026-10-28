@@ -8,8 +8,11 @@ import {
   siteStockEvents,
   siteStockMembers,
   siteStockShelves,
+  users,
+  vantageCustomers,
   vantageEquipment,
 } from '@mps/db';
+import { applyImport, createShelf } from '@mps/db/queries';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -237,6 +240,78 @@ describe('evaluateSiteStock', () => {
       expect(rows.map((r) => [r.id, r.usedBlack])).toEqual([[shelfId, 1], [b!.id, 0]]);
       const dA = (await t.db.select().from(siteStockMembers)).filter((m) => m.drmsEquipmentId === 'dA');
       expect(dA.map((m) => [m.shelfId, m.since])).toEqual([[b!.id, new Date('2026-09-07T00:00:00Z')]]);
+    });
+
+    it('keeps the membership start of a device across a one-run drop, so Empties in between still count', async () => {
+      const dAKey = () => t.db.select().from(siteStockMembers).where(eq(siteStockMembers.drmsEquipmentId, 'dA'));
+      expect((await dAKey()).map((m) => m.since)).toEqual([COUNTING_FROM]);
+
+      await t.db.update(deviceLinks).set({ unlinkedAt: new Date('2026-09-05T00:00:00Z') }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+      await evaluateSiteStock(t.db, new Date('2026-09-05T12:00:00Z'));
+      expect((await dAKey()).map((m) => m.since)).toEqual([COUNTING_FROM]); // row survives the drop
+
+      await alarm('dA', '2026-09-06 08:00:00', 'Toner Empty(BK)'); // received while absent
+      await t.db.update(deviceLinks).set({ unlinkedAt: null }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+      const back = await evaluateSiteStock(t.db, new Date('2026-09-07T00:00:00Z'));
+      expect(back.stats).toMatchObject({ considered: 1, counted: 1 });
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+      expect((await dAKey()).map((m) => m.since)).toEqual([COUNTING_FROM]);
+    });
+
+    it('does not count while a device is off the shelf if it never returns', async () => {
+      await t.db.update(deviceLinks).set({ unlinkedAt: new Date('2026-09-05T00:00:00Z') }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+      await alarm('dA', '2026-09-06 08:00:00', 'Toner Empty(BK)');
+      const run = await evaluateSiteStock(t.db, new Date('2026-09-07T00:00:00Z'));
+      expect(run.stats).toMatchObject({ considered: 0, counted: 0 });
+      expect(await shelf()).toMatchObject({ usedBlack: 0 });
+    });
+  });
+
+  describe('new shelves count from counting_from', () => {
+    const CREATED = new Date('2026-10-01T09:00:00Z');
+    const FIRST_RUN = new Date('2026-10-01T12:00:00Z');
+    let familyId: number;
+    let userId: number;
+
+    beforeEach(async () => {
+      [{ id: userId }] = (await t.db.insert(users).values({ username: 'alice', passwordHash: 'x', role: 'operator' }).returning({ id: users.id })) as [{ id: number }];
+      await t.db.insert(vantageCustomers).values({ vantageId: 300, name: 'Site', raw: {} });
+      await t.db.insert(vantageEquipment).values({ vantageId: 30, vantageCustomerId: 300, raw: {} });
+      await t.db.insert(drmsEquipment).values({ drmsId: 'dN', modelName: 'bizhub C300i', status: 'Registered', isColour: true, raw: {} });
+      await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'dN', vantageEquipmentId: 30, method: 'serial' });
+      [familyId] = (await t.db.select().from(cartridgeFamilies)).map((f) => f.id) as [number];
+    });
+
+    const shelfFor = async (customer: number) =>
+      (await t.db.select().from(siteStockShelves).where(eq(siteStockShelves.vantageCustomerId, customer)))[0]!;
+
+    it('createShelf seeds members at counting_from, so an Empty before the first run is counted', async () => {
+      const zero = { black: 0, cyan: 0, magenta: 0, yellow: 0, waste: 0 };
+      const { shelfId: id } = await createShelf(t.db, { vantageCustomerId: 300, familyId, holding: { ...zero, black: 2 }, userId, now: CREATED });
+      expect(await t.db.select().from(siteStockMembers).where(eq(siteStockMembers.shelfId, id))).toEqual([
+        { shelfId: id, drmsEquipmentId: 'dN', since: CREATED },
+      ]);
+      await alarm('dN', '2026-10-01 10:00:00', 'Toner Empty(BK)');
+      const run = await evaluateSiteStock(t.db, FIRST_RUN);
+      expect(run.stats).toMatchObject({ considered: 1, counted: 1 });
+      expect((await shelfFor(300)).usedBlack).toBe(1);
+    });
+
+    it('applyImport seeds members of every shelf it creates', async () => {
+      const zero = { black: 0, cyan: 0, magenta: 0, yellow: 0, waste: 0 };
+      await applyImport(t.db, {
+        rows: [{ line: 2, vantageCustomerId: 300, family: 'C-series', holding: { ...zero, black: 2 }, used: zero }],
+        userId,
+        now: CREATED,
+      });
+      const id = (await shelfFor(300)).id;
+      expect((await t.db.select().from(siteStockMembers).where(eq(siteStockMembers.shelfId, id))).map((m) => [m.drmsEquipmentId, m.since])).toEqual([
+        ['dN', CREATED],
+      ]);
+      await alarm('dN', '2026-10-01 10:00:00', 'Toner Empty(BK)');
+      const run = await evaluateSiteStock(t.db, FIRST_RUN);
+      expect(run.stats).toMatchObject({ considered: 1, counted: 1 });
+      expect((await shelfFor(300)).usedBlack).toBe(1);
     });
   });
 
