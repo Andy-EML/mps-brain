@@ -1,6 +1,6 @@
 import { isColourModel } from '@mps/core';
 import { describe, expect, it } from 'vitest';
-import { familyName, groupModelsByPart, renderCsv } from './derive-cartridge-families';
+import { analyseFamilies, familyName, groupModelsByPart, renderCsv } from './derive-cartridge-families';
 
 const models = [
   'bizhub 450i',
@@ -54,13 +54,29 @@ describe('groupModelsByPart', () => {
     ]);
   });
 
-  it('lets a bare number claim a colour model only when no mono sibling exists', () => {
-    expect(groupModelsByPart([{ details: 'toner 300i', partNumber: 'AAA1111' }], ['bizhub C300i'])).toEqual([
-      { part: 'AAA1111', models: ['bizhub C300i'] },
-    ]);
-    expect(groupModelsByPart([{ details: 'toner 300i', partNumber: 'AAA1111' }], ['bizhub 300i', 'bizhub C300i'])).toEqual([
-      { part: 'AAA1111', models: ['bizhub 300i'] },
-    ]);
+  it('lets a bare number claim a colour model only on a colour line', () => {
+    // plain "300i" line: not a colour line, so the colour model is not claimed
+    expect(groupModelsByPart([{ details: 'toner 300i', partNumber: 'AAA1111' }], ['bizhub C300i'])).toEqual([]);
+    // "Develop Ineo +300i" is a colour line: ineo+300i is claimed even though bizhub 300i exists
+    expect(
+      groupModelsByPart([{ details: 'Develop Ineo +300i Black Toner', partNumber: 'AAA1111' }], ['bizhub 300i', 'ineo+300i']),
+    ).toEqual([{ part: 'AAA1111', models: ['ineo+300i'] }]);
+  });
+
+  it('treats a line naming cyan, magenta or yellow as a colour line', () => {
+    const groups = groupModelsByPart(
+      [{ details: 'Konica Minolta 300i Cyan Toner', partNumber: 'AAA2222' }],
+      ['bizhub 300i', 'ineo+300i'],
+    );
+    expect(groups).toEqual([{ part: 'AAA2222', models: ['ineo+300i'] }]);
+  });
+
+  it('does not map a colour model from a mono line when no mono sibling is in the fleet', () => {
+    const groups = groupModelsByPart(
+      [{ details: 'KM 4050i Black Toner', partNumber: 'ACTD050' }],
+      ['bizhub C4050i'],
+    );
+    expect(groups).toEqual([]);
   });
 
   it('never puts bare-number shorthand of a colour line on a mono model (Ineo +300i, C750/751i)', () => {
@@ -123,6 +139,63 @@ describe('groupModelsByPart', () => {
   });
 });
 
+describe('analyseFamilies evidence and warnings', () => {
+  it('counts the order lines behind each model-to-part match (using line counts)', () => {
+    const { evidence } = analyseFamilies(
+      [
+        { details: 'Konica Minolta C300i Black Toner', partNumber: 'AAV8150', count: 4 },
+        { details: 'C300i toner', partNumber: 'AAV8150' },
+        { details: 'Konica Minolta C250i Black Toner', partNumber: 'AAV8150', count: 2 },
+      ],
+      ['bizhub C250i', 'bizhub C300i'],
+    );
+    expect(evidence).toEqual([
+      { model: 'bizhub C250i', part: 'AAV8150', lines: 2 },
+      { model: 'bizhub C300i', part: 'AAV8150', lines: 5 },
+    ]);
+  });
+
+  it('warns when a family merge rests on a single order line', () => {
+    const { groups, warnings } = analyseFamilies(
+      [
+        { details: 'toner 450i', partNumber: 'AAA1111', count: 3 },
+        { details: 'toner 550i', partNumber: 'BBB2222', count: 3 },
+        { details: 'toner 450i', partNumber: 'BBB2222' }, // the lone mis-described line
+      ],
+      ['bizhub 450i', 'bizhub 550i'],
+    );
+    expect(groups).toEqual([{ part: 'AAA1111, BBB2222', models: ['bizhub 450i', 'bizhub 550i'] }]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^WARN single-line merge: AAA1111 and BBB2222 .*bizhub 450i/);
+  });
+
+  it('does not warn on a merge backed by several lines', () => {
+    const { warnings } = analyseFamilies(
+      [
+        { details: 'toner 450i', partNumber: 'AAA1111', count: 2 },
+        { details: 'toner 450i', partNumber: 'BBB2222', count: 2 },
+      ],
+      ['bizhub 450i'],
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  it('warns when a part lands in both a mono and a colour family', () => {
+    const { groups, warnings } = analyseFamilies(
+      [
+        { details: 'toner 751i', partNumber: 'ACP8150' },
+        { details: 'Konica Minolta C751i Black Toner', partNumber: 'ACP8150' },
+      ],
+      ['bizhub 751i', 'bizhub C751i'],
+    );
+    expect(groups).toEqual([
+      { part: 'ACP8150', models: ['bizhub 751i'] },
+      { part: 'ACP8150', models: ['bizhub C751i'] },
+    ]);
+    expect(warnings).toEqual(['WARN mono and colour: ACP8150 matches mono bizhub 751i and colour bizhub C751i']);
+  });
+});
+
 describe('renderCsv', () => {
   it('prints families, a blank line, then unmapped models', () => {
     const csv = renderCsv(
@@ -140,5 +213,10 @@ describe('renderCsv', () => {
     );
     expect(familyName(['ineo+ 300i'])).toBe('300i');
     expect(familyName(['bizhub C300i', 'ineo+300i', 'ineo+250i'])).toBe('C300i / 250i');
+  });
+
+  it('appends the match evidence as a third section when given', () => {
+    const csv = renderCsv([], [], [{ model: 'bizhub C300i', part: 'AAV8150', lines: 5 }]);
+    expect(csv).toBe(['family,is_colour,parts,models', '', 'unmapped_model,devices', '', 'match_model,match_part,order_lines', 'bizhub C300i,AAV8150,5'].join('\n'));
   });
 });

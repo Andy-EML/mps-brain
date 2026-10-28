@@ -8,6 +8,12 @@
  *   (blank line)
  *   unmapped_model,devices
  *   ...
+ *   (blank line)
+ *   match_model,match_part,order_lines     (order lines behind each model-to-part match)
+ *   ...
+ *
+ * WARN lines (a family merge resting on one order line; a part matched by both a mono and a
+ * colour model) go to stderr so stdout stays parseable.
  *
  * Part code: `vantage_sales_order_lines.item_part_number` when it looks like a KM code
  * (e.g. AAV8150, AAJW150, ACTD050), otherwise the first such code found in `details`. Lines
@@ -28,11 +34,24 @@ const PART_CODE_EXACT = new RegExp(`^${PART_SHAPE}$`);
 export interface PartLine {
   details: string;
   partNumber: string | null;
+  /** How many order lines carry this text and part (default 1). */
+  count?: number;
 }
 export interface PartGroup {
   /** One part code, or the merged codes joined with ", " when several parts share models. */
   part: string;
   models: string[];
+}
+/** The number of order lines behind one model-to-part match. */
+export interface MatchEvidence {
+  model: string;
+  part: string;
+  lines: number;
+}
+export interface FamilyAnalysis {
+  groups: PartGroup[];
+  evidence: MatchEvidence[];
+  warnings: string[];
 }
 
 /** Model number without colour C or trailing "i": "bizhub C450i" -> "450", "ineo+ 300i" -> "300", "ineo+3351" -> "3351". */
@@ -50,7 +69,7 @@ function partOf(line: PartLine): string | null {
 interface LineTokens {
   /** Number tokens as written, a colour C kept, trailing "i" dropped: "c300", "250", "3350". */
   tokens: Set<string>;
-  /** The line is known to describe a colour machine (a C-model token, or "Ineo +300i" / "Develop +300i"). */
+  /** The line is known to describe a colour machine (a C-model token, "Ineo +300i" / "Develop +300i", or a cyan, magenta or yellow cartridge). */
   colour: boolean;
 }
 
@@ -74,52 +93,39 @@ function tokenise(details: string): LineTokens {
     const t = raw.replace(/^0+(?=c\d)/, '').replace(/(?<=\d)i$/, '');
     if (/^c?\d{3,4}[a-z]*$/.test(t)) tokens.add(t);
   }
-  const colour = /(?:ineo|develop)\s*\+|\+\s*\d{3}/.test(text) || [...tokens].some((t) => /^c\d/.test(t));
+  const colour = /(?:ineo|develop)\s*\+|\+\s*\d{3}|\b(?:cyan|magenta|yellow)\b/.test(text) || [...tokens].some((t) => /^c\d/.test(t));
   return { tokens, colour };
 }
 
 /**
- * Groups models by cartridge part, never mixing mono and colour models.
+ * Groups models by cartridge part, never mixing mono and colour models, and reports the evidence.
  *
- * A colour model (isColourModel: C-model, ineo+, MF) matches the part when a line names its C-token
- * ("c300"), or its bare number ("300") when no mono model has that number and the part matched no
- * mono model. A mono model matches only a bare number written on a line that is not known to be a
- * colour line: shorthand on colour lines ("Develop +250i", "C750/751i") is ignored for mono models.
- * Parts that share a model are merged (union-find) within the same colour class, so a family is
- * all-mono or all-colour. Parts matching no model are dropped; models are returned sorted, groups
- * sorted by part.
+ * Per order line (tokenise), a colour model (isColourModel: C-model, ineo+, MF) matches the part
+ * when the line names its C-token ("c300"), or its bare number ("300") but only on a line known to
+ * describe a colour machine (a C-token, "Ineo +300i", or a cyan, magenta or yellow cartridge). A
+ * mono model matches only a bare number on a line that is not a colour line. Parts that share a
+ * model are merged (union-find) within the same colour class, so a family is all-mono or
+ * all-colour. Parts matching no model are dropped; models are returned sorted, groups by part.
+ *
+ * `evidence` is the number of order lines behind each model-to-part match. `warnings` flag a
+ * family merge that rests on a single order line, and a part that lands in both a mono and a
+ * colour family.
  */
-export function groupModelsByPart(lines: PartLine[], models: string[]): PartGroup[] {
-  const monoTokens = new Map<string, Set<string>>(); // bare numbers on non-colour lines
-  const allTokens = new Map<string, Set<string>>(); // every token on the part's lines
+export function analyseFamilies(lines: PartLine[], models: string[]): FamilyAnalysis {
+  const modelInfo = models.map((model) => ({ model, num: modelNumber(model), colour: isColourModel(model) }));
+  const matched = new Map<string, Map<string, number>>(); // "c:PART" / "m:PART" -> model -> order lines
   for (const line of lines) {
     const part = partOf(line);
     if (!part) continue;
-    const { tokens, colour } = tokenise(line.details);
-    const all = allTokens.get(part) ?? new Set<string>();
-    const mono = monoTokens.get(part) ?? new Set<string>();
-    for (const t of tokens) {
-      all.add(t);
-      if (!colour && !t.startsWith('c')) mono.add(t);
-    }
-    allTokens.set(part, all);
-    monoTokens.set(part, mono);
-  }
-
-  const monoNumbers = new Set(models.filter((m) => !isColourModel(m)).map(modelNumber));
-  const matched = new Map<string, string[]>(); // "c:PART" / "m:PART" -> models
-  for (const [part, all] of allTokens) {
-    const mono = monoTokens.get(part)!;
-    const monoHit = models.some((m) => !isColourModel(m) && mono.has(modelNumber(m) ?? ''));
-    for (const model of models) {
-      const num = modelNumber(model);
+    const { tokens, colour: colourLine } = tokenise(line.details);
+    for (const { model, num, colour } of modelInfo) {
       if (!num) continue;
-      const colour = isColourModel(model);
-      const hit = colour ? all.has(`c${num}`) || (!monoNumbers.has(num) && !monoHit && all.has(num)) : mono.has(num);
-      if (hit) {
-        const node = `${colour ? 'c' : 'm'}:${part}`;
-        matched.set(node, [...(matched.get(node) ?? []), model]);
-      }
+      const hit = colour ? tokens.has(`c${num}`) || (colourLine && tokens.has(num)) : !colourLine && tokens.has(num);
+      if (!hit) continue;
+      const node = `${colour ? 'c' : 'm'}:${part}`;
+      const byModel = matched.get(node) ?? new Map<string, number>();
+      byModel.set(model, (byModel.get(model) ?? 0) + (line.count ?? 1));
+      matched.set(node, byModel);
     }
   }
 
@@ -130,26 +136,58 @@ export function groupModelsByPart(lines: PartLine[], models: string[]): PartGrou
     return r;
   };
   for (const node of matched.keys()) parent.set(node, node);
+  const warnings: string[] = [];
   const firstNodeOfModel = new Map<string, string>();
-  for (const [node, ms] of matched) {
-    for (const m of ms) {
+  for (const [node, byModel] of matched) {
+    for (const [m, n] of byModel) {
       const first = firstNodeOfModel.get(m);
-      if (first) parent.set(find(first), find(node));
-      else firstNodeOfModel.set(m, node);
+      if (first) {
+        if (find(first) !== find(node)) {
+          const firstLines = matched.get(first)!.get(m)!;
+          if (Math.min(firstLines, n) === 1) {
+            warnings.push(
+              `WARN single-line merge: ${first.slice(2)} and ${node.slice(2)} are joined only through ${m} (${firstLines} line(s) for ${first.slice(2)}, ${n} for ${node.slice(2)})`,
+            );
+          }
+        }
+        parent.set(find(first), find(node));
+      } else firstNodeOfModel.set(m, node);
     }
   }
 
   const groups = new Map<string, { parts: Set<string>; models: Set<string> }>();
-  for (const [node, ms] of matched) {
+  for (const [node, byModel] of matched) {
     const root = find(node);
     const g = groups.get(root) ?? { parts: new Set<string>(), models: new Set<string>() };
     g.parts.add(node.slice(2));
-    for (const m of ms) g.models.add(m);
+    for (const m of byModel.keys()) g.models.add(m);
     groups.set(root, g);
   }
-  return [...groups.values()]
-    .map((g) => ({ part: [...g.parts].sort().join(', '), models: [...g.models].sort() }))
-    .sort((a, b) => a.part.localeCompare(b.part));
+
+  for (const node of matched.keys()) {
+    if (!node.startsWith('m:') || !matched.has(`c:${node.slice(2)}`)) continue;
+    const part = node.slice(2);
+    warnings.push(
+      `WARN mono and colour: ${part} matches mono ${[...matched.get(node)!.keys()].sort().join(' | ')} and colour ${[...matched.get(`c:${part}`)!.keys()].sort().join(' | ')}`,
+    );
+  }
+
+  const evidence = [...matched].flatMap(([node, byModel]) =>
+    [...byModel].map(([model, n]) => ({ model, part: node.slice(2), lines: n })),
+  );
+  evidence.sort((a, b) => a.model.localeCompare(b.model) || a.part.localeCompare(b.part));
+  return {
+    groups: [...groups.values()]
+      .map((g) => ({ part: [...g.parts].sort().join(', '), models: [...g.models].sort() }))
+      .sort((a, b) => a.part.localeCompare(b.part)),
+    evidence,
+    warnings: warnings.sort(),
+  };
+}
+
+/** Groups only; see analyseFamilies. */
+export function groupModelsByPart(lines: PartLine[], models: string[]): PartGroup[] {
+  return analyseFamilies(lines, models).groups;
 }
 
 /** "bizhub C450i" -> "C450i"; "ineo+ 300i" -> "300i". */
@@ -167,7 +205,7 @@ function csvCell(v: string): string {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 
-export function renderCsv(groups: PartGroup[], unmapped: { model: string; devices: number }[]): string {
+export function renderCsv(groups: PartGroup[], unmapped: { model: string; devices: number }[], evidence: MatchEvidence[] = []): string {
   const out = ['family,is_colour,parts,models'];
   for (const g of groups) {
     out.push(
@@ -178,6 +216,10 @@ export function renderCsv(groups: PartGroup[], unmapped: { model: string; device
   }
   out.push('', 'unmapped_model,devices');
   for (const u of unmapped) out.push([u.model, String(u.devices)].map(csvCell).join(','));
+  if (evidence.length > 0) {
+    out.push('', 'match_model,match_part,order_lines');
+    for (const e of evidence) out.push([e.model, e.part, String(e.lines)].map(csvCell).join(','));
+  }
   return out.join('\n');
 }
 
@@ -185,9 +227,10 @@ async function main(): Promise<void> {
   const { db, pool } = createDb(process.env.DATABASE_URL!);
   try {
     const lines = await db
-      .selectDistinct({ details: vantageSalesOrderLines.details, partNumber: vantageSalesOrderLines.itemPartNumber })
+      .select({ details: vantageSalesOrderLines.details, partNumber: vantageSalesOrderLines.itemPartNumber, count: count() })
       .from(vantageSalesOrderLines)
-      .where(isNotNull(vantageSalesOrderLines.details));
+      .where(isNotNull(vantageSalesOrderLines.details))
+      .groupBy(vantageSalesOrderLines.details, vantageSalesOrderLines.itemPartNumber);
     const modelRows = await db
       .select({ model: drmsEquipment.modelName, devices: count() })
       .from(drmsEquipment)
@@ -195,8 +238,8 @@ async function main(): Promise<void> {
       .where(isNotNull(drmsEquipment.modelName))
       .groupBy(drmsEquipment.modelName);
 
-    const groups = groupModelsByPart(
-      lines.map((l) => ({ details: l.details ?? '', partNumber: l.partNumber })),
+    const { groups, evidence, warnings } = analyseFamilies(
+      lines.map((l) => ({ details: l.details ?? '', partNumber: l.partNumber, count: l.count })),
       modelRows.map((r) => r.model!),
     );
     const mapped = new Set(groups.flatMap((g) => g.models));
@@ -204,7 +247,9 @@ async function main(): Promise<void> {
       .filter((r) => !mapped.has(r.model!))
       .map((r) => ({ model: r.model!, devices: r.devices }))
       .sort((a, b) => b.devices - a.devices || a.model.localeCompare(b.model));
-    console.log(renderCsv(groups, unmapped));
+    console.log(renderCsv(groups, unmapped, evidence));
+    // Warnings go to stderr, so stdout stays a parseable CSV (families, unmapped, match evidence).
+    for (const w of warnings) console.error(w);
   } finally {
     await pool.end();
   }
