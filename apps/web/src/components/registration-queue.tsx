@@ -7,6 +7,7 @@ import type { RegistrationRow, RegistrationTab } from '@mps/db/queries';
 import { cn } from 'cn';
 import {
   approveRegistrationsAction,
+  rejectOneRegistrationAction,
   rejectRegistrationsAction,
   retryRegistrationAction,
   unrejectRegistrationAction,
@@ -207,7 +208,10 @@ function AwaitingForm({ rows, back }: { rows: RegistrationRow[]; back?: string }
   );
 }
 
-/** A row's own buttons post `only=<id>`, so they act on that row whatever else is ticked. */
+/**
+ * A row's own buttons act on that row whatever else is ticked: Approve posts `only=<id>`, Reject
+ * binds the id into its action (React drops `name` from a button with a function `formAction`).
+ */
 function RowButtons({ id, serial }: { id: number; serial: string }) {
   const { pending } = useFormStatus();
   return (
@@ -219,9 +223,7 @@ function RowButtons({ id, serial }: { id: number; serial: string }) {
         type="submit"
         size="sm"
         variant="outline"
-        name="only"
-        value={id}
-        formAction={rejectRegistrationsAction}
+        formAction={rejectOneRegistrationAction.bind(null, id)}
         disabled={pending}
         aria-label={`Reject ${serial}`}
       >

@@ -68,11 +68,26 @@ export async function approveRegistrationsAction(formData: FormData): Promise<vo
   }, backTo(formData));
 }
 
+function rejectNote(formData: FormData): string | undefined {
+  return String(formData.get('note') ?? '').trim().slice(0, 500) || undefined;
+}
+
 export async function rejectRegistrationsAction(formData: FormData): Promise<void> {
   await run((userId) => {
     const ids = selectedIds(formData);
-    const note = String(formData.get('note') ?? '').trim().slice(0, 500) || undefined;
-    return rejectRegistrations(getDb(), { ids, userId, note });
+    return rejectRegistrations(getDb(), { ids, userId, note: rejectNote(formData) });
+  }, backTo(formData));
+}
+
+/**
+ * A row's own Reject, bound to that row's id. React strips `name` from a button whose
+ * `formAction` is a function, so `only=<id>` never reaches `selectedIds` and the bulk path would
+ * reject every ticked row instead.
+ */
+export async function rejectOneRegistrationAction(id: number, formData: FormData): Promise<void> {
+  await run((userId) => {
+    if (!Number.isInteger(id) || id <= 0) throw new RegistrationError('No such registration.', 'not_found');
+    return rejectRegistrations(getDb(), { ids: [id], userId, note: rejectNote(formData) });
   }, backTo(formData));
 }
 
