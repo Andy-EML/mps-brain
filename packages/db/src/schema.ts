@@ -654,3 +654,22 @@ export const drmsRegistrations = pgTable(
     ),
   ],
 );
+
+/**
+ * Devices an operator has hidden by hand: out of contract, scrapped, or otherwise no longer ours
+ * to look after. Present means hidden; unhiding deletes the row, and `audit_log` keeps the history.
+ *
+ * A table of its own rather than columns on `drms_equipment`, because the DRMS pull overwrites that
+ * table's rows wholesale: a separate row can never be clobbered by an upsert that forgot to protect
+ * it. Nothing here is sent to DRMS — hiding is purely an in-app decision. Every list, count, alert
+ * and proposal that should ignore a hidden device goes through `notHiddenDevice`
+ * (queries/hidden-devices.ts), never its own copy of the test.
+ */
+export const hiddenDevices = pgTable('hidden_devices', {
+  drmsEquipmentId: text('drms_equipment_id')
+    .primaryKey()
+    .references(() => drmsEquipment.drmsId),
+  hiddenBy: integer('hidden_by').references(() => users.id),
+  hiddenAt: ts('hidden_at').notNull().defaultNow(),
+  reason: text('reason'),
+});

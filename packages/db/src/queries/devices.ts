@@ -5,7 +5,15 @@ import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
 import { effectiveSettingsSubquery } from './settings';
 import { shelfDevicesSubquery } from './site-stock';
-import { belowThreshold, counterPivotSubquery, drmsEquipmentName, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
+import {
+  belowThreshold,
+  counterPivotSubquery,
+  drmsEquipmentName,
+  lastAlarmSubquery,
+  notHiddenDevice,
+  offlineCutoff,
+  toNumberOrNull,
+} from './shared';
 
 export interface DeviceRow {
   drmsId: string;
@@ -189,15 +197,16 @@ function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
  * subqueries it reads, and the WHERE built from them. `listDevices` and `resolveDeviceSelection`
  * (the bulk bar's "select all matching") both build on this, so the list an operator sees and the
  * devices a bulk edit reaches can never disagree. The tab (`filter`), the search and the customer,
- * colour, model and replenishment filters all AND together. Join the subqueries with
- * `joinDeviceList`.
+ * colour, model and replenishment filters all AND together. Hidden devices are never in it — they
+ * have their own tab (`listHiddenDevices`) — so no bulk action can reach one by accident. Join the
+ * subqueries with `joinDeviceList`.
  */
 export function deviceListConditions(db: Db, o: DeviceListFilters = {}) {
   const cutoff = offlineCutoff();
   const pivot = counterPivotSubquery(db);
   const eff = effectiveSettingsSubquery(db);
 
-  const conds = [];
+  const conds: (SQL | undefined)[] = [notHiddenDevice(drmsEquipment.drmsId)];
   if (o.search) {
     const q = `%${o.search}%`;
     conds.push(
@@ -227,7 +236,7 @@ export function deviceListConditions(db: Db, o: DeviceListFilters = {}) {
     const shelved = shelfDevicesSubquery(db);
     conds.push(inArray(drmsEquipment.drmsId, db.select({ drmsId: shelved.drmsId }).from(shelved)));
   }
-  const where = conds.length > 0 ? and(...conds) : undefined;
+  const where = and(...conds);
   return { cutoff, pivot, eff, where };
 }
 
@@ -293,8 +302,8 @@ export interface DeviceFilterOptions {
 }
 
 /**
- * The choices behind the devices list's customer and model pickers: only names some device
- * actually carries, so every choice finds at least one device.
+ * The choices behind the devices list's customer and model pickers: only names some visible
+ * (not hidden) device actually carries, so every choice finds at least one device.
  */
 export async function listDeviceFilterOptions(db: Db): Promise<DeviceFilterOptions> {
   const customer = deviceCustomerName();
@@ -304,12 +313,12 @@ export async function listDeviceFilterOptions(db: Db): Promise<DeviceFilterOptio
       .from(drmsEquipment)
       .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
       .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
-      .where(isNotNull(customer))
+      .where(and(isNotNull(customer), notHiddenDevice(drmsEquipment.drmsId)))
       .orderBy(sql`lower(${customer})`, customer),
     db
       .selectDistinct({ model: drmsEquipment.modelName, sortKey: sql<string>`lower(${drmsEquipment.modelName})` })
       .from(drmsEquipment)
-      .where(isNotNull(drmsEquipment.modelName))
+      .where(and(isNotNull(drmsEquipment.modelName), notHiddenDevice(drmsEquipment.drmsId)))
       .orderBy(sql`lower(${drmsEquipment.modelName})`, drmsEquipment.modelName),
   ]);
   return {

@@ -8,6 +8,7 @@ export * from './device-colour';
 export * from './device-selection';
 export * from './devices';
 export * from './fleet';
+export * from './hidden-devices';
 export * from './issue-actions';
 export * from './issues';
 export * from './order-state';

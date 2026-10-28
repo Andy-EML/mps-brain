@@ -1,6 +1,20 @@
-import { and, asc, count, desc, eq, ilike, isNull, notInArray, or } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, isNull, notInArray, or, type SQL } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, linkIssues, vantageEquipment } from '../schema';
+import { notHiddenDevice } from './shared';
+
+/**
+ * Link issues about a hidden device are nobody's to fix, so every list and count here leaves them
+ * out. An issue about Vantage equipment alone (no DRMS id) is never hidden.
+ */
+function visibleIssue(): SQL {
+  return notHiddenDevice(linkIssues.drmsEquipmentId);
+}
+
+/** Open issues not about a hidden device: the sidebar badge and the Fleet overview tile. */
+export function openIssuesCondition(): SQL {
+  return and(eq(linkIssues.status, 'open'), visibleIssue())!;
+}
 
 export interface IssueRow {
   id: number;
@@ -43,7 +57,10 @@ export async function listIssues(
   // counts shown on the other tabs. `status` is `string` in the public signature (per the task
   // brief) rather than the narrower DB enum, so it's cast here; an unrecognised value just matches
   // no rows rather than throwing.
-  const statusCond = o.status ? eq(linkIssues.status, o.status as 'open' | 'resolved' | 'ignored') : undefined;
+  const statusCond = and(
+    o.status ? eq(linkIssues.status, o.status as 'open' | 'resolved' | 'ignored') : undefined,
+    visibleIssue(),
+  );
   const excluded = o.excludeTypes?.length ? notInArray(linkIssues.type, o.excludeTypes) : undefined;
   const rowsCond = and(statusCond, excluded, o.type ? eq(linkIssues.type, o.type) : undefined);
 
@@ -105,7 +122,10 @@ export interface GetIssueCountsOptions {
  * function's note), same "no excludeTypes" behaviour.
  */
 export async function getIssueCounts(db: Db, o: GetIssueCountsOptions = {}): Promise<Record<string, number>> {
-  const statusCond = o.status ? eq(linkIssues.status, o.status as 'open' | 'resolved' | 'ignored') : undefined;
+  const statusCond = and(
+    o.status ? eq(linkIssues.status, o.status as 'open' | 'resolved' | 'ignored') : undefined,
+    visibleIssue(),
+  );
 
   const typeCounts = await db
     .select({ type: linkIssues.type, n: count() })

@@ -3,7 +3,7 @@ import { and, count, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
-import { drmsEquipmentName, lastAlarmSubquery } from './shared';
+import { drmsEquipmentName, lastAlarmSubquery, notHiddenDevice } from './shared';
 
 /** Days without contact before a device that reports meter readings counts as silent. */
 export const RECONNECT_DAYS = 14;
@@ -118,11 +118,13 @@ function reconnectParts(db: Db, o: { now?: Date; days?: number }) {
     unmonitored: sql`${drmsEquipment.lastCounterReceivedTime} is null`,
   };
 
-  // On a Vantage contract (active link, equipment not deleted) and still expected in DRMS.
+  // On a Vantage contract (active link, equipment not deleted), still expected in DRMS, and not
+  // hidden by an operator — a hidden device is one nobody is going to reconnect.
   const scope = and(
     isNull(vantageEquipment.deletedDate),
     isNull(drmsEquipment.missingSince),
     sql`coalesce(upper(${drmsEquipment.status}), '') <> 'DELETED'`,
+    notHiddenDevice(drmsEquipment.drmsId),
   );
 
   const registeredInDrms = sql<boolean>`coalesce(upper(${drmsEquipment.status}), '') in ('REGISTERED', 'PREREGISTERED')`;

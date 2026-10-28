@@ -2,8 +2,9 @@ import { isCollectionOutage } from '@mps/core';
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, max, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceAlarms, deviceLinks, drmsEquipment, linkIssues, syncRuns, vantageEquipment } from '../schema';
+import { openIssuesCondition } from './issues';
 import { effectiveSettingsSubquery } from './settings';
-import { belowThreshold, counterPivotSubquery, offlineCutoff } from './shared';
+import { belowThreshold, counterPivotSubquery, notHiddenDevice, offlineCutoff } from './shared';
 
 export interface FleetSummary {
   devices: number;
@@ -32,9 +33,15 @@ export interface FleetSummary {
   lastSyncAt: Date | null;
 }
 
-/** A device DRMS still expects to hear from: not soft-deleted and not marked missing. */
+/**
+ * Every number on Fleet overview leaves out hidden devices (`notHiddenDevice`): an operator hid
+ * them because they are no longer ours to look after, so they must not inflate a headline either.
+ */
+const visible = () => notHiddenDevice(drmsEquipment.drmsId);
+
+/** A device DRMS still expects to hear from: not soft-deleted, not marked missing and not hidden. */
 function monitoredCondition() {
-  return and(isNull(drmsEquipment.missingSince), sql`upper(${drmsEquipment.status}) <> 'DELETED'`);
+  return and(isNull(drmsEquipment.missingSince), sql`upper(${drmsEquipment.status}) <> 'DELETED'`, visible());
 }
 
 /**
@@ -47,9 +54,12 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
   const eff = effectiveSettingsSubquery(db);
 
   const [[devicesRow], [monitoredRow], [linkedRow], [tonerRow], [offlineRow], [issuesRow], [syncRow]] = await Promise.all([
-    db.select({ n: count() }).from(drmsEquipment),
+    db.select({ n: count() }).from(drmsEquipment).where(visible()),
     db.select({ n: count() }).from(drmsEquipment).where(monitoredCondition()),
-    db.select({ n: count() }).from(deviceLinks).where(isNull(deviceLinks.unlinkedAt)),
+    db
+      .select({ n: count() })
+      .from(deviceLinks)
+      .where(and(isNull(deviceLinks.unlinkedAt), notHiddenDevice(deviceLinks.drmsEquipmentId))),
     db
       .select({
         needsToner: sql<number>`count(*) filter (where ${and(belowThreshold(pivot, eff), eq(eff.autoReplenish, true))})`,
@@ -61,12 +71,15 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
       // Left join: every DRMS device has an effective-settings row, but a missing one should read
       // as "not needing toner" rather than dropping the device from the count.
       .from(pivot)
-      .leftJoin(eff, eq(eff.drmsId, pivot.drmsId)),
+      .leftJoin(eff, eq(eff.drmsId, pivot.drmsId))
+      .where(notHiddenDevice(pivot.drmsId)),
     db
       .select({ n: count() })
       .from(drmsEquipment)
-      .where(and(isNotNull(drmsEquipment.lastCounterReceivedTime), lt(drmsEquipment.lastCounterReceivedTime, cutoff))),
-    db.select({ n: count() }).from(linkIssues).where(eq(linkIssues.status, 'open')),
+      .where(
+        and(isNotNull(drmsEquipment.lastCounterReceivedTime), lt(drmsEquipment.lastCounterReceivedTime, cutoff), visible()),
+      ),
+    db.select({ n: count() }).from(linkIssues).where(openIssuesCondition()),
     db
       .select({ finishedAt: max(syncRuns.finishedAt) })
       .from(syncRuns)
@@ -195,7 +208,8 @@ export async function getTonerHealth(db: Db): Promise<TonerHealth> {
         )
       `,
     })
-    .from(pivot);
+    .from(pivot)
+    .where(notHiddenDevice(pivot.drmsId));
 
   return {
     healthy: Number(row?.healthy ?? 0),
@@ -221,7 +235,8 @@ export async function getCustomerCount(db: Db): Promise<number> {
     })
     .from(drmsEquipment)
     .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
-    .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId));
+    .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
+    .where(visible());
 
   return Number(row?.n ?? 0);
 }
@@ -255,7 +270,13 @@ export async function getConsumableWarnings(db: Db, opts: { days?: number } = {}
       description: deviceAlarms.description,
     })
     .from(deviceAlarms)
-    .where(and(inArray(deviceAlarms.category, CONSUMABLE_WARNING_CATEGORIES), gte(deviceAlarms.receivedTime, since)))
+    .where(
+      and(
+        inArray(deviceAlarms.category, CONSUMABLE_WARNING_CATEGORIES),
+        gte(deviceAlarms.receivedTime, since),
+        notHiddenDevice(deviceAlarms.drmsEquipmentId),
+      ),
+    )
     .orderBy(deviceAlarms.drmsEquipmentId, deviceAlarms.category, desc(deviceAlarms.receivedTime));
 
   return rows.map((r) => ({ ...r, category: r.category as ConsumableWarningCategory }));

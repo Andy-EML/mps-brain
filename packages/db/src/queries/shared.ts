@@ -1,6 +1,6 @@
-import { eq, max, sql, type SQL } from 'drizzle-orm';
+import { eq, max, sql, type AnyColumn, type SQL } from 'drizzle-orm';
 import type { Db } from '../client';
-import { counterSnapshots, counterValues, deviceAlarms, drmsEquipment } from '../schema';
+import { counterSnapshots, counterValues, deviceAlarms, drmsEquipment, hiddenDevices } from '../schema';
 import type { effectiveSettingsSubquery } from './settings';
 
 /** Counter names this project cares about (see CLAUDE.md / global-constraints for the real values). */
@@ -131,6 +131,19 @@ export function belowThreshold(
   eff: ReturnType<typeof effectiveSettingsSubquery>,
 ): SQL {
   return sql`(${pivot.black} < ${eff.thresholdBlack} or ${pivot.cyan} < ${eff.thresholdCyan} or ${pivot.magenta} < ${eff.thresholdMagenta} or ${pivot.yellow} < ${eff.thresholdYellow})`;
+}
+
+/**
+ * True for a device that is not hidden. `drmsId` is whatever column (or expression) carries the
+ * DRMS id in the caller's query — `drms_equipment.drms_id`, `link_issues.drms_equipment_id`, a
+ * subquery's alias — so the test can sit in any WHERE without a join that could multiply rows.
+ * A null id (a link issue about Vantage equipment alone) is never hidden.
+ *
+ * Lives here rather than in `hidden-devices.ts` so the list and count modules can import it
+ * without a cycle; that module re-exports it.
+ */
+export function notHiddenDevice(drmsId: AnyColumn | SQL): SQL {
+  return sql`not exists (select 1 from ${hiddenDevices} where ${hiddenDevices.drmsEquipmentId} = ${drmsId})`;
 }
 
 export function toNumberOrNull(v: unknown): number | null {
