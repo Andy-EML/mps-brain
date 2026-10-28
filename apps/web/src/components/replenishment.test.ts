@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   colourLabel,
+  compactProposalText,
   decisionBackPath,
   orderStatusTone,
   proposalStatusLink,
@@ -140,5 +141,41 @@ describe('proposalStatusLink', () => {
       href: '/orders?tab=rejected',
     });
     expect(proposalStatusLink({ status: 'ordered', note: null })).toEqual({ text: 'Ordered', href: '/orders?tab=ordered' });
+  });
+});
+
+describe('compactProposalText', () => {
+  it('puts the level now beside the colour and the threshold and its source beneath', () => {
+    expect(
+      compactProposalText({ trigger: 'threshold', level: 2, threshold: 15, thresholdSource: 'default', currentLevel: 1 }),
+    ).toEqual({ level: '1%', tag: 'below threshold', detail: 'Threshold 15% · default setting · proposed at 2%' });
+  });
+
+  it('leaves out the proposal-time level when it has not moved', () => {
+    expect(
+      compactProposalText({ trigger: 'threshold', level: 4, threshold: 10, thresholdSource: 'customer', currentLevel: 4 }),
+    ).toEqual({ level: '4%', tag: 'below threshold', detail: 'Threshold 10% · customer setting' });
+  });
+
+  it('falls back to the proposal-time level, then a dash', () => {
+    expect(compactProposalText({ trigger: 'threshold', level: 3, threshold: 10, currentLevel: null }).level).toBe('3%');
+    expect(compactProposalText({ trigger: 'threshold', level: null, threshold: 10 }).level).toBe('—');
+  });
+
+  it('tags an alarm and quotes it on the second line', () => {
+    expect(compactProposalText({ trigger: 'alarm', alarmDescription: 'Toner Near Empty(C)', currentLevel: 6 })).toEqual({
+      level: '6%',
+      tag: 'DRMS alarm',
+      detail: 'Toner Near Empty(C)',
+    });
+  });
+
+  it('gives a top-up no level, only its reason', () => {
+    const createdAt = new Date('2026-10-19T09:00:00Z');
+    expect(compactProposalText({ trigger: 'site_stock', colour: 'black', createdAt, currentLevel: 50 })).toEqual({
+      level: null,
+      tag: null,
+      detail: 'Last black spare went in 19 Oct 2026',
+    });
   });
 });

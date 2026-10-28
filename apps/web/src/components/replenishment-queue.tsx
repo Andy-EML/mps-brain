@@ -16,6 +16,7 @@ import {
 import { CopyText } from '@/components/copy-text';
 import {
   colourLabel,
+  compactProposalText,
   orderStatusLabel,
   orderStatusTone,
   sourceLabel,
@@ -311,6 +312,12 @@ export interface ReviewFormProps {
    * the site, the device's own proposals beneath. Still one form — both groups are this device's.
    */
   shelf?: QueueShelf | null;
+  /**
+   * The narrow layout for the device page's right-hand column: each line stacks colour and level,
+   * then the reason, then the last order, with the quantity stepper on its own line, so the text is
+   * not squeezed between the checkbox and the stepper. The `/orders` Review tab keeps the wide row.
+   */
+  compact?: boolean;
 }
 
 /**
@@ -318,13 +325,17 @@ export interface ReviewFormProps {
  * selected + reason. Used by the queue's Review tab and the device page's Replenishment card; both
  * post to the same actions, which revalidate both pages.
  */
-export function ReviewForm({ drmsId, proposals, unlinked, back, deviceName, shelf }: ReviewFormProps) {
+export function ReviewForm({ drmsId, proposals, unlinked, back, deviceName, shelf, compact = false }: ReviewFormProps) {
   const { topUp, own } = proposalGroups({ shelf: shelf ?? null, proposals });
   const rows = (list: QueueProposal[]) => (
     <div className="grid gap-2">
-      {list.map((p) => (
-        <ProposalRow key={p.id} proposal={p} deviceName={deviceName} />
-      ))}
+      {list.map((p) =>
+        compact ? (
+          <CompactProposalRow key={p.id} proposal={p} deviceName={deviceName} />
+        ) : (
+          <ProposalRow key={p.id} proposal={p} deviceName={deviceName} />
+        ),
+      )}
     </div>
   );
   return (
@@ -359,7 +370,7 @@ export function ReviewForm({ drmsId, proposals, unlinked, back, deviceName, shel
         </p>
       ) : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <ReviewButtons unlinked={unlinked} />
+        <ReviewButtons unlinked={unlinked} compact={compact} />
       </div>
     </form>
   );
@@ -402,6 +413,51 @@ function ProposalRow({ proposal: p, deviceName }: { proposal: QueueProposal; dev
         ) : null}
       </label>
       <Stepper id={p.id} value={quantity} onChange={setQuantity} label={colourLabel(p.colour)} />
+    </div>
+  );
+}
+
+/**
+ * A proposal line for a narrow column (see `ReviewForm`'s `compact`): checkbox, then a text column
+ * that takes the full remaining width — colour and level, the reason in muted text, the last order —
+ * and the stepper right-aligned on its own line beneath, so nothing wraps a word at a time.
+ */
+function CompactProposalRow({ proposal: p, deviceName }: { proposal: QueueProposal; deviceName?: string }) {
+  const [quantity, setQuantity] = useState(String(clampQuantity(p.quantity)));
+  const context = orderContext(p);
+  const text = compactProposalText(p, deviceName);
+  const checkboxId = `proposal-${p.id}`;
+  return (
+    <div className="rounded-lg border border-line px-3 py-2.5">
+      <div className="flex items-start gap-2.5">
+        <input
+          id={checkboxId}
+          type="checkbox"
+          name="proposalId"
+          value={p.id}
+          defaultChecked
+          className="mt-0.5 size-4 shrink-0 accent-brand"
+        />
+        <label htmlFor={checkboxId} className="min-w-0 flex-1">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+            <Swatch colour={p.colour} />
+            <span className="text-sm font-medium">{colourLabel(p.colour)}</span>
+            {text.level !== null ? <span className="text-sm tabular-nums">{text.level}</span> : null}
+            {text.tag ? <span className={cn('text-[12px]', TRIGGER_TEXT[p.trigger])}>{text.tag}</span> : null}
+          </span>
+          {text.detail ? (
+            <span className="mt-0.5 block text-[12px] break-words text-muted-foreground">{text.detail}</span>
+          ) : null}
+          {context ? (
+            <span className={cn('block text-[12px] break-words', context.open ? 'text-warn' : 'text-muted-foreground')}>
+              {context.text}
+            </span>
+          ) : null}
+        </label>
+      </div>
+      <div className="mt-1.5 flex justify-end">
+        <Stepper id={p.id} value={quantity} onChange={setQuantity} label={colourLabel(p.colour)} />
+      </div>
     </div>
   );
 }
@@ -463,7 +519,7 @@ function Stepper({
 }
 
 /** Inside the form so `useFormStatus` can see it submitting. */
-function ReviewButtons({ unlinked }: { unlinked: boolean }) {
+function ReviewButtons({ unlinked, compact = false }: { unlinked: boolean; compact?: boolean }) {
   const { pending, action } = useFormStatus();
   const rejecting = pending && action === rejectAction;
   return (
@@ -484,7 +540,8 @@ function ReviewButtons({ unlinked }: { unlinked: boolean }) {
         }}
         placeholder="Reason for rejecting (optional)"
         aria-label="Reason for rejecting"
-        className="h-8 w-72 max-w-full"
+        // In a narrow column the reason gets its own full-width line rather than a stub beside the buttons.
+        className={cn('h-8 max-w-full', compact ? 'w-full' : 'w-72')}
       />
     </>
   );

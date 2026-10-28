@@ -57,6 +57,44 @@ export function sourceLabel(source: SettingSource): string {
   return `${source} setting`;
 }
 
+export interface CompactProposalText {
+  /** Beside the colour name: the level now (or when proposed), `—` for none; null for a top-up. */
+  level: string | null;
+  /** A short tag after the level: `below threshold`, `DRMS alarm`; null for a top-up. */
+  tag: string | null;
+  /** The muted second line: `Threshold 15% · default setting · proposed at 2%`, the alarm text, or the top-up reason. */
+  detail: string;
+}
+
+/**
+ * The narrow (device page) proposal line split into short pieces, so a ~300px card can show the
+ * colour and level on one line and the reason on the next instead of wrapping one long sentence a
+ * word at a time. The wide `/orders` row keeps `triggerLabel` as one line.
+ */
+export function compactProposalText(
+  p: TriggerFields & { currentLevel?: number | null; thresholdSource?: SettingSource | null },
+  deviceName?: string,
+): CompactProposalText {
+  if (p.trigger === 'site_stock') {
+    // A top-up restocks the shelf: this machine's own level says nothing about it.
+    return { level: null, tag: null, detail: triggerLabel(p, deviceName) };
+  }
+  const now = p.currentLevel ?? p.level ?? null;
+  const level = now == null ? '—' : `${Math.round(now)}%`;
+  if (p.trigger === 'alarm') {
+    const description = p.alarmDescription?.trim();
+    return { level, tag: 'DRMS alarm', detail: description || 'Raised by a DRMS consumable alarm' };
+  }
+  const parts: string[] = [];
+  if (p.threshold != null) parts.push(`Threshold ${p.threshold}%`);
+  if (p.thresholdSource) parts.push(sourceLabel(p.thresholdSource));
+  // The level when proposed only adds something once a newer reading has moved it.
+  if (p.level != null && p.currentLevel != null && Math.round(p.level) !== Math.round(p.currentLevel)) {
+    parts.push(`proposed at ${Math.round(p.level)}%`);
+  }
+  return { level, tag: p.threshold == null ? null : 'below threshold', detail: parts.join(' · ') };
+}
+
 /**
  * Where an effective setting on the device page came from, with who set it and when: `default`,
  * `customer setting · by jo, 3 Aug 2026`, `set on this device by admin, 21 Aug 2026`. The who/when

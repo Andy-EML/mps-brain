@@ -142,7 +142,7 @@ export function ReplenishmentCard({
           <h3 className="text-[13px] font-medium">Toner proposals</h3>
           {pending.length > 0 ? (
             <div className="mt-2">
-              <ReviewForm drmsId={drmsId} proposals={pending} unlinked={unlinked} back="device" />
+              <ReviewForm drmsId={drmsId} proposals={pending} unlinked={unlinked} back="device" compact />
             </div>
           ) : null}
           {decided.length > 0 ? (
