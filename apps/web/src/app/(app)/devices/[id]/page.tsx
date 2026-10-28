@@ -1,11 +1,12 @@
 import { Fragment } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Boxes } from 'lucide-react';
+import { ArrowLeft, Boxes, EyeOff } from 'lucide-react';
 import { notFound } from 'next/navigation';
 import {
   getCounterHistory,
   getDevice,
   getDeviceSettings,
+  getHiddenDevice,
   listAlerts,
   listDeviceAlarms,
   listDeviceOrders,
@@ -22,6 +23,7 @@ import { Breadcrumb } from '@/components/breadcrumb';
 import { CopyText } from '@/components/copy-text';
 import { CounterTable } from '@/components/counter-table';
 import { DetailCard, DetailRow } from '@/components/detail-card';
+import { HideDeviceDialog, UnhideDeviceButton } from '@/components/hide-device';
 import { counterHistoryRows, groupAlarms, meterChannels, rawString } from '@/components/device-detail';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
@@ -34,7 +36,8 @@ import { TonerTile } from '@/components/toner-tile';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { resolveDeviceOrigin } from '@/lib/device-origin';
-import { formatDateTime, formatNumber, formatRelative, pluralise } from '@/lib/format';
+import { formatDate, formatDateTime, formatNumber, formatRelative, pluralise } from '@/lib/format';
+import { hideErrorMessage } from '@/lib/hide-device';
 import { hrefWith } from '@/lib/href';
 import { settingsErrorMessage } from '@/lib/settings-form';
 
@@ -177,6 +180,8 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   // From approve/reject on the Replenishment card (the same actions as /orders).
   const decisionErrorCode = first(query.error);
   const decisionError = decisionErrorCode ? replenishmentErrorMessage(decisionErrorCode) : null;
+  const hideErrorCode = first(query.hideError);
+  const hideError = hideErrorCode ? hideErrorMessage(hideErrorCode) : null;
 
   const db = getDb();
   const detail = await getDevice(db, id);
@@ -186,7 +191,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   // The meters this device has: a mono device never reports `Full Color:Total`, so the page does
   // not ask for it either — nothing downstream can then put an all-em-dash Colour column back.
   const meters = meterChannels(detail.device.isColour);
-  const [history, alarms, alerts, orders, settings, replenishment, shelfLink] = await Promise.all([
+  const [history, alarms, alerts, orders, settings, replenishment, shelfLink, hidden] = await Promise.all([
     getCounterHistory(db, id, meters.map((m) => m.counter), HISTORY_DAYS),
     listDeviceAlarms(db, id, { limit: ALARM_LIMIT }),
     listAlerts(db, { drmsId: id }),
@@ -197,6 +202,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
     getDeviceSettings(db, id),
     listDeviceReplenishment(db, id),
     listShelfForDevice(db, id),
+    getHiddenDevice(db, id),
   ]);
   // The shelf's holdings say which consumables it takes off normal replenishment.
   const [shelf] = shelfLink ? await listShelfSummariesByIds(db, [shelfLink.shelfId]) : [];
@@ -255,6 +261,32 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
         Back to {origin.label}
       </Link>
 
+      {hideError ? (
+        <p role="alert" className="mb-5 rounded-xl bg-critical/5 px-5 py-3 text-[13px] text-critical">
+          {hideError}
+        </p>
+      ) : null}
+
+      {/* Still opens from a link or search, but says plainly that the rest of the app ignores it. */}
+      {hidden ? (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-muted px-5 py-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <EyeOff aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="text-[15px] font-medium">
+                Hidden{hidden.hiddenBy ? ` by ${hidden.hiddenBy}` : ''} on {formatDate(hidden.hiddenAt)}
+                {hidden.reason ? <span className="font-normal"> — “{hidden.reason}”</span> : null}
+              </p>
+              <p className="mt-0.5 text-[13px] text-muted-foreground">
+                Left out of the device lists, Fleet overview, reconnecting and link issues; no toner proposals or
+                alerts. Nothing was sent to DRMS.
+              </p>
+            </div>
+          </div>
+          <UnhideDeviceButton drmsId={device.drmsId} from={fromParam} back={backParam} />
+        </div>
+      ) : null}
+
       {noReadingAlert ? (
         <NoMeterReadingBanner
           alert={noReadingAlert}
@@ -270,6 +302,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
           <>
             <ToneBadge tone={status.tone}>{status.text}</ToneBadge>
             {/* Still monitored, but never counts towards "Needs toner" or raises a proposal. */}
+            {hidden ? <ToneBadge tone="muted">Hidden</ToneBadge> : null}
             {settings && !settings.autoReplenish.value ? (
               <ToneBadge tone="muted">Manual replenishment</ToneBadge>
             ) : null}
@@ -284,6 +317,9 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
           </>
         }
         subtitle={subtitle}
+        actions={
+          hidden ? null : <HideDeviceDialog drmsId={device.drmsId} name={name} from={fromParam} back={backParam} />
+        }
       />
 
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">

@@ -1,9 +1,16 @@
 import { redirect } from 'next/navigation';
-import { listDeviceFilterOptions, listDevices, type DeviceListOptions } from '@mps/db/queries';
+import {
+  countHiddenDevices,
+  listDeviceFilterOptions,
+  listDevices,
+  listHiddenDevices,
+  type DeviceListOptions,
+} from '@mps/db/queries';
 import { DeviceFilterBar } from '@/components/device-filter-bar';
 import { BulkResultToast, BulkSettingsBar, DeviceSelectionProvider } from '@/components/device-selection';
 import { DeviceTable } from '@/components/device-table';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
+import { HiddenDeviceTable } from '@/components/hidden-device-table';
 import { PageHeader } from '@/components/page-header';
 import { Pagination } from '@/components/pagination';
 import { SearchInput } from '@/components/search-input';
@@ -12,6 +19,7 @@ import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { deviceFilterParams, hasDeviceFilters, parseDeviceFilters } from '@/lib/device-filters';
 import { formatNumber, pluralise } from '@/lib/format';
+import { hideErrorMessage } from '@/lib/hide-device';
 import { hrefWith } from '@/lib/href';
 import { settingsErrorMessage } from '@/lib/settings-form';
 
@@ -31,6 +39,14 @@ const FILTERS = [
 
 type Filter = (typeof FILTERS)[number]['value'];
 
+/**
+ * The *Hidden* tab sits beside the filters but is not one: it lists the devices every other tab
+ * leaves out (`listHiddenDevices`), with who hid each and why, and has none of the list's filters,
+ * toner bars or bulk bar.
+ */
+const HIDDEN = 'hidden';
+type Tab = Filter | typeof HIDDEN;
+
 const EMPTY: Record<Filter, string> = {
   all: 'No devices have been synced yet.',
   'needs-toner': 'No device is below its replenishment threshold.',
@@ -49,12 +65,75 @@ export default async function DevicesPage({ searchParams }: PageProps<'/devices'
 
   const search = first(params.search)?.trim() || undefined;
   const requested = first(params.filter);
-  const filter: Filter = FILTERS.some((f) => f.value === requested) ? (requested as Filter) : 'all';
+  const tab: Tab =
+    requested === HIDDEN ? HIDDEN : FILTERS.some((f) => f.value === requested) ? (requested as Filter) : 'all';
   const filters = parseDeviceFilters((name) => first(params[name]));
   const page = Math.max(1, Number.parseInt(first(params.page) ?? '1', 10) || 1);
 
   const db = getDb();
   const now = new Date();
+  const hiddenCount = await countHiddenDevices(db);
+  const tabs: FilterTab[] = [
+    ...FILTERS,
+    { value: HIDDEN, label: hiddenCount > 0 ? `Hidden (${formatNumber(hiddenCount)})` : 'Hidden' },
+  ];
+
+  // What the bulk actions and Unhide redirected back with; `BulkResultToast` reports and drops it.
+  const count = (name: string) => {
+    const n = Number.parseInt(first(params[name]) ?? '', 10);
+    return Number.isInteger(n) && n >= 0 ? n : undefined;
+  };
+  const hideErrorCode = first(params.hideError);
+  const hideError = hideErrorCode ? hideErrorMessage(hideErrorCode) : undefined;
+
+  if (tab === HIDDEN) {
+    const hidden = await listHiddenDevices(db, { search, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE });
+    if (hidden.rows.length === 0 && hidden.total > 0 && page > 1) {
+      const lastPage = Math.ceil(hidden.total / PAGE_SIZE);
+      redirect(hrefWith('/devices', { search, filter: HIDDEN, page: lastPage > 1 ? lastPage : undefined }));
+    }
+    const counted = `${formatNumber(hidden.total)} hidden ${pluralise(hidden.total, 'device')}`;
+    return (
+      <>
+        <PageHeader
+          title="Devices"
+          subtitle={search ? `${counted} matching “${search}”` : counted}
+          actions={
+            <SearchInput action="/devices" defaultValue={search} hiddenParams={{ filter: HIDDEN }} className="w-[320px]" />
+          }
+        />
+        <BulkResultToast unhid={count('unhid')} error={hideError} />
+        <section className="rounded-xl border border-line bg-card">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <FilterTabs basePath="/devices" current={HIDDEN} tabs={tabs} params={{ search }} />
+          </div>
+          <p className="px-5 pb-4 text-[13px] text-muted-foreground">
+            Hidden devices are left out of every other list and count, and get no toner proposals or alerts. Unhide
+            one to bring it back; the next evaluation run may propose toner for it again.
+          </p>
+          <HiddenDeviceTable
+            rows={hidden.rows}
+            search={search}
+            page={page}
+            back={hrefWith('/devices', { search, filter: HIDDEN, page: page > 1 ? page : undefined })}
+            emptyMessage={search ? `No hidden devices match “${search}”.` : 'No devices are hidden.'}
+            className="border-t border-line"
+          />
+          <div className="border-t border-line px-5 py-3.5">
+            <Pagination
+              basePath="/devices"
+              params={{ search, filter: HIDDEN }}
+              page={page}
+              pageSize={PAGE_SIZE}
+              total={hidden.total}
+            />
+          </div>
+        </section>
+      </>
+    );
+  }
+
+  const filter: Filter = tab;
   const [{ rows, total }, options] = await Promise.all([
     listDevices(db, {
       search,
@@ -77,9 +156,6 @@ export default async function DevicesPage({ searchParams }: PageProps<'/devices'
     const lastPage = Math.ceil(total / PAGE_SIZE);
     redirect(hrefWith('/devices', { search, filter: filterParam, ...filterParams, page: lastPage > 1 ? lastPage : undefined }));
   }
-  // What `bulkUpdateSettingsAction` redirected back with; `BulkResultToast` reports and drops it.
-  const updatedParam = Number.parseInt(first(params.updated) ?? '', 10);
-  const updated = Number.isInteger(updatedParam) && updatedParam >= 0 ? updatedParam : undefined;
   const settingsErrorCode = first(params.settingsError);
   const settingsError = settingsErrorCode ? settingsErrorMessage(settingsErrorCode) : undefined;
 
@@ -107,10 +183,10 @@ export default async function DevicesPage({ searchParams }: PageProps<'/devices'
         pageIds={rows.map((r) => r.drmsId)}
         total={total}
       >
-        <BulkResultToast updated={updated} error={settingsError} />
+        <BulkResultToast updated={count('updated')} hid={count('hid')} error={settingsError ?? hideError} />
         <section className="rounded-xl border border-line bg-card">
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-            <FilterTabs basePath="/devices" current={filter} tabs={FILTERS} params={{ search, ...filterParams }} />
+            <FilterTabs basePath="/devices" current={filter} tabs={tabs} params={{ search, ...filterParams }} />
             <TonerLegend />
           </div>
           <DeviceFilterBar

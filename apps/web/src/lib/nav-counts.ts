@@ -1,6 +1,12 @@
 import { deviceAlerts, linkIssues, type Db } from '@mps/db';
-import { countAwaitingApproval, countAwaitingReview, getReconnectCounts } from '@mps/db/queries';
-import { count, eq, isNull } from 'drizzle-orm';
+import {
+  countAwaitingApproval,
+  countAwaitingReview,
+  getReconnectCounts,
+  notHiddenDevice,
+  openIssuesCondition,
+} from '@mps/db/queries';
+import { and, count, isNull } from 'drizzle-orm';
 
 export interface NavCounts {
   openAlerts: number;
@@ -19,8 +25,14 @@ export interface NavCounts {
  */
 export async function getNavCounts(db: Db): Promise<NavCounts> {
   const [alerts, issues, awaitingReview, reconnect, awaitingRegistration] = await Promise.all([
-    db.select({ n: count() }).from(deviceAlerts).where(isNull(deviceAlerts.clearedAt)),
-    db.select({ n: count() }).from(linkIssues).where(eq(linkIssues.status, 'open')),
+    // Hiding a device clears its open alerts, so the hidden test here only covers an alert opened
+    // in the moment between a hide and the next alerts run.
+    db
+      .select({ n: count() })
+      .from(deviceAlerts)
+      .where(and(isNull(deviceAlerts.clearedAt), notHiddenDevice(deviceAlerts.drmsEquipmentId))),
+    // Issues about hidden devices are left out, as on /issues itself.
+    db.select({ n: count() }).from(linkIssues).where(openIssuesCondition()),
     countAwaitingReview(db),
     // One grouped query over linked devices; no counter pivot.
     getReconnectCounts(db),

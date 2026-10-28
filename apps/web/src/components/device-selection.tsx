@@ -13,12 +13,16 @@ import {
 } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { TriangleAlert, X } from 'lucide-react';
+import { EyeOff, TriangleAlert, X } from 'lucide-react';
 import {
+  bulkHideAction,
   bulkUpdateSettingsAction,
+  reviewBulkHideAction,
   reviewBulkSettingsAction,
+  type BulkHideReview,
   type BulkReview,
 } from '@/app/(app)/devices/actions';
+import { HIDE_EXPLANATION, HideReasonField } from '@/components/hide-device';
 import { SettingsDialog } from '@/components/settings-dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -171,9 +175,11 @@ export interface BulkSettingsBarProps {
 
 /**
  * Shown above the table while anything is selected: the count, "select all N matching", *Change
- * settings…* and *Clear*. *Change settings…* opens the shared `SettingsDialog`; its *Review*
- * asks the server what would change (nothing is written) and moves to the confirmation step,
- * whose *Apply* posts the same form to `bulkUpdateSettingsAction`.
+ * settings…*, *Hide selected…* and *Clear*. *Change settings…* opens the shared `SettingsDialog`;
+ * its *Review* asks the server what would change (nothing is written) and moves to the
+ * confirmation step, whose *Apply* posts the same form to `bulkUpdateSettingsAction`. *Hide
+ * selected…* asks the server how many devices the selection reaches, then confirms that count
+ * with an optional reason before `bulkHideAction`.
  */
 export function BulkSettingsBar(props: BulkSettingsBarProps) {
   const { total, selection } = useSelection();
@@ -190,6 +196,8 @@ function ActiveBulkBar({ search, filter, filters, page, count }: BulkSettingsBar
     form: FormData;
     review: Extract<BulkReview, { ok: true }>;
   } | null>(null);
+  const [hideReview, setHideReview] = useState<Extract<BulkHideReview, { ok: true }> | null>(null);
+  const [checkingHide, startCheckHide] = useTransition();
 
   const hidden: Record<string, string | string[]> = {
     mode: selection.mode,
@@ -209,6 +217,23 @@ function ActiveBulkBar({ search, filter, filters, page, count }: BulkSettingsBar
     setReviewError(null);
     setPending({ form, review: result });
     return true;
+  }
+
+  /** The selection as the form the hide actions take: the same fields the settings dialog posts. */
+  function selectionForm(): FormData {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(hidden)) {
+      for (const v of Array.isArray(value) ? value : [value]) form.append(name, v);
+    }
+    return form;
+  }
+
+  function reviewHide() {
+    startCheckHide(async () => {
+      const result = await reviewBulkHideAction(selectionForm());
+      if (result.ok) setHideReview(result);
+      else toast.error(result.message, { id: 'bulk-hide' });
+    });
   }
 
   return (
@@ -236,6 +261,10 @@ function ActiveBulkBar({ search, filter, filters, page, count }: BulkSettingsBar
           submitLabel="Review"
           pendingLabel="Checking…"
         />
+        <Button variant="outline" size="sm" onClick={reviewHide} disabled={checkingHide}>
+          <EyeOff aria-hidden />
+          {checkingHide ? 'Checking…' : 'Hide selected…'}
+        </Button>
         <Button variant="ghost" size="sm" onClick={clear}>
           <X aria-hidden />
           Clear
@@ -243,7 +272,92 @@ function ActiveBulkBar({ search, filter, filters, page, count }: BulkSettingsBar
       </div>
 
       <ConfirmBulkDialog pending={pending} onClose={() => setPending(null)} />
+      <ConfirmHideDialog review={hideReview} selection={selectionForm} onClose={() => setHideReview(null)} />
     </div>
+  );
+}
+
+/**
+ * The bulk hide's confirmation: the count (and the names, folded), an optional reason and *Hide*.
+ * The count is the server's, from the review step, so "Select all N matching" is confirmed as
+ * exactly what the server will hide.
+ */
+function ConfirmHideDialog({
+  review,
+  selection,
+  onClose,
+}: {
+  review: Extract<BulkHideReview, { ok: true }> | null;
+  selection: () => FormData;
+  onClose: () => void;
+}) {
+  const [hiding, startHide] = useTransition();
+
+  // As `ConfirmBulkDialog`: close once the hide has landed (the redirect has already refreshed the list).
+  const wasHiding = useRef(false);
+  useEffect(() => {
+    if (wasHiding.current && !hiding) onClose();
+    wasHiding.current = hiding;
+  }, [hiding, onClose]);
+
+  function hide(formData: FormData) {
+    const form = selection();
+    form.set('reason', String(formData.get('reason') ?? ''));
+    startHide(async () => {
+      // Redirects back to this list with `?hid=N` (or `?hideError=`), which `BulkResultToast` reports.
+      await bulkHideAction(form);
+    });
+  }
+
+  return (
+    <Dialog open={review !== null} onOpenChange={(open) => (!open && !hiding ? onClose() : undefined)}>
+      <DialogContent className="sm:max-w-lg">
+        <form action={hide} className="grid gap-4">
+          <DialogHeader>
+            <DialogTitle>
+              Hide {review ? `${formatNumber(review.count)} ${pluralise(review.count, 'device')}` : 'devices'}?
+            </DialogTitle>
+            <DialogDescription>{HIDE_EXPLANATION}</DialogDescription>
+          </DialogHeader>
+          {review ? (
+            <div className="flex flex-col gap-3">
+              {review.customers > 1 ? (
+                <p role="alert" className="flex items-start gap-2 rounded-lg bg-warn/10 px-3 py-2 text-[13px] text-warn">
+                  <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+                  This selection spans {formatNumber(review.customers)} customers.
+                </p>
+              ) : null}
+              <details className="text-[13px]">
+                <summary className="cursor-pointer text-brand">Show the {pluralise(review.count, 'device')}</summary>
+                <ul className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-line px-3 py-2 font-mono text-[12px]">
+                  {review.names.map((name) => (
+                    <li key={name} className="truncate py-0.5">
+                      {name}
+                    </li>
+                  ))}
+                  {review.count > review.names.length ? (
+                    <li className="py-0.5 font-sans text-muted-foreground">
+                      and {formatNumber(review.count - review.names.length)} more
+                    </li>
+                  ) : null}
+                </ul>
+              </details>
+              <HideReasonField id="bulk-hide-reason" />
+            </div>
+          ) : null}
+          <DialogFooter>
+            <DialogClose render={<Button type="button" variant="outline" disabled={hiding} />}>Cancel</DialogClose>
+            <Button type="submit" disabled={hiding} className="bg-brand hover:bg-brand/90">
+              {hiding
+                ? 'Hiding…'
+                : review
+                  ? `Hide ${formatNumber(review.count)} ${pluralise(review.count, 'device')}`
+                  : 'Hide'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -341,32 +455,47 @@ function ConfirmBulkDialog({
 }
 
 /**
- * Reports what `bulkUpdateSettingsAction` redirected back with — `?updated=N`, or
- * `?settingsError=<code>` which the page has already turned into a sentence (`error`) — as a
- * toast, clears the selection after a successful write, and drops the parameter so a reload does
- * not repeat it.
+ * Reports what the bulk actions redirected back with — `?updated=N` or `?hid=N`, or
+ * `?settingsError=<code>` / `?hideError=<code>` which the page has already turned into a sentence
+ * (`error`) — as a toast, clears the selection after a successful write, and drops the parameter
+ * so a reload does not repeat it. Also used outside a selection (the Hidden tab's `?unhid=N`), so
+ * it clears a selection only when it sits inside one.
  */
-export function BulkResultToast({ updated, error }: { updated?: number; error?: string }) {
-  const { clear } = useSelection();
+export function BulkResultToast({
+  updated,
+  hid,
+  unhid,
+  error,
+}: {
+  updated?: number;
+  hid?: number;
+  unhid?: number;
+  error?: string;
+}) {
+  const clear = useContext(Ctx)?.clear;
   const router = useRouter();
 
   useEffect(() => {
-    if (updated === undefined && error === undefined) return;
+    if (updated === undefined && hid === undefined && unhid === undefined && error === undefined) return;
     // A fixed id, so React's development double-run of this effect shows one toast, not two.
     if (updated !== undefined) {
       toast.success(
         `Settings updated on ${formatNumber(updated)} ${pluralise(updated, 'device')}.`,
         { id: 'bulk-settings' },
       );
-      clear();
+      clear?.();
+    } else if (hid !== undefined) {
+      toast.success(`${formatNumber(hid)} ${pluralise(hid, 'device')} hidden.`, { id: 'bulk-settings' });
+      clear?.();
+    } else if (unhid !== undefined) {
+      toast.success(unhid > 0 ? 'Device unhidden.' : 'That device was not hidden.', { id: 'bulk-settings' });
     } else if (error !== undefined) {
       toast.error(error, { id: 'bulk-settings' });
     }
     const url = new URL(window.location.href);
-    url.searchParams.delete('updated');
-    url.searchParams.delete('settingsError');
+    for (const name of ['updated', 'settingsError', 'hid', 'unhid', 'hideError']) url.searchParams.delete(name);
     router.replace(`${url.pathname}${url.search}`, { scroll: false });
-  }, [updated, error, clear, router]);
+  }, [updated, hid, unhid, error, clear, router]);
 
   return null;
 }
