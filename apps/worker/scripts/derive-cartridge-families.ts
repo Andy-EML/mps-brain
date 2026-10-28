@@ -10,7 +10,7 @@
  *   ...
  *
  * Part code: `vantage_sales_order_lines.item_part_number` when it looks like a KM code
- * (three capital letters + four digits), otherwise the first such code found in `details`. Lines
+ * (e.g. AAV8150, AAJW150, ACTD050), otherwise the first such code found in `details`. Lines
  * with neither are ignored (machines, paper, MISC).
  *
  * Usage:
@@ -20,8 +20,10 @@ import { isColourModel } from '@mps/core';
 import { createDb, deviceLinks, drmsEquipment, vantageSalesOrderLines } from '@mps/db';
 import { and, count, eq, isNotNull, isNull } from 'drizzle-orm';
 
-const PART_CODE = /\b[A-Z]{3}\d{4}\b/;
-const PART_CODE_EXACT = /^[A-Z]{3}\d{4}$/;
+// KM cartridge codes: AAV8150 (3 letters + 4 digits) and AAJW150 / ACTD050 / ACVH150 (A + 2 letters + letter-or-digit + 3 digits).
+const PART_SHAPE = '(?:[A-Z]{3}\\d{4}|A[A-Z]{2}[A-Z0-9]\\d{3})';
+const PART_CODE = new RegExp(`\\b${PART_SHAPE}\\b`);
+const PART_CODE_EXACT = new RegExp(`^${PART_SHAPE}$`);
 
 export interface PartLine {
   details: string;
@@ -33,9 +35,9 @@ export interface PartGroup {
   models: string[];
 }
 
-/** The model's number token, keeping a colour C: "bizhub C450i" -> "c450i", "ineo+ 300i" -> "300i"; null if none. */
-function modelKey(model: string): string | null {
-  const m = /(c?\d{3,4}[a-z]*)\s*$/i.exec(model.trim());
+/** Model number without colour C or trailing "i": "bizhub C450i" -> "450", "ineo+ 300i" -> "300", "ineo+3351" -> "3351". */
+function modelNumber(model: string): string | null {
+  const m = /c?(\d{3,4}[a-z]*?)i?\s*$/i.exec(model.trim());
   return m ? m[1]!.toLowerCase() : null;
 }
 
@@ -45,34 +47,78 @@ function partOf(line: PartLine): string | null {
   return PART_CODE.exec(line.details)?.[0] ?? null;
 }
 
+interface LineTokens {
+  /** Number tokens as written, a colour C kept, trailing "i" dropped: "c300", "250", "3350". */
+  tokens: Set<string>;
+  /** The line is known to describe a colour machine (a C-model token, or "Ineo +300i" / "Develop +300i"). */
+  colour: boolean;
+}
+
+function tokenise(details: string): LineTokens {
+  let text = details.toLowerCase();
+  const tokens = new Set<string>();
+  // Shorthand "c3350/1i" -> c3350, c3351; "c750/751i" -> c750, c751 (the C applies to both).
+  text = text
+    .replace(/\b(c?)(\d{3,4})\/(\d{3,4})i?\b/g, (_m, c: string, a: string, b: string) => {
+      tokens.add(`${c}${a}`);
+      tokens.add(`${c}${b}`);
+      return ' ';
+    })
+    .replace(/\b(c?)(\d{2,3})(\d)\/(\d)i?\b/g, (_m, c: string, pre: string, d1: string, d2: string) => {
+      tokens.add(`${c}${pre}${d1}`);
+      tokens.add(`${c}${pre}${d2}`);
+      return ' ';
+    });
+  for (const raw of text.split(/[^a-z0-9]+/)) {
+    if (!raw) continue;
+    const t = raw.replace(/^0+(?=c\d)/, '').replace(/(?<=\d)i$/, '');
+    if (/^c?\d{3,4}[a-z]*$/.test(t)) tokens.add(t);
+  }
+  const colour = /(?:ineo|develop)\s*\+|\+\s*\d{3}/.test(text) || [...tokens].some((t) => /^c\d/.test(t));
+  return { tokens, colour };
+}
+
 /**
- * Groups models by cartridge part: a model joins a part when its number token (case-insensitive,
- * the colour C kept; a bare number only claims a colour model when no mono sibling exists) appears as a whole token in any line text for that part. Parts that share a
- * model are merged (union-find) into one group. Parts matching no model are dropped; models are
- * returned sorted, groups sorted by part.
+ * Groups models by cartridge part, never mixing mono and colour models.
+ *
+ * A colour model (isColourModel: C-model, ineo+, MF) matches the part when a line names its C-token
+ * ("c300"), or its bare number ("300") when no mono model has that number and the part matched no
+ * mono model. A mono model matches only a bare number written on a line that is not known to be a
+ * colour line: shorthand on colour lines ("Develop +250i", "C750/751i") is ignored for mono models.
+ * Parts that share a model are merged (union-find) within the same colour class, so a family is
+ * all-mono or all-colour. Parts matching no model are dropped; models are returned sorted, groups
+ * sorted by part.
  */
 export function groupModelsByPart(lines: PartLine[], models: string[]): PartGroup[] {
-  const tokensByPart = new Map<string, Set<string>>();
+  const monoTokens = new Map<string, Set<string>>(); // bare numbers on non-colour lines
+  const allTokens = new Map<string, Set<string>>(); // every token on the part's lines
   for (const line of lines) {
     const part = partOf(line);
     if (!part) continue;
-    const set = tokensByPart.get(part) ?? new Set<string>();
-    for (const t of line.details.toLowerCase().split(/[^a-z0-9]+/)) if (t) set.add(t);
-    tokensByPart.set(part, set);
+    const { tokens, colour } = tokenise(line.details);
+    const all = allTokens.get(part) ?? new Set<string>();
+    const mono = monoTokens.get(part) ?? new Set<string>();
+    for (const t of tokens) {
+      all.add(t);
+      if (!colour && !t.startsWith('c')) mono.add(t);
+    }
+    allTokens.set(part, all);
+    monoTokens.set(part, mono);
   }
 
-  // A colour model (c300i) matches its own token, and the bare token (300i) only when no mono
-  // model with that number exists; a mono model matches the bare token only.
-  const monoKeys = new Set(models.map(modelKey).filter((k): k is string => k !== null && !/^c\d/.test(k)));
-  const matched = new Map<string, string[]>(); // part -> models
-  for (const [part, tokens] of tokensByPart) {
+  const monoNumbers = new Set(models.filter((m) => !isColourModel(m)).map(modelNumber));
+  const matched = new Map<string, string[]>(); // "c:PART" / "m:PART" -> models
+  for (const [part, all] of allTokens) {
+    const mono = monoTokens.get(part)!;
+    const monoHit = models.some((m) => !isColourModel(m) && mono.has(modelNumber(m) ?? ''));
     for (const model of models) {
-      const key = modelKey(model);
-      if (!key) continue;
-      const bare = key.slice(1);
-      const isC = /^c\d/.test(key);
-      if (tokens.has(key) || (isC && !monoKeys.has(bare) && tokens.has(bare))) {
-        matched.set(part, [...(matched.get(part) ?? []), model]);
+      const num = modelNumber(model);
+      if (!num) continue;
+      const colour = isColourModel(model);
+      const hit = colour ? all.has(`c${num}`) || (!monoNumbers.has(num) && !monoHit && all.has(num)) : mono.has(num);
+      if (hit) {
+        const node = `${colour ? 'c' : 'm'}:${part}`;
+        matched.set(node, [...(matched.get(node) ?? []), model]);
       }
     }
   }
@@ -83,21 +129,21 @@ export function groupModelsByPart(lines: PartLine[], models: string[]): PartGrou
     while (parent.get(r) !== r) r = parent.get(r)!;
     return r;
   };
-  for (const part of matched.keys()) parent.set(part, part);
-  const firstPartOfModel = new Map<string, string>();
-  for (const [part, ms] of matched) {
+  for (const node of matched.keys()) parent.set(node, node);
+  const firstNodeOfModel = new Map<string, string>();
+  for (const [node, ms] of matched) {
     for (const m of ms) {
-      const first = firstPartOfModel.get(m);
-      if (first) parent.set(find(first), find(part));
-      else firstPartOfModel.set(m, part);
+      const first = firstNodeOfModel.get(m);
+      if (first) parent.set(find(first), find(node));
+      else firstNodeOfModel.set(m, node);
     }
   }
 
   const groups = new Map<string, { parts: Set<string>; models: Set<string> }>();
-  for (const [part, ms] of matched) {
-    const root = find(part);
+  for (const [node, ms] of matched) {
+    const root = find(node);
     const g = groups.get(root) ?? { parts: new Set<string>(), models: new Set<string>() };
-    g.parts.add(part);
+    g.parts.add(node.slice(2));
     for (const m of ms) g.models.add(m);
     groups.set(root, g);
   }
@@ -111,8 +157,10 @@ export function shortModel(model: string): string {
   return model.replace(/^(bizhub|ineo\+?)\s*/i, '').trim() || model;
 }
 
+/** Short names joined with " / "; an ineo+ rebadge whose bizhub C twin is listed ("300i" beside "C300i") is not repeated. */
 export function familyName(models: string[]): string {
-  return models.map(shortModel).join(' / ');
+  const names = models.map(shortModel);
+  return names.filter((n, i) => !names.includes(`C${n}`) && names.indexOf(n) === i).join(' / ');
 }
 
 function csvCell(v: string): string {
