@@ -1,0 +1,42 @@
+[
+  {
+    "name": "C3300i / C3301i / C3320i / C3321i / C3350i / C3351i / C4050i",
+    "isColour": true,
+    "models": ["bizhub C3300i", "bizhub C3301i", "bizhub C3320i", "bizhub C3321i", "bizhub C3350i", "bizhub C3351i", "bizhub C4050i", "ineo+3320i", "ineo+3350i", "ineo+3351"]
+  },
+  {
+    "name": "C250i / C251i / C300i / C301i / C360i / C361i",
+    "isColour": true,
+    "models": ["bizhub C250i", "bizhub C251i", "bizhub C300i", "bizhub C301i", "bizhub C360i", "bizhub C361i", "ineo+250i", "ineo+300i", "ineo+360i"]
+  },
+  {
+    "name": "C450i / C451i / C550i / C551i / C650i / C651i",
+    "isColour": true,
+    "models": ["bizhub C450i", "bizhub C451i", "bizhub C550i", "bizhub C551i", "bizhub C650i", "bizhub C651i", "ineo+450i", "ineo+550i", "ineo+551i"]
+  },
+  {
+    "name": "C750i / C751i",
+    "isColour": true,
+    "models": ["bizhub C750i", "bizhub C751i"]
+  },
+  {
+    "name": "C257i",
+    "isColour": true,
+    "models": ["bizhub C257i"]
+  },
+  {
+    "name": "4050i / 4051i",
+    "isColour": false,
+    "models": ["bizhub 4050i", "bizhub 4051i"]
+  },
+  {
+    "name": "4700i / 4701i",
+    "isColour": false,
+    "models": ["bizhub 4700i", "bizhub 4701i"]
+  },
+  {
+    "name": "751i",
+    "isColour": false,
+    "models": ["bizhub 751i"]
+  }
+]
