@@ -30,14 +30,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { deviceFilterParams, type DeviceFilters } from '@/lib/device-filters';
 import { formatNumber, pluralise } from '@/lib/format';
 
 /**
  * Selection on the devices list, and the bulk settings bar that acts on it.
  *
  * Two modes: `ids` — the rows ticked on this page — and `matching` — "all N devices matching this
- * view", which posts only the search and filter; the server resolves the devices itself. The page
- * remounts the provider (a `key`) whenever the search, filter or page changes, which is what
+ * view", which posts only the search, tab and filters; the server resolves the devices itself. The
+ * page remounts the provider (a `key`) whenever any of those or the page changes, which is what
  * resets the selection.
  */
 
@@ -163,6 +164,8 @@ export interface BulkSettingsBarProps {
   /** The list view the selection was made in; posted so the server can resolve "all matching" and redirect back. */
   search?: string;
   filter: string;
+  /** The customer, colour, model and replenishment filters. */
+  filters: DeviceFilters;
   page: number;
 }
 
@@ -180,7 +183,7 @@ export function BulkSettingsBar(props: BulkSettingsBarProps) {
   return count === 0 ? null : <ActiveBulkBar {...props} count={count} />;
 }
 
-function ActiveBulkBar({ search, filter, page, count }: BulkSettingsBarProps & { count: number }) {
+function ActiveBulkBar({ search, filter, filters, page, count }: BulkSettingsBarProps & { count: number }) {
   const { total, selection, selectMatching, clear } = useSelection();
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [pending, setPending] = useState<{
@@ -192,6 +195,7 @@ function ActiveBulkBar({ search, filter, page, count }: BulkSettingsBarProps & {
     mode: selection.mode,
     search: search ?? '',
     filter,
+    ...Object.fromEntries(Object.entries(deviceFilterParams(filters)).map(([k, v]) => [k, v ?? ''])),
     page: String(page),
     ...(selection.mode === 'ids' ? { drmsId: [...selection.ids] } : {}),
   };

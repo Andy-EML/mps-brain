@@ -8,9 +8,11 @@ import {
   getReconnectCounts,
   getReplenishmentStats,
   getTonerHealth,
+  listDeviceFilterOptions,
   listDevices,
 } from '@mps/db/queries';
 import { CollectionOutageBanner } from '@/components/collection-outage-banner';
+import { DeviceFilterBar } from '@/components/device-filter-bar';
 import { DeviceTable } from '@/components/device-table';
 import { PageHeader } from '@/components/page-header';
 import { SearchInput } from '@/components/search-input';
@@ -20,28 +22,40 @@ import { TonerLegend } from '@/components/toner-bar';
 import { TonerHealthCard } from '@/components/toner-health-card';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { deviceFilterParams, hasDeviceFilters, parseDeviceFilters } from '@/lib/device-filters';
 import { formatNumber, formatRelative, pluralise } from '@/lib/format';
+import { hrefWith } from '@/lib/href';
 
 export const metadata = { title: 'Fleet overview · MPS Dashboard' };
 
 /** Rows shown on the overview before you have to go to /devices. */
 const PREVIEW_ROWS = 8;
 
-export default async function FleetOverviewPage() {
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function FleetOverviewPage({ searchParams }: PageProps<'/'>) {
   await requireUser();
+  const params = await searchParams;
   const db = getDb();
   const now = new Date();
+  // The same filters as /devices, over the preview; "View all devices" carries them across.
+  const filters = parseDeviceFilters((name) => first(params[name]));
+  const filterParams = deviceFilterParams(filters);
+  const filtered = hasDeviceFilters(filters);
 
-  const [summary, health, customers, issueCounts, preview, warnings, collection, replenishment, reconnect] = await Promise.all([
+  const [summary, health, customers, issueCounts, preview, warnings, collection, replenishment, reconnect, options] = await Promise.all([
     getFleetSummary(db),
     getTonerHealth(db),
     getCustomerCount(db),
     getIssueCounts(db, { status: 'open' }),
-    listDevices(db, { limit: PREVIEW_ROWS }),
+    listDevices(db, { ...filters, limit: PREVIEW_ROWS }),
     getConsumableWarnings(db),
     getCollectionStatus(db),
     getReplenishmentStats(db, now),
     getReconnectCounts(db, { now }),
+    listDeviceFilterOptions(db),
   ]);
 
   const warningDevices = new Set(warnings.map((w) => w.drmsId)).size;
@@ -121,13 +135,20 @@ export default async function FleetOverviewPage() {
           <h2 className="text-[15px] font-medium">Devices</h2>
           <TonerLegend />
         </div>
-        <DeviceTable from="fleet" rows={preview.rows} now={now} emptyMessage="No devices have been synced yet." />
+        <DeviceFilterBar basePath="/" filters={filters} options={options} className="px-5 pb-4" />
+        <DeviceTable
+          from="fleet"
+          back={hrefWith('/', filterParams)}
+          rows={preview.rows}
+          now={now}
+          emptyMessage={filtered ? 'No devices match these filters.' : 'No devices have been synced yet.'}
+        />
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3.5">
           <p className="text-sm text-muted-foreground">
-            Showing {formatNumber(preview.rows.length)} of {formatNumber(summary.devices)}{' '}
-            {pluralise(summary.devices, 'device')}, customer A–Z
+            Showing {formatNumber(preview.rows.length)} of {formatNumber(preview.total)}{' '}
+            {filtered ? `matching ${pluralise(preview.total, 'device')}` : pluralise(preview.total, 'device')}, customer A–Z
           </p>
-          <Link href="/devices" className="text-sm font-medium text-brand hover:underline">
+          <Link href={hrefWith('/devices', filterParams)} className="text-sm font-medium text-brand hover:underline">
             View all devices
           </Link>
         </div>

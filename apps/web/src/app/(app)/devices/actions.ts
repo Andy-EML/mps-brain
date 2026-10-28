@@ -13,6 +13,7 @@ import {
 } from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { deviceFilterParams, parseDeviceFilters, type DeviceFilters } from '@/lib/device-filters';
 import { hrefWith } from '@/lib/href';
 import {
   describeSettingsPatch,
@@ -28,8 +29,9 @@ import {
  *
  * The selection arrives in one of two modes:
  * - `ids`: repeated `drmsId` fields, the rows ticked on the current page (capped at 5,000);
- * - `matching`: "all N matching this view", resolved **here** from `search` + `filter` with
- *   `resolveDeviceSelection` — the same conditions the list is drawn with. No id list from the
+ * - `matching`: "all N matching this view", resolved **here** from `search` + `filter` and the
+ *   customer/colour/model/replenishment filters with `resolveDeviceSelection` — the same
+ *   conditions the list is drawn with. No id list from the
  *   browser is trusted for this mode, however it arrives.
  *
  * The form is parsed as colour (`isColour: true`) whatever the selection holds: a cyan, magenta
@@ -60,6 +62,7 @@ function text(formData: FormData, name: string): string {
 interface ListView {
   search: string | undefined;
   filter: NonNullable<DeviceListOptions['filter']>;
+  filters: DeviceFilters;
   page: number;
 }
 
@@ -71,6 +74,7 @@ function listView(formData: FormData): ListView {
   return {
     search: text(formData, 'search') || undefined,
     filter,
+    filters: parseDeviceFilters((name) => text(formData, name) || undefined),
     page: Number.isInteger(page) && page > 1 ? page : 1,
   };
 }
@@ -80,6 +84,7 @@ function listHref(view: ListView, extra: Record<string, string | number>): strin
   return hrefWith('/devices', {
     search: view.search,
     filter: view.filter === 'all' ? undefined : view.filter,
+    ...deviceFilterParams(view.filters),
     page: view.page > 1 ? view.page : undefined,
     ...extra,
   });
@@ -91,6 +96,7 @@ async function selectedIds(formData: FormData, view: ListView): Promise<string[]
     const { drmsIds } = await resolveDeviceSelection(getDb(), {
       search: view.search,
       filter: view.filter,
+      ...view.filters,
     });
     return drmsIds;
   }

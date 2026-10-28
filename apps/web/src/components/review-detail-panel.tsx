@@ -23,6 +23,8 @@ export function Swatch({ colour, className }: { colour: ReplenishColour; classNa
   return <span aria-hidden className={cn('size-3 shrink-0 rounded-[3px]', SWATCH[colour], className)} />;
 }
 
+const TONER_COLOURS: readonly ReviewTonerColour[] = ['black', 'cyan', 'magenta', 'yellow'];
+
 const SHORT: Record<ReplenishColour, string> = { black: 'Black', cyan: 'Cyan', magenta: 'Magenta', yellow: 'Yellow', waste: 'Waste' };
 
 export type DetailState =
@@ -34,6 +36,9 @@ export type DetailState =
  * Everything below the proposal lines in an open Review row: toner levels, recent sales orders,
  * recent consumable alarms and pages printed since each proposed colour last went out. Loaded by
  * the row on first open (`loadReviewDetail`) and kept for the life of the page.
+ *
+ * The device lists open the same panel under a device row. They have no proposals, so they leave
+ * `proposals` out and "Pages since last order" covers every cartridge the device has.
  */
 export function ReviewDetailPanel({
   state,
@@ -41,7 +46,7 @@ export function ReviewDetailPanel({
   onRetry,
 }: {
   state: DetailState;
-  proposals: readonly QueueProposal[];
+  proposals?: readonly QueueProposal[];
   onRetry: () => void;
 }) {
   if (state.status === 'loading') {
@@ -62,7 +67,9 @@ export function ReviewDetailPanel({
     );
   }
   const d = state.data;
-  const proposed = [...new Set(proposals.map((p) => p.colour))].filter((c): c is ReviewTonerColour => c !== 'waste');
+  const proposed = proposals
+    ? [...new Set(proposals.map((p) => p.colour))].filter((c): c is ReviewTonerColour => c !== 'waste')
+    : TONER_COLOURS.filter((c) => d.pagesSince[c] !== undefined);
   return (
     <div className="mt-4 grid gap-x-8 gap-y-5 md:grid-cols-2">
       <Section title="Toner levels">

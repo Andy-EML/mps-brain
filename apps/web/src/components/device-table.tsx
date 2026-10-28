@@ -1,11 +1,7 @@
-import Link from 'next/link';
 import type { DeviceRow } from '@mps/db/queries';
 import { cn } from 'cn';
-import { CopyText } from '@/components/copy-text';
-import { SelectPageCheckbox, SelectRowCheckbox } from '@/components/device-selection';
-import { StatusDot, TONE_TEXT } from '@/components/status-dot';
-import { deviceStatusLabel } from '@/components/toner';
-import { TonerBars } from '@/components/toner-bar';
+import { SelectPageCheckbox } from '@/components/device-selection';
+import { DeviceTableRow } from '@/components/device-table-row';
 import { deviceHref, type DeviceOriginKey } from '@/lib/device-origin';
 
 export interface DeviceTableProps {
@@ -27,23 +23,17 @@ export interface DeviceTableProps {
 
 const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
 
-function customerName(row: DeviceRow): string {
-  return row.vantageCustomerName ?? row.customerName ?? 'Unknown customer';
-}
-
-/** The link text, and the only identifier guaranteed to exist. */
-function deviceSerial(row: DeviceRow): string {
-  return row.serial ?? row.drmsId;
-}
-
 /**
  * The device table from the mockup: customer over serial, model over the status line, the four
  * DRMS toner channels as bars with their percentage underneath, and pages/month on the right.
  *
- * The customer leads because it is what an operator is looking for; the serial underneath is the
- * link to the device page. The device's display name (DRMS's equipment Name, e.g. "Hazell &
- * Jefferies Downstairs C450i") only appears when it says something the Model column doesn't — the
- * product name ("ineo+458_Ver42") is just the model, and printed the same thing twice in one row.
+ * The customer leads because it is what an operator is looking for. The device's display name
+ * (DRMS's equipment Name, e.g. "Hazell & Jefferies Downstairs C450i") only appears when it says
+ * something the Model column doesn't — the product name ("ineo+458_Ver42") is just the model, and
+ * printed the same thing twice in one row.
+ *
+ * The whole row opens the device page (the serial underneath is the link the keyboard reaches),
+ * and a chevron at the right edge opens the device's detail panel under it — see `DeviceTableRow`.
  */
 export function DeviceTable({
   rows,
@@ -58,6 +48,7 @@ export function DeviceTable({
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
   }
 
+  const columns = (selectable ? 1 : 0) + 5;
   return (
     <div className={cn('w-full overflow-x-auto', className)}>
       <table className="w-full min-w-[880px] border-collapse text-left">
@@ -84,52 +75,22 @@ export function DeviceTable({
             >
               Pages / mo
             </th>
+            <th scope="col" className="w-12 py-2.5 pr-4 pl-0">
+              <span className="sr-only">Details</span>
+            </th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => {
-            const status = deviceStatusLabel(row, now);
-            // The same `displayName` as the queue and device page. Printed only when it is DRMS's
-            // equipment Name: the fallback (customer + model) would repeat this row's own columns.
-            const showName = row.equipmentName !== null;
-            return (
-              <tr key={row.drmsId} className="border-b border-line align-top last:border-0">
-                {selectable ? (
-                  <td className="py-4 pr-0 pl-5">
-                    <SelectRowCheckbox drmsId={row.drmsId} label={`${customerName(row)} ${deviceSerial(row)}`} />
-                  </td>
-                ) : null}
-                <td className="px-5 py-4">
-                  <div className="flex gap-2.5">
-                    <StatusDot tone={status.tone} className="mt-[7px]" />
-                    <div className="min-w-0">
-                      <div className="truncate text-[15px] font-semibold">{customerName(row)}</div>
-                      <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <Link
-                          href={deviceHref(row.drmsId, from, back)}
-                          className="truncate font-mono hover:text-brand hover:underline"
-                        >
-                          {deviceSerial(row)}
-                        </Link>
-                        {row.serial ? <CopyText text={row.serial} iconOnly /> : null}
-                      </div>
-                      {showName ? (
-                        <div className="truncate text-[13px] text-muted-foreground">{row.displayName}</div>
-                      ) : null}
-                    </div>
-                  </div>
-                </td>
-                <td className="px-5 py-4">
-                  <div className="truncate text-[15px]">{row.model ?? '—'}</div>
-                  <div className={cn('truncate text-[13px]', TONE_TEXT[status.tone])}>{status.text}</div>
-                </td>
-                <td className="px-5 py-4">
-                  <TonerBars row={row} />
-                </td>
-                <td className="px-5 py-4 text-right text-[15px] text-muted-foreground tabular">—</td>
-              </tr>
-            );
-          })}
+          {rows.map((row) => (
+            <DeviceTableRow
+              key={row.drmsId}
+              row={row}
+              now={now}
+              href={deviceHref(row.drmsId, from, back)}
+              selectable={selectable}
+              columns={columns}
+            />
+          ))}
         </tbody>
       </table>
     </div>
