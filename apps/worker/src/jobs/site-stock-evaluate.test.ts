@@ -258,12 +258,86 @@ describe('evaluateSiteStock', () => {
       expect((await dAKey()).map((m) => m.since)).toEqual([COUNTING_FROM]);
     });
 
-    it('does not count while a device is off the shelf if it never returns', async () => {
-      await t.db.update(deviceLinks).set({ unlinkedAt: new Date('2026-09-05T00:00:00Z') }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
-      await alarm('dA', '2026-09-06 08:00:00', 'Toner Empty(BK)');
-      const run = await evaluateSiteStock(t.db, new Date('2026-09-07T00:00:00Z'));
-      expect(run.stats).toMatchObject({ considered: 0, counted: 0 });
-      expect(await shelf()).toMatchObject({ usedBlack: 0 });
+    describe('grace window', () => {
+      const unlink = (at: string) => t.db.update(deviceLinks).set({ unlinkedAt: new Date(at) }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+      const relink = () => t.db.update(deviceLinks).set({ unlinkedAt: null }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+      const dARows = () => t.db.select().from(siteStockMembers).where(eq(siteStockMembers.drmsEquipmentId, 'dA'));
+
+      it('stamps left_at on a departed member and keeps its row', async () => {
+        await unlink('2026-09-05T00:00:00Z');
+        await evaluateSiteStock(t.db, new Date('2026-09-05T12:00:00Z'));
+        expect((await dARows()).map((m) => [m.since, m.leftAt])).toEqual([[COUNTING_FROM, new Date('2026-09-05T12:00:00Z')]]);
+        await evaluateSiteStock(t.db, new Date('2026-09-06T12:00:00Z')); // left_at is not moved by later runs
+        expect((await dARows()).map((m) => m.leftAt)).toEqual([new Date('2026-09-05T12:00:00Z')]);
+      });
+
+      it('returning within the grace window keeps since, clears left_at and counts the absence Empty', async () => {
+        await unlink('2026-09-05T00:00:00Z');
+        await evaluateSiteStock(t.db, new Date('2026-09-05T12:00:00Z'));
+        await alarm('dA', '2026-09-06 08:00:00', 'Toner Empty(BK)');
+        await relink();
+        const back = await evaluateSiteStock(t.db, new Date('2026-09-08T12:00:00Z')); // exactly 3 days
+        expect(back.stats).toMatchObject({ considered: 1, counted: 1 });
+        expect((await dARows()).map((m) => [m.since, m.leftAt])).toEqual([[COUNTING_FROM, null]]);
+      });
+
+      it('returning after the grace window restarts since and does not count absence Empties', async () => {
+        await unlink('2026-09-05T00:00:00Z');
+        await evaluateSiteStock(t.db, new Date('2026-09-05T12:00:00Z'));
+        await alarm('dA', '2026-09-06 08:00:00', 'Toner Empty(BK)');
+        await relink();
+        const back = await evaluateSiteStock(t.db, new Date('2026-09-09T12:00:00Z')); // 4 days
+        expect(back.stats).toMatchObject({ considered: 0, counted: 0 });
+        expect(await shelf()).toMatchObject({ usedBlack: 0 });
+        expect((await dARows()).map((m) => [m.since, m.leftAt])).toEqual([[new Date('2026-09-09T12:00:00Z'), null]]);
+        await alarm('dA', '2026-09-10 08:00:00', 'Toner Empty(BK)');
+        const later = await evaluateSiteStock(t.db, new Date('2026-09-11T00:00:00Z'));
+        expect(later.stats).toMatchObject({ counted: 1 });
+      });
+
+      it('A to B to A restarts A at the return and recounts nothing', async () => {
+        const [fam] = await t.db.select().from(cartridgeFamilies);
+        const [b] = await t.db.insert(siteStockShelves).values({ vantageCustomerId: 200, familyId: fam!.id, holdingBlack: 3, countingFrom: COUNTING_FROM }).returning();
+        await alarm('dA', '2026-09-05 08:00:00', 'Toner Empty(BK)');
+        await evaluateSiteStock(t.db, new Date('2026-09-06T00:00:00Z'));
+        await t.db.insert(vantageEquipment).values({ vantageId: 5, vantageCustomerId: 200, raw: {} });
+        await unlink('2026-09-07T00:00:00Z');
+        await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'dA', vantageEquipmentId: 5, method: 'serial' });
+        await evaluateSiteStock(t.db, new Date('2026-09-07T00:00:00Z'));
+        expect((await dARows()).map((m) => m.shelfId)).toEqual([b!.id]);
+        // back to customer 100
+        await t.db.update(deviceLinks).set({ unlinkedAt: new Date('2026-09-10T00:00:00Z') }).where(eq(deviceLinks.vantageEquipmentId, 5));
+        await t.db.update(deviceLinks).set({ unlinkedAt: null }).where(eq(deviceLinks.vantageEquipmentId, 1));
+        const back = await evaluateSiteStock(t.db, new Date('2026-09-10T00:00:00Z'));
+        expect(back.stats).toMatchObject({ considered: 0, counted: 0 });
+        expect((await dARows()).map((m) => [m.shelfId, m.since, m.leftAt])).toEqual([[shelfId, new Date('2026-09-10T00:00:00Z'), null]]);
+        const rows = await t.db.select().from(siteStockShelves).orderBy(siteStockShelves.id);
+        expect(rows.map((r) => r.usedBlack)).toEqual([1, 0]);
+      });
+
+      it('deletes a kept (left) row when the device turns up on another shelf', async () => {
+        const [fam] = await t.db.select().from(cartridgeFamilies);
+        const [b] = await t.db.insert(siteStockShelves).values({ vantageCustomerId: 200, familyId: fam!.id, holdingBlack: 3, countingFrom: COUNTING_FROM }).returning();
+        await t.db.update(deviceLinks).set({ unlinkedAt: new Date('2026-09-05T00:00:00Z') }).where(eq(deviceLinks.drmsEquipmentId, 'dA'));
+        await evaluateSiteStock(t.db, new Date('2026-09-05T12:00:00Z'));
+        expect((await dARows()).map((m) => m.leftAt !== null)).toEqual([true]);
+        await t.db.insert(vantageEquipment).values({ vantageId: 5, vantageCustomerId: 200, raw: {} });
+        await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'dA', vantageEquipmentId: 5, method: 'serial' });
+        await evaluateSiteStock(t.db, new Date('2026-09-06T12:00:00Z'));
+        expect((await dARows()).map((m) => m.shelfId)).toEqual([b!.id]);
+      });
+
+      it('deletes a stale departed row after the grace window, and only current members bound the alarm query', async () => {
+        await unlink('2026-09-05T00:00:00Z');
+        await evaluateSiteStock(t.db, new Date('2026-09-05T12:00:00Z'));
+        expect(await dARows()).toHaveLength(1);
+        await evaluateSiteStock(t.db, new Date('2026-09-08T12:00:00Z')); // 3 days: still kept
+        expect(await dARows()).toHaveLength(1);
+        await evaluateSiteStock(t.db, new Date('2026-09-08T12:00:01Z')); // just past grace
+        expect(await dARows()).toEqual([]);
+        // dB is untouched
+        expect((await t.db.select().from(siteStockMembers)).map((m) => m.drmsEquipmentId)).toEqual(['dB']);
+      });
     });
   });
 
@@ -289,7 +363,7 @@ describe('evaluateSiteStock', () => {
       const zero = { black: 0, cyan: 0, magenta: 0, yellow: 0, waste: 0 };
       const { shelfId: id } = await createShelf(t.db, { vantageCustomerId: 300, familyId, holding: { ...zero, black: 2 }, userId, now: CREATED });
       expect(await t.db.select().from(siteStockMembers).where(eq(siteStockMembers.shelfId, id))).toEqual([
-        { shelfId: id, drmsEquipmentId: 'dN', since: CREATED },
+        { shelfId: id, drmsEquipmentId: 'dN', since: CREATED, leftAt: null },
       ]);
       await alarm('dN', '2026-10-01 10:00:00', 'Toner Empty(BK)');
       const run = await evaluateSiteStock(t.db, FIRST_RUN);

@@ -527,6 +527,8 @@ export const siteStockMembers = pgTable(
       .notNull()
       .references(() => drmsEquipment.drmsId),
     since: ts('since').notNull(),
+    /** Set when the pair stopped being current (device on no shelf); cleared on return. */
+    leftAt: ts('left_at'),
   },
   (t) => [primaryKey({ columns: [t.shelfId, t.drmsEquipmentId] })],
 );

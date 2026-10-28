@@ -1,0 +1,1 @@
+ALTER TABLE "site_stock_members" ADD COLUMN "left_at" timestamp with time zone;

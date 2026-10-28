@@ -1,4 +1,4 @@
-import { REPLENISH_COLOURS, countUse, siteStockUse, topUpLines, type LevelPoint, type ReplenishColour, type ShelfConsumableCounts, type TonerColour } from '@mps/core';
+import { MEMBER_GRACE_DAYS, REPLENISH_COLOURS, countUse, siteStockUse, topUpLines, type LevelPoint, type ReplenishColour, type ShelfConsumableCounts, type TonerColour } from '@mps/core';
 import {
   cartridgeFamilies,
   counterSnapshots,
@@ -69,7 +69,6 @@ export async function evaluateSiteStock(
   const shelves = await db.select().from(siteStockShelves);
   stats.shelves = shelves.length;
   if (shelves.length === 0) return { covered, stats };
-  const shelfById = new Map(shelves.map((s) => [s.id, s]));
 
   const sd = shelfDevicesSubquery(db);
   const members = await db
@@ -77,21 +76,37 @@ export async function evaluateSiteStock(
     .from(sd)
     .innerJoin(cartridgeFamilies, eq(cartridgeFamilies.id, sd.familyId))
     .orderBy(asc(sd.drmsId));
+  const shelfById = new Map(shelves.map((s) => [s.id, s]));
 
   // Membership start: a device seen on a shelf for the first time joins it now (a new shelf's
-  // devices were already recorded at its counting_from). A recorded pair that is no longer current
-  // is kept, so a transient drop does not reset the start on return; it is deleted only when the
-  // device is now a current member of a different shelf (a real move: the new shelf starts afresh).
+  // devices were already recorded at its counting_from). A recorded pair that stops being current
+  // is kept with `left_at` set, so a transient drop does not reset the start on return. Back within
+  // MEMBER_GRACE_DAYS it keeps `since` (the absence's Empties count); after that it starts afresh
+  // at `now`. A departed pair is deleted when the device is a current member of a different shelf
+  // (a real move: the new shelf starts afresh) or once its absence outlasts the grace window.
   const memberKey = (shelfId: number, drmsId: string) => `${shelfId}:${drmsId}`;
+  const graceMs = MEMBER_GRACE_DAYS * 86_400_000;
   const current = new Set(members.map((m) => memberKey(m.shelfId, m.drmsId)));
   const currentShelfOf = new Map(members.map((m) => [m.drmsId, m.shelfId]));
   const recorded = await db.select().from(siteStockMembers);
+  const rowIs = (r: { shelfId: number; drmsEquipmentId: string }) => and(eq(siteStockMembers.shelfId, r.shelfId), eq(siteStockMembers.drmsEquipmentId, r.drmsEquipmentId));
   const since = new Map<string, Date>();
   for (const r of recorded) {
     const key = memberKey(r.shelfId, r.drmsEquipmentId);
-    if (current.has(key)) since.set(key, r.since);
-    else if (currentShelfOf.has(r.drmsEquipmentId)) {
-      await db.delete(siteStockMembers).where(and(eq(siteStockMembers.shelfId, r.shelfId), eq(siteStockMembers.drmsEquipmentId, r.drmsEquipmentId)));
+    if (current.has(key)) {
+      if (r.leftAt === null) since.set(key, r.since);
+      else {
+        const within = now.getTime() - r.leftAt.getTime() <= graceMs;
+        const start = within ? r.since : now;
+        await db.update(siteStockMembers).set({ since: start, leftAt: null }).where(rowIs(r));
+        since.set(key, start);
+      }
+    } else if (currentShelfOf.has(r.drmsEquipmentId)) {
+      await db.delete(siteStockMembers).where(rowIs(r));
+    } else if (r.leftAt === null) {
+      await db.update(siteStockMembers).set({ leftAt: now }).where(rowIs(r));
+    } else if (now.getTime() - r.leftAt.getTime() > graceMs) {
+      await db.delete(siteStockMembers).where(rowIs(r));
     }
   }
   const joined = members.filter((m) => !since.has(memberKey(m.shelfId, m.drmsId)));
@@ -106,7 +121,8 @@ export async function evaluateSiteStock(
   // `from`: alarms before the shelf's counting start, or before the device joined it, never count.
   const shelfOf = new Map<string, { shelfId: number; tracked: Set<ReplenishColour>; from: Date }>();
   for (const m of members) {
-    const shelf = shelfById.get(m.shelfId)!;
+    const shelf = shelfById.get(m.shelfId);
+    if (!shelf) continue; // created after the shelves were read; the next run picks it up
     const tracked = trackedColours(shelf, m.isColour);
     const joinedAt = since.get(memberKey(m.shelfId, m.drmsId))!;
     shelfOf.set(m.drmsId, { shelfId: m.shelfId, tracked, from: joinedAt > shelf.countingFrom ? joinedAt : shelf.countingFrom });

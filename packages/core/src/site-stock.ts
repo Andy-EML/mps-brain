@@ -14,6 +14,9 @@ export const MAX_HOLDING = 20;
 /** Upper bound on a shelf's `used_*` count when set by hand or imported (keeps it well inside an int). */
 export const MAX_USED = 999;
 
+/** A departed shelf member that returns within this many days keeps its membership start; later, it starts afresh. */
+export const MEMBER_GRACE_DAYS = 3;
+
 const DAY_MS = 86_400_000;
 
 /** A count per consumable — shelf holdings, or what has been used since the last top-up. */
