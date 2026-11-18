@@ -10,6 +10,7 @@ import {
   ShoppingCart,
   SlidersHorizontal,
   WifiOff,
+  Wrench,
 } from 'lucide-react';
 import { signOut } from '@/app/(app)/actions';
 import { NavLink } from '@/components/nav-link';
@@ -47,6 +48,7 @@ export function AppSidebar({
         <NavLink href="/devices" label="Devices" icon={<Printer />} />
         <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
         <NavLink href="/site-stock" label="Site stock" icon={<Boxes />} />
+        <NavLink href="/pm" label="PM due" icon={<Wrench />} />
         {/* "Needs reconnecting" truncated beside its badge; the page keeps the full name as its title. */}
         <NavLink
           href="/reconnect"

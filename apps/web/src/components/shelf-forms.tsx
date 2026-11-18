@@ -3,10 +3,11 @@
 import { useId, useState, useTransition } from 'react';
 import { useFormStatus } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { Loader2, Minus, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { Boxes, Loader2, Minus, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { MAX_HOLDING, MAX_USED, type ReplenishColour, type ShelfConsumableCounts } from '@mps/core';
 import type { VantageCustomerMatch } from '@mps/db/queries';
 import { cn } from 'cn';
+import { createDeviceShelfAction } from '@/app/(app)/devices/[id]/actions';
 import {
   correctCountsAction,
   createShelfAction,
@@ -14,12 +15,14 @@ import {
   searchShelfCustomersAction,
   updateHoldingsAction,
 } from '@/app/(app)/site-stock/actions';
+import { OriginFields, type Origin } from '@/components/hide-device';
 import { pillState, shelfColours } from '@/components/shelf';
 import { ConsumablePill } from '@/components/shelf-pills';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -255,6 +258,52 @@ export function NewShelfDialog({ families, error }: NewShelfDialogProps) {
             </div>
           </>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---- create from a device ----------------------------------------------------------------------
+
+export interface CreateDeviceShelfDialogProps extends Origin {
+  drmsId: string;
+  siteName: string;
+  familyName: string;
+}
+
+/**
+ * *Create toner shelf* on the device page: *+ New shelf* with the site and family already known
+ * from the device, so there is nothing to search for, only to confirm. The shelf opens next, to set
+ * what it holds. A refused create comes back on the device page, not in here: the likely reason is
+ * a shelf made meanwhile, and then this dialog is no longer on the page to show it.
+ */
+export function CreateDeviceShelfDialog({ drmsId, siteName, familyName, ...origin }: CreateDeviceShelfDialogProps) {
+  return (
+    <Dialog>
+      <DialogTrigger render={<Button variant="outline" size="sm" className="mt-3" />}>
+        <Boxes aria-hidden />
+        Create toner shelf
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <form action={createDeviceShelfAction} className="flex flex-col gap-4">
+          <DialogHeader>
+            <DialogTitle>Create a toner shelf?</DialogTitle>
+            <DialogDescription>
+              Every machine at this site in this cartridge family will draw from the shelf. You set what it holds on the
+              next page.
+            </DialogDescription>
+          </DialogHeader>
+          <input type="hidden" name="drmsId" value={drmsId} />
+          <OriginFields {...origin} />
+          <div className="rounded-lg bg-muted/60 px-3 py-2">
+            <span className="block truncate text-sm font-medium">{siteName}</span>
+            <span className="block truncate text-xs text-muted-foreground">{familyName}</span>
+          </div>
+          <DialogFooter>
+            <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+            <SubmitButton label="Create shelf" pendingLabel="Creating…" />
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

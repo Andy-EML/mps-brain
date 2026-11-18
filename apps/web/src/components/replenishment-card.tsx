@@ -1,9 +1,12 @@
 import Link from 'next/link';
 import type { ReplenishColour } from '@mps/core';
-import type { EffectiveSettings, QueueOrder, QueueProposal, SettingSource } from '@mps/db/queries';
+import type { DeviceShelfOffer, EffectiveSettings, QueueOrder, QueueProposal, SettingSource } from '@mps/db/queries';
+import { cn } from 'cn';
 import { updateDeviceSettingsAction } from '@/app/(app)/devices/[id]/actions';
+import type { Origin } from '@/components/hide-device';
 import {
   colourLabel,
+  orderHref,
   orderStatusLabel,
   orderStatusTone,
   proposalStatusLink,
@@ -13,6 +16,7 @@ import {
 import { ReviewForm } from '@/components/replenishment-queue';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
 import { coveredColoursText } from '@/components/shelf';
+import { CreateDeviceShelfDialog } from '@/components/shelf-forms';
 import { ToneBadge } from '@/components/tone-badge';
 import { formatDate } from '@/lib/format';
 
@@ -32,21 +36,23 @@ export interface ReplenishmentCardProps {
   decisionError?: string | null;
   /** The site stock shelf this device draws from, and the consumables it holds (none: no note). */
   siteStock?: { shelfId: number; covered: ReplenishColour[] } | null;
+  /** For a device on no shelf: whether one can be made from here. Null shows nothing. */
+  shelfOffer?: DeviceShelfOffer | null;
+  /** A sentence for `?shelfError=` from *Create toner shelf*. */
+  shelfError?: string | null;
+  /** Where the page was opened from, kept across a refused *Create toner shelf*. */
+  origin?: Origin;
 }
 
 const COLOURS = ['black', 'cyan', 'magenta', 'yellow'] as const;
-
-/** Where an order sits on `/orders`: the In progress tab until it has reached Vantage. */
-function orderHref(order: QueueOrder): string {
-  return order.status === 'submitted' ? '/orders?tab=ordered' : '/orders?tab=in-progress';
-}
 
 /**
  * The device page's *Replenishment* card: the effective threshold per cartridge and the two
  * flags, each with where it came from (default, customer setting, or this device — with who set
  * it and when), an Edit dialog for the device-level overrides, and this device's live proposals
  * and MPS orders. Pending proposals can be approved or rejected right here, with the queue's own
- * form; approved ones link to where they sit on `/orders`.
+ * form; approved ones link to where they sit on `/orders`. A linked device on no shelf is offered
+ * *Create toner shelf*, or told its model needs a cartridge family first.
  */
 export function ReplenishmentCard({
   drmsId,
@@ -58,6 +64,9 @@ export function ReplenishmentCard({
   error,
   decisionError,
   siteStock,
+  shelfOffer,
+  shelfError,
+  origin,
 }: ReplenishmentCardProps) {
   const pending = proposals.filter((p) => p.status === 'pending');
   const decided = proposals.filter((p) => p.status !== 'pending');
@@ -104,6 +113,30 @@ export function ReplenishmentCard({
             on a site stock shelf
           </Link>
           .
+        </p>
+      ) : null}
+
+      {shelfError ? (
+        <p role="alert" className="mt-3 rounded-lg bg-critical/5 px-3 py-2 text-[13px] text-critical">
+          {shelfError}
+        </p>
+      ) : null}
+
+      {shelfOffer?.kind === 'create' ? (
+        <CreateDeviceShelfDialog
+          drmsId={drmsId}
+          siteName={shelfOffer.siteName}
+          familyName={shelfOffer.familyName}
+          {...origin}
+        />
+      ) : null}
+
+      {shelfOffer?.kind === 'no_family' ? (
+        <p className="mt-3 text-[13px] text-muted-foreground">
+          This model isn’t in a cartridge family yet, so it can’t share a toner shelf.{' '}
+          <Link href="/settings/cartridge-families" className="text-brand hover:underline">
+            Cartridge families
+          </Link>
         </p>
       ) : null}
 
@@ -168,9 +201,11 @@ export function ReplenishmentCard({
         <div className="mt-4">
           <h3 className="text-[13px] font-medium">MPS orders</h3>
           <ul className="mt-1">
-            {orders.map((order) => (
-              <li key={order.id} className="border-b border-line/70 py-2 last:border-0">
-                <Link href={orderHref(order)} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] hover:underline">
+            {orders.map((order) => {
+              const href = orderHref(order.status);
+              const row = 'flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]';
+              const line = (
+                <>
                   <ToneBadge tone={orderStatusTone(order.status)} dot={false} className="px-2 py-0.5 text-[12px]">
                     {orderStatusLabel(order.status)}
                   </ToneBadge>
@@ -181,9 +216,21 @@ export function ReplenishmentCard({
                   ) : null}
                   <span className="font-mono text-[12px]">{order.vantageReference ?? '—'}</span>
                   <span className="ml-auto text-muted-foreground">{formatDate(order.submittedAt ?? order.createdAt)}</span>
-                </Link>
-              </li>
-            ))}
+                </>
+              );
+              return (
+                <li key={order.id} className="border-b border-line/70 py-2 last:border-0">
+                  {/* A cancelled order is on no tab of /orders, so it has nowhere to link to. */}
+                  {href ? (
+                    <Link href={href} className={cn(row, 'hover:underline')}>
+                      {line}
+                    </Link>
+                  ) : (
+                    <div className={row}>{line}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}

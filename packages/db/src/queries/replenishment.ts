@@ -51,8 +51,10 @@ export interface QueueProposal {
   note: string | null;
   /** The site-stock shelf a top-up proposal belongs to; null for ordinary proposals. */
   shelfId: number | null;
-  /** The MPS order this proposal went into (approved, ordered, failed); null before a decision. */
+  /** The MPS order this proposal went into (approved, ordered, or rejected from one); null before a decision. */
   orderId: number | null;
+  /** The reference of the Vantage sales order that closed this proposal (the watcher matched it); null if none did. */
+  salesOrderReference: string | null;
   /** The newest order of this colour on the device's current Vantage equipment, open or not. */
   lastOrder: (OrderRef & { open: boolean }) | null;
   openOrder: OrderRef | null;
@@ -117,9 +119,11 @@ function selectProposals(db: Db, where: SQL | undefined) {
       note: p.note,
       shelfId: p.shelfId,
       orderId: p.orderId,
+      salesOrderReference: vantageSalesOrders.reference,
     })
     .from(p)
     .leftJoin(decider, eq(decider.id, p.decidedBy))
+    .leftJoin(vantageSalesOrders, eq(vantageSalesOrders.vantageId, p.vantageSalesOrderId))
     .where(where);
 }
 
@@ -265,6 +269,7 @@ async function assemble(db: Db, proposals: ProposalRow[], orders: OrderRow[], no
       note: p.note,
       shelfId: p.shelfId,
       orderId: p.orderId,
+      salesOrderReference: p.salesOrderReference,
       lastOrder: state?.last ?? null,
       openOrder: state?.open ?? null,
     });
@@ -298,24 +303,13 @@ function byRecency(a: QueueDevice, b: QueueDevice): number {
   return latest(b) - latest(a) || a.drmsId.localeCompare(b.drmsId);
 }
 
-/**
- * A `failed` order still needs a person only while one of its proposals is still `failed`. Once
- * they have all been rejected (or retried) the row stays `failed` as history, but drops out of
- * *In progress* and `attentionOrders`.
- */
-function failedAwaitingDecision(): SQL {
-  const o = replenishmentOrders;
-  return sql`(${o.status} = 'failed' and exists (select 1 from ${replenishmentProposals} fp where fp.order_id = ${o.id} and fp.status = 'failed'))`;
-}
-
 const daysBefore = (now: Date, days: number) => new Date(now.getTime() - days * 86_400_000);
 
 /**
  * One tab of the toner-order queue, grouped by device.
  *
  * - *review*: devices with a `pending` proposal (only the pending ones shown);
- * - *in-progress*: orders `queued|submitting|uncertain`, or `failed` with a proposal still `failed`,
- *   and their proposals;
+ * - *in-progress*: orders `queued`, and their proposals. A `cancelled` order is on no tab; its proposals went to *review* or *rejected*;
  * - *ordered*: orders `submitted` in the last {@link ORDERED_TAB_DAYS} days;
  * - *rejected*: proposals `rejected|superseded` in the last {@link REJECTED_TAB_DAYS} days.
  *
@@ -339,7 +333,7 @@ export async function listReplenishmentQueue(
   } else {
     const where =
       args.tab === 'in-progress'
-        ? sql`(${inArray(o.status, ['queued', 'submitting', 'uncertain'])} or ${failedAwaitingDecision()})`
+        ? eq(o.status, 'queued')
         : and(eq(o.status, 'submitted'), gte(o.submittedAt, daysBefore(now, ORDERED_TAB_DAYS)));
     const orders = await selectOrders(db, where);
     const proposals = orders.length === 0 ? [] : await selectProposals(db, inArray(p.orderId, orders.map((x) => x.id)));
@@ -355,10 +349,8 @@ export interface ReplenishmentStats {
   awaitingReviewProposals: number;
   /** Distinct devices with an MPS order still open (see `openMpsOrders`). */
   onOrderDevices: number;
-  /** Our orders in flight: `queued|submitting|uncertain`, or `submitted` and not yet completed in Vantage. */
+  /** Our orders in flight: `queued`, or `submitted` and not yet completed in Vantage. Never `cancelled`. */
   openMpsOrders: number;
-  /** Orders a person has to look at: `uncertain`, plus `failed` ones with a proposal still `failed`. */
-  attentionOrders: number;
   /** Cartridges on orders that reached Vantage this calendar quarter (UTC). */
   cartridgesThisQuarter: number;
 }
@@ -375,12 +367,11 @@ export async function getReplenishmentStats(db: Db, now: Date = new Date()): Pro
 
   // A submitted order is open until the pulled Vantage order says it completed; one not pulled yet
   // (no row) is still open.
-  const open = sql`(${o.status} in ('queued', 'submitting', 'uncertain') or (${o.status} = 'submitted' and ${vantageSalesOrders.completedDate} is null))`;
+  const open = sql`(${o.status} = 'queued' or (${o.status} = 'submitted' and ${vantageSalesOrders.completedDate} is null))`;
   const [orders] = await db
     .select({
       onOrderDevices: sql<number>`count(distinct ${o.drmsEquipmentId}) filter (where ${open})`,
       openMpsOrders: sql<number>`count(*) filter (where ${open})`,
-      attentionOrders: sql<number>`count(*) filter (where ${o.status} = 'uncertain' or ${failedAwaitingDecision()})`,
     })
     .from(o)
     .leftJoin(vantageSalesOrders, eq(vantageSalesOrders.vantageId, o.vantageSalesOrderId));
@@ -399,7 +390,6 @@ export async function getReplenishmentStats(db: Db, now: Date = new Date()): Pro
     awaitingReviewProposals: Number(pending?.proposals ?? 0),
     onOrderDevices: Number(orders?.onOrderDevices ?? 0),
     openMpsOrders: Number(orders?.openMpsOrders ?? 0),
-    attentionOrders: Number(orders?.attentionOrders ?? 0),
     cartridgesThisQuarter: Number(cartridges?.n ?? 0),
   };
 }

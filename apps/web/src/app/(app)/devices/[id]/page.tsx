@@ -6,7 +6,12 @@ import {
   getCounterHistory,
   getDevice,
   getDeviceSettings,
+  getDeviceShelfOffer,
+  getDeviceYield,
+  getEquipmentPm,
   getHiddenDevice,
+  getPmSettings,
+  getYieldCheckForProposals,
   listAlerts,
   listDeviceAlarms,
   listDeviceOrders,
@@ -27,12 +32,15 @@ import { HideDeviceDialog, UnhideDeviceButton } from '@/components/hide-device';
 import { counterHistoryRows, groupAlarms, meterChannels, rawString } from '@/components/device-detail';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
+import { PmCard } from '@/components/pm-card';
 import { replenishmentErrorMessage } from '@/components/replenishment';
 import { ReplenishmentCard } from '@/components/replenishment-card';
 import { coveredColours } from '@/components/shelf';
 import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
+import { TonerYieldCard } from '@/components/toner-yield-card';
+import { YieldChecksProvider, type YieldChecks } from '@/components/yield-note';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { resolveDeviceOrigin } from '@/lib/device-origin';
@@ -40,6 +48,7 @@ import { formatDate, formatDateTime, formatNumber, formatRelative, pluralise } f
 import { hideErrorMessage } from '@/lib/hide-device';
 import { hrefWith } from '@/lib/href';
 import { settingsErrorMessage } from '@/lib/settings-form';
+import { shelfErrorMessage } from '@/lib/shelf-form';
 
 export const metadata = { title: 'Device · MPS Dashboard' };
 
@@ -182,6 +191,8 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const decisionError = decisionErrorCode ? replenishmentErrorMessage(decisionErrorCode) : null;
   const hideErrorCode = first(query.hideError);
   const hideError = hideErrorCode ? hideErrorMessage(hideErrorCode) : null;
+  const shelfErrorCode = first(query.shelfError);
+  const shelfError = shelfErrorCode ? shelfErrorMessage(shelfErrorCode) : null;
 
   const db = getDb();
   const detail = await getDevice(db, id);
@@ -206,6 +217,20 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   ]);
   // The shelf's holdings say which consumables it takes off normal replenishment.
   const [shelf] = shelfLink ? await listShelfSummariesByIds(db, [shelfLink.shelfId]) : [];
+  const shelfOffer = shelfLink ? null : await getDeviceShelfOffer(db, id);
+  // Toner yield: the card below, and the "Last ordered … · N pages since" line on each live proposal.
+  // Preventive maintenance hangs off the Vantage equipment too; an unlinked device has none.
+  const [tonerYield, yieldCheckMap, pm, pmSettings] = await Promise.all([
+    getDeviceYield(db, id),
+    getYieldCheckForProposals(
+      db,
+      replenishment.proposals.filter((p) => p.status === 'pending' || p.status === 'approved').map((p) => p.id),
+    ),
+    vantageEquipmentId == null ? Promise.resolve(null) : getEquipmentPm(db, vantageEquipmentId),
+    getPmSettings(db),
+  ]);
+  const yieldChecks: YieldChecks = Object.fromEntries(yieldCheckMap);
+  const orderRefs: Record<number, string | null> = Object.fromEntries(orders.orders.map((o) => [o.vantageId, o.reference]));
 
   const { device, record, link } = detail;
   const now = new Date();
@@ -422,12 +447,22 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
               isColour={device.isColour}
               emptyMessage={
                 vantageEquipmentId == null
-                  ? 'Orders are held against Vantage equipment — link this device to see what has been sent.'
+                  ? 'Orders are held against Vantage equipment — link this device to see what has been ordered.'
                   : undefined
               }
               className="border-t border-line"
             />
           </Card>
+
+          <TonerYieldCard data={tonerYield} orderRefs={orderRefs} />
+
+          <PmCard
+            linked={vantageEquipmentId != null}
+            hidden={Boolean(hidden)}
+            row={pm}
+            qualifyingMinutes={pmSettings.qualifyingMinutes}
+            timeCapMonths={pmSettings.timeCapMonths}
+          />
 
           <Card
             title="Counter history"
@@ -459,6 +494,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
 
         <div className="grid gap-4">
           {settings ? (
+            <YieldChecksProvider checks={yieldChecks}>
             <ReplenishmentCard
               drmsId={device.drmsId}
               isColour={device.isColour}
@@ -469,7 +505,11 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
               error={settingsError}
               decisionError={decisionError}
               siteStock={shelf ? { shelfId: shelf.id, covered: coveredColours(shelf.isColour, shelf.holding) } : null}
+              shelfOffer={shelfOffer}
+              shelfError={shelfError}
+              origin={{ from: fromParam, back: backParam }}
             />
+            </YieldChecksProvider>
           ) : null}
 
           <DetailCard

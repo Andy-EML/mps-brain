@@ -8,15 +8,17 @@ import type { QueueDevice, QueueOrder, QueueProposal, QueueTab } from '@mps/db/q
 import { cn } from 'cn';
 import {
   approveAction,
+  deleteOrderAction,
   loadReviewDetail,
+  markOrderedAction,
   rejectAction,
-  resolveOrderAction,
-  retryOrderAction,
+  returnToReviewAction,
 } from '@/app/(app)/orders/actions';
 import { CopyText } from '@/components/copy-text';
 import {
   colourLabel,
   compactProposalText,
+  orderProgress,
   orderStatusLabel,
   orderStatusTone,
   sourceLabel,
@@ -35,8 +37,20 @@ import {
 } from '@/components/review-row';
 import { ConsumablePill } from '@/components/shelf-pills';
 import { ToneBadge } from '@/components/tone-badge';
+import { ProposalYieldNote } from '@/components/yield-note';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { deviceHref } from '@/lib/device-origin';
 import { formatDate, formatDateTime, formatPercent, pluralise } from '@/lib/format';
 import { hrefWith } from '@/lib/href';
@@ -48,7 +62,7 @@ export interface ReplenishmentQueueProps {
 
 const EMPTY: Record<QueueTab, string> = {
   review: 'Nothing to review — every device is above its threshold or already on order.',
-  'in-progress': 'No orders in progress. Approved orders appear here until Vantage confirms them.',
+  'in-progress': 'No orders in progress. Approved orders wait here until you raise them in Vantage and the sales order turns up.',
   ordered: 'No orders have reached Vantage in the last 90 days.',
   rejected: 'Nothing has been rejected in the last 30 days.',
 };
@@ -411,6 +425,7 @@ function ProposalRow({ proposal: p, deviceName }: { proposal: QueueProposal; dev
             {context.text}
           </span>
         ) : null}
+        <ProposalYieldNote proposalId={p.id} className="mt-0.5" />
       </label>
       <Stepper id={p.id} value={quantity} onChange={setQuantity} label={colourLabel(p.colour)} />
     </div>
@@ -453,6 +468,7 @@ function CompactProposalRow({ proposal: p, deviceName }: { proposal: QueuePropos
               {context.text}
             </span>
           ) : null}
+          <ProposalYieldNote proposalId={p.id} className="mt-0.5" />
         </label>
       </div>
       <div className="mt-1.5 flex justify-end">
@@ -534,7 +550,7 @@ function ReviewButtons({ unlinked, compact = false }: { unlinked: boolean; compa
         name="note"
         maxLength={500}
         // Enter in a text field submits the form with its *first* button, which here is Approve:
-        // typing a rejection reason and pressing Enter would place an order. Swallow it instead.
+        // typing a rejection reason and pressing Enter would approve the selection. Swallow it instead.
         onKeyDown={(e) => {
           if (e.key === 'Enter') e.preventDefault();
         }}
@@ -573,72 +589,97 @@ function InProgressOrder({ device, order }: { device: QueueDevice; order: QueueO
   return (
     <div className="rounded-lg border border-line px-4 py-3">
       <OrderLine order={order} proposals={proposals} />
+      {proposals
+        .filter((p) => p.status === 'approved')
+        .map((p) => (
+          <ProposalYieldNote key={p.id} proposalId={p.id} prefix={colourLabel(p.colour)} className="mt-1" />
+        ))}
 
-      {order.status === 'failed' ? (
-        <div className="mt-2">
-          {order.error ? <p className="text-[13px] text-critical">{order.error}</p> : null}
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <form action={retryOrderAction}>
-              <input type="hidden" name="orderId" value={order.id} />
-              <input type="hidden" name="drmsId" value={device.drmsId} />
-              <PendingButton label="Retry" pendingLabel="Queueing…" />
-            </form>
-            <form action={rejectAction} className="flex flex-wrap items-center gap-2">
-              <input type="hidden" name="drmsId" value={device.drmsId} />
-              <input type="hidden" name="back" value="in-progress" />
-              {proposals
-                .filter((p) => p.status === 'failed')
-                .map((p) => (
-                  <input key={p.id} type="hidden" name="proposalId" value={p.id} />
-                ))}
-              <PendingButton label="Reject" pendingLabel="Rejecting…" variant="outline" />
-              <Input
-                name="note"
-                maxLength={500}
-                placeholder="Reason (optional)"
-                aria-label="Reason for rejecting"
-                className="h-8 w-56 max-w-full"
-              />
-            </form>
-          </div>
-        </div>
-      ) : null}
-
-      {order.status === 'uncertain' ? (
-        <div className="mt-2">
-          <p className="text-[13px] text-critical">
-            Vantage did not answer — check whether this order exists in Vantage.
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <form action={resolveOrderAction} className="flex flex-wrap items-center gap-2">
-              <input type="hidden" name="orderId" value={order.id} />
-              <input type="hidden" name="drmsId" value={device.drmsId} />
-              <input type="hidden" name="outcome" value="ordered" />
-              <Input
-                name="reference"
-                required
-                maxLength={100}
-                placeholder="Vantage order reference"
-                aria-label="Vantage order reference"
-                className="h-8 w-48 font-mono"
-              />
-              <PendingButton label="It exists" pendingLabel="Saving…" />
-            </form>
-            <form action={resolveOrderAction}>
-              <input type="hidden" name="orderId" value={order.id} />
-              <input type="hidden" name="drmsId" value={device.drmsId} />
-              <input type="hidden" name="outcome" value="failed" />
-              <PendingButton label="It does not" pendingLabel="Saving…" variant="outline" />
-            </form>
-          </div>
-        </div>
-      ) : null}
+      {order.status === 'queued' ? <QueuedOrderActions device={device} order={order} proposals={proposals} /> : null}
     </div>
+  );
+}
+
+/**
+ * What a person can do with a `queued` order that the watcher has not matched (all, or the rest of it):
+ * say it has been raised by hand in Vantage, take the approval back, or delete it. *Delete* opens a dialog first; the other two
+ * either need a reference typed or put everything back as it was, so one click is safe.
+ */
+function QueuedOrderActions({ device, order, proposals }: { device: QueueDevice; order: QueueOrder; proposals: QueueProposal[] }) {
+  const fields = <OrderFields device={device} order={order} />;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <form action={markOrderedAction} className="flex flex-wrap items-center gap-2">
+        {fields}
+        <Input
+          name="reference"
+          required
+          maxLength={100}
+          placeholder="Vantage order reference"
+          aria-label="Vantage order reference"
+          className="h-8 w-48 font-mono"
+        />
+        <PendingButton label="Mark ordered" pendingLabel="Saving…" />
+      </form>
+      <form action={returnToReviewAction}>
+        {fields}
+        <PendingButton label="Back to review" pendingLabel="Moving…" variant="outline" />
+      </form>
+      <DeleteOrderDialog device={device} order={order} proposals={proposals} />
+    </div>
+  );
+}
+
+/** The hidden fields every queued-order form posts; a refusal comes back to the In progress tab. */
+function OrderFields({ device, order }: { device: QueueDevice; order: QueueOrder }) {
+  return (
+    <>
+      <input type="hidden" name="orderId" value={order.id} />
+      <input type="hidden" name="drmsId" value={device.drmsId} />
+      <input type="hidden" name="back" value="in-progress" />
+    </>
+  );
+}
+
+/** *Delete…*, confirmed first, because it sits beside two buttons that do something else entirely. */
+function DeleteOrderDialog({ device, order, proposals }: { device: QueueDevice; order: QueueOrder; proposals: QueueProposal[] }) {
+  const reasonId = `delete-order-reason-${order.id}`;
+  // A colour rejected before a retry is still on the order, but this does not touch it.
+  const approved = proposals.filter((p) => p.status === 'approved');
+  const topUp = approved.some((p) => p.shelfId !== null);
+  return (
+    <Dialog>
+      <DialogTrigger render={<Button variant="ghost" className="text-destructive hover:text-destructive" />}>Delete…</DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <form action={deleteOrderAction} className="grid gap-4">
+          <DialogHeader>
+            <DialogTitle>Delete this order for {device.displayName}?</DialogTitle>
+            <DialogDescription>
+              {linesText(approved)} will move to the Rejected tab and will not be proposed again for a while.
+              {topUp ? ' The quantities go back on the site stock shelf.' : ''}{' '}
+              {proposals.some((p) => p.status === 'ordered') ? 'Colours already matched in Vantage stay ordered. ' : ''}
+              Nothing is sent to Vantage, so an order already raised there stays open.
+            </DialogDescription>
+          </DialogHeader>
+          <OrderFields device={device} order={order} />
+          <div className="grid gap-1.5">
+            <Label htmlFor={reasonId}>Reason (optional)</Label>
+            <Input id={reasonId} name="note" maxLength={500} />
+          </div>
+          <DialogFooter>
+            <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+            <PendingButton label="Delete order" pendingLabel="Deleting…" variant="destructive" />
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function OrderLine({ order, proposals }: { order: QueueOrder; proposals: QueueProposal[] }) {
   const by = order.createdBy ? ` by ${order.createdBy}` : '';
+  // A partly matched order: some colours are already in Vantage, the rest are still waiting for theirs.
+  const progress = orderProgress(proposals);
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
       <ToneBadge tone={orderStatusTone(order.status)}>{orderStatusLabel(order.status)}</ToneBadge>
@@ -648,6 +689,13 @@ function OrderLine({ order, proposals }: { order: QueueOrder; proposals: QueuePr
         Approved {formatDateTime(order.createdAt)}
         {by}
       </span>
+      {progress ? (
+        <p className="basis-full text-[13px] text-muted-foreground">
+          <span className="font-medium text-foreground">In Vantage:</span> {progress.inVantage}
+          {' · '}
+          <span className="font-medium text-foreground">Waiting:</span> {progress.waiting}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -659,7 +707,7 @@ function PendingButton({
 }: {
   label: string;
   pendingLabel: string;
-  variant?: 'default' | 'outline';
+  variant?: 'default' | 'outline' | 'destructive';
 }) {
   const { pending } = useFormStatus();
   return (

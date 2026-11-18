@@ -1,5 +1,15 @@
 # Handoff — end of 2026-09-24
 
+> **Update 2026-11-06: the app never places Vantage orders, and this is permanent.** Everything below
+> about live ordering (the `vantage-order-submit` job, plan Task 8, `VANTAGE_ORDERS_ENABLED`, the
+> `CreateConsumableOrder` call, "real Vantage sales orders") is superseded. That code is removed.
+> People raise toner orders by hand in Vantage. *Approve* on `/orders` records the intent, and the
+> `vantage-orders` job's watcher (`packages/db/src/queries/order-watch.ts`) moves the order on when
+> the sales order appears. Match rules: same equipment and colour; sales-order date on or after the
+> approval day minus 2; one line closes one proposal; site-stock top-ups match any device on the
+> shelf; a partly matched order stays *In progress*. *Mark ordered*, *Back to review* and *Delete*
+> remain for queued orders. Vantage is read-only.
+
 **Read this section first, then `CLAUDE.md`, then the current spec. The 2026-09-18 sections below
 (Foundation) are kept only for the detail; where they disagree, this one wins.**
 
@@ -9,9 +19,8 @@
 `feat/foundation-web`, HEAD `2b8a041`, not merged, not pushed). All 17 plan tasks (thresholds
 cascade, `auto_replenish`, bulk settings, operator review queue, DRMS auto-registration approval
 queue, "Needs reconnecting", usability fixes) are done, reviewed, and the final whole-branch review
-(Opus) is clean after one fix wave. **Live Vantage ordering (spec Task 1 step 7, plan Task 8, and
-Task 14 step 4) is deferred to the roadmap by the user's decision — nothing in this branch sends an
-order automatically.**
+(Opus) is clean after one fix wave. *(At the time, live Vantage ordering was deferred. It has since
+been dropped for good: see the 2026-11-06 note at the top.)*
 
 **Task 14 step 1 (full automated test pass) is done:** 716 tests / 56 files, typecheck, lint and
 the `@mps/web` production build are all clean. See `docs/TEST-REPORT-2026-09-24.md` — it also
@@ -31,18 +40,13 @@ the combined run, and summarises everything already ruled OK-TO-DEFER on the SDD
    signal to decrement site stock automatically; the design otherwise starts fresh — no decisions
    carried over from sub-project 3 beyond the toner-order data it already writes.
 
-### Before live ordering is ever enabled (whenever Task 8 is picked up)
+### Registration hazard (still true)
 
-- **Clear or confirm any stale `queued`/`approved` orders first.** Approvals made while
-  `VANTAGE_ORDERS_ENABLED` was off just sit in the queue; if the switch is flipped on with old rows
-  still sitting there, they would all send at once the moment the submit job first runs.
 - **Check the live `.env`'s `ORDERS_CRON`.** It may still say the old nightly schedule
-  (`40 2 * * *`) rather than the current hourly default (`.env.example` now has `20 * * * *`, from
-  Task 17) — confirm which one is actually deployed before relying on it.
+  (`40 2 * * *`) rather than the hourly default (`20 * * * *`); the watcher runs on that schedule.
 - **Never run a hand batch (`run-batch.sh`/`register.mjs`) while the app's registration sender has
   approved rows waiting**, and never approve anything in the app while a hand batch is running —
-  see section 3 below; this is the same one-DRMS-write-at-a-time hazard, and it applies to Vantage
-  ordering too once a submit job exists (only one sender should ever be live at a time).
+  see section 3 below; this is the one-DRMS-write-at-a-time hazard.
 
 ## Where we finished on 2026-09-18
 
@@ -90,8 +94,8 @@ Decisions already taken with the user — do not re-ask:
   colour, auto-replenish and alerts on/off, or reset to inherited. Confirmation step, one
   transaction, audited.
 - Proposals go to an **operator review queue** (approve / edit quantity / reject); only approved
-  ones become **real Vantage sales orders** (`POST /Equipment(Id)/CreateConsumableOrder`), badged
-  via `created_by_mps` and shown as open until completed in Vantage.
+  ones become queued orders. *(Superseded 2026-11-06: the app does not create Vantage orders. A person
+  raises each one by hand and the watcher tracks it; see the note at the top.)*
 - **Quantity: 1 of each low colour** by default; the operator can raise it.
 - **Duplicate suppression**: skip a colour while an open Vantage order exists for that device and
   colour, and for **14 days** after one completed.
@@ -127,7 +131,7 @@ Sub-project order after 3: **4 site stock → 2 meter sync → 5 notifications �
   nulls CMY inside `counterPivotSubquery` (which fixes needs-toner, urgency sort and fleet
   toner health at once) and drops the colour bars, tiles and meter column on mono devices.
 - **Order from here:** 9D → 9B full test pass → sub-project 3 (replenishment: threshold
-  cascade, `auto_replenish`, bulk settings, operator review queue, real Vantage orders) →
+  cascade, `auto_replenish`, bulk settings, operator review queue; Vantage orders raised by hand, see the 2026-11-06 note) →
   4 site stock → 2 meter sync → 5 notifications → **Task 10 deploy last**.
 - **The "Needs toner" tile must open the toner order queue**, not a filtered device list.
   That screen belongs to sub-project 3.
@@ -143,7 +147,7 @@ Sub-project order after 3: **4 site stock → 2 meter sync → 5 notifications �
 - **Dashboard runs locally:** `npm run dev -w @mps/web` → http://localhost:3000 (admin credentials from `.env`).
 - **Registration:** batch-04 (50 devices) started 2026-09-18 ~13:15. Totals before it: 47 registered, 1 failed/Deleted, 7 skipped.
 - **Open issue:** no device in the fleet has collected counters since 2026-09-17 12:01 UTC — including the 35 that were reporting before. So it isn't caused by our registrations. Re-check; escalate to KM if the older devices resume and ours don't.
-- **Decisions since yesterday:** sub-project 3 creates real Vantage orders (not provisional); order status comes from `CompletedDate`; colour of an order line comes from its `Details` text (MISC = machines another reseller supplies); no jams/service events on the dashboard; test thoroughly before deploying.
+- **Decisions since yesterday:** *(sub-project 3 creates real Vantage orders: superseded 2026-11-06, orders are raised by hand)*; order status comes from `CompletedDate`; colour of an order line comes from its `Details` text (MISC = machines another reseller supplies); no jams/service events on the dashboard; test thoroughly before deploying.
 
 Where to pick up tomorrow. Read this first, then `CLAUDE.md`, then the spec.
 

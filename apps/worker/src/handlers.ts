@@ -10,6 +10,9 @@ import { runRegistrationSubmit } from './jobs/drms-registration-submit';
 import { runDrmsSnapshot } from './jobs/drms-snapshot';
 import { runLinkRun } from './jobs/link-run';
 import { runReplenishEvaluate } from './jobs/replenish-evaluate';
+import { runVantageContracts } from './jobs/vantage-contracts';
+import { runVantageMeters } from './jobs/vantage-meters';
+import { runVantageWork } from './jobs/vantage-work';
 import { runVantageOrders } from './jobs/vantage-orders';
 import { runVantagePull } from './jobs/vantage-pull';
 import { withSyncRun } from './sync-runs';
@@ -64,6 +67,17 @@ export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobDa
       // queues the replenishment evaluation once the order lines it reads are up to date.
       await withSyncRun(db, QUEUES.vantageOrders, () => runVantageOrders({ db, vantage, now }));
       await queueReplenish();
+    },
+    [QUEUES.vantageMeters]: async () => {
+      // Read-only GETs of Vantage meter readings; nothing to queue afterwards (yield is computed on read).
+      await withSyncRun(db, QUEUES.vantageMeters, () => runVantageMeters({ db, vantage, now }));
+    },
+    [QUEUES.vantageContracts]: async () => {
+      // Read-only GETs; the PM due list reads the result on demand.
+      await withSyncRun(db, QUEUES.vantageContracts, () => runVantageContracts({ db, vantage, now }));
+    },
+    [QUEUES.vantageWork]: async () => {
+      await withSyncRun(db, QUEUES.vantageWork, () => runVantageWork({ db, vantage, now }));
     },
     [QUEUES.replenishEvaluate]: async () => {
       await withSyncRun(db, QUEUES.replenishEvaluate, () => runReplenishEvaluate({ db, now }));

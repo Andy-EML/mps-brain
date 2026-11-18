@@ -1,5 +1,7 @@
 # MPS Brain — Sub-project 3: Replenishment
 
+> **Note 2026-11-06:** the app never places Vantage orders (decided; the `CreateConsumableOrder` code, the `vantage-order-submit` job and the `VANTAGE_ORDERS_ENABLED` kill switch are gone). People raise orders by hand and the `vantage-orders` watcher (`packages/db/src/queries/order-watch.ts`) tracks them. Read the ordering parts of this document as history. See `CLAUDE.md` and `docs/HANDOFF.md`.
+
 > Status: drafted 2026-09-21 from decisions already agreed with the user (spec
 > `2026-09-17-mps-foundation-design.md` → "Replenishment settings", "Bulk settings", "Needs toner
 > tile destination"; `docs/HANDOFF.md` → "Next: sub-project 3"). Choices marked **(default)** were

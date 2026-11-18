@@ -5,7 +5,7 @@ import { auditLog, deviceLinks, drmsEquipment, replenishmentSettings, users, van
 
 export type SettingSource = 'device' | 'customer' | 'default';
 
-export type SettingsErrorCode = 'invalid_threshold' | 'empty_patch' | 'default_null' | 'no_devices';
+export type SettingsErrorCode = 'invalid_threshold' | 'empty_patch' | 'default_null' | 'no_devices' | 'invalid_pm_setting' | 'invalid_pm_action';
 
 /** Anything an operator can get wrong from the UI; always safe to show them. */
 export class SettingsError extends Error {

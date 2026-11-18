@@ -15,6 +15,7 @@ import {
   counterPivotSubquery,
   effectiveSettingsSubquery,
   getOrderStates,
+  londonDayAsUtc,
   notHiddenDevice,
   supersedeHiddenProposals,
   type ColourOrderState,
@@ -37,12 +38,6 @@ export function orderedInVantage(state: ColourOrderState, proposalCreatedAt: Dat
   }
   if (state.lastCompletedAt && state.lastCompletedAt > proposalCreatedAt) return state.lastCompletedReference ?? 'no reference';
   return null;
-}
-
-function londonDayAsUtc(at: Date): Date {
-  // en-CA formats as YYYY-MM-DD.
-  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
-  return new Date(`${day}T00:00:00Z`);
 }
 
 export interface ReplenishEvaluateDeps {

@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 import type { ReplenishColour } from '@mps/core';
-import type { QueueProposal, ReviewDeviceDetail, ReviewOrder, ReviewTonerColour } from '@mps/db/queries';
+import type { QueueProposal, ReviewDeviceDetail, ReviewMeter, ReviewOrder, ReviewTonerColour } from '@mps/db/queries';
 import { cn } from 'cn';
 import { colourLabel } from '@/components/replenishment';
 import { pagesSinceText, reviewOrderLines } from '@/components/review-row';
@@ -27,14 +27,16 @@ const TONER_COLOURS: readonly ReviewTonerColour[] = ['black', 'cyan', 'magenta',
 
 const SHORT: Record<ReplenishColour, string> = { black: 'Black', cyan: 'Cyan', magenta: 'Magenta', yellow: 'Yellow', waste: 'Waste' };
 
+const METER_LABEL: Record<ReviewMeter['key'], string> = { black: 'Black', colour: 'Colour', scan: 'Scan' };
+
 export type DetailState =
   | { status: 'loading' }
   | { status: 'error' }
   | { status: 'ready'; data: ReviewDeviceDetail | null };
 
 /**
- * Everything below the proposal lines in an open Review row: toner levels, recent sales orders,
- * recent consumable alarms and pages printed since each proposed colour last went out. Loaded by
+ * Everything below the proposal lines in an open Review row: toner levels, meters, recent sales
+ * orders, recent consumable alarms and pages printed since each proposed colour last went out. Loaded by
  * the row on first open (`loadReviewDetail`) and kept for the life of the page.
  *
  * The device lists open the same panel under a device row. They have no proposals, so they leave
@@ -96,27 +98,41 @@ export function ReviewDetailPanel({
         </p>
       </Section>
 
-      <Section title="Pages since last order">
-        {proposed.length === 0 ? (
-          <Empty>Only waste is proposed.</Empty>
-        ) : (
-          <ul className="grid gap-1.5">
-            {proposed.map((c) => {
-              const ps = d.pagesSince[c];
-              const warn = ps?.kind === 'meter-reset' || ps?.kind === 'no-reading';
-              return (
-                <li key={c} className="flex items-center gap-2 text-[13px]">
-                  <Swatch colour={c} />
-                  <span className="w-16 shrink-0">{SHORT[c]}</span>
-                  <span className={cn('tabular-nums', warn ? 'text-warn' : 'text-muted-foreground')}>
-                    {ps ? pagesSinceText(ps) : '—'}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Section>
+      {/* Stacked so Recent sales orders and DRMS alarms still start level with each other. */}
+      <div className="grid min-w-0 content-start gap-y-5">
+        <Section title="Meters">
+          <dl className="grid grid-cols-3 gap-3">
+            {d.meters.map((m) => (
+              <div key={m.key} className="min-w-0">
+                <dt className="text-[11px] text-muted-foreground">{METER_LABEL[m.key]}</dt>
+                <dd className="truncate text-[15px] font-medium tabular-nums">{formatNumber(m.value)}</dd>
+              </div>
+            ))}
+          </dl>
+        </Section>
+
+        <Section title="Pages since last order">
+          {proposed.length === 0 ? (
+            <Empty>Only waste is proposed.</Empty>
+          ) : (
+            <ul className="grid gap-1.5">
+              {proposed.map((c) => {
+                const ps = d.pagesSince[c];
+                const warn = ps?.kind === 'meter-reset' || ps?.kind === 'no-reading';
+                return (
+                  <li key={c} className="flex items-center gap-2 text-[13px]">
+                    <Swatch colour={c} />
+                    <span className="w-16 shrink-0">{SHORT[c]}</span>
+                    <span className={cn('tabular-nums', warn ? 'text-warn' : 'text-muted-foreground')}>
+                      {ps ? pagesSinceText(ps) : '—'}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Section>
+      </div>
 
       <Section title="Recent sales orders">
         {d.orders.length === 0 ? (

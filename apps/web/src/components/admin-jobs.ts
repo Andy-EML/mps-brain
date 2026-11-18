@@ -193,10 +193,34 @@ export const JOB_CARDS: readonly JobCard[] = [
     queue: QUEUES.vantageOrders,
     title: 'Vantage sales orders',
     description:
-      'Fetches sales orders and their lines from Vantage, so the device page can show what consumables have already gone out. Read-only — it never raises an order.',
+      'Fetches sales orders and their lines from Vantage, so the device page can show what consumables have already gone out, then moves approved toner orders on when their sales order has appeared. Read-only — it never raises an order.',
     // Only shown if the worker has never registered this schedule (see scheduleLabel); this text
     // is the compiled-in ORDERS_CRON default (env.ts), not a promise of what a live deploy runs.
     schedule: 'Hourly, at 20 past (worker default; ORDERS_CRON overrides it)',
+    external: true,
+  },
+  {
+    queue: QUEUES.vantageMeters,
+    title: 'Vantage meter readings',
+    description:
+      'Fetches the last 12 months of meter readings from Vantage (first run backfills, later runs take what changed). They fill gaps in the DRMS counter history that the toner-yield figures use. Read-only.',
+    schedule: 'Daily at 02:45 (worker default; METERS_CRON overrides it)',
+    external: true,
+  },
+  {
+    queue: QUEUES.vantageContracts,
+    title: 'Vantage contracts',
+    description:
+      'Fetches which contracts each machine is on and whether they are active, so the PM due list only counts machines under an active contract. Replaces the previous copy every run. Read-only.',
+    schedule: 'Daily at 02:55 (worker default; CONTRACTS_CRON overrides it)',
+    external: true,
+  },
+  {
+    queue: QUEUES.vantageWork,
+    title: 'Vantage work visits',
+    description:
+      'Fetches the last 3 years of work visits from Vantage (first run backfills, later runs take what changed), so the PM due list can see when each machine was last serviced or booked. Read-only.',
+    schedule: 'Daily at 03:05 (worker default; WORK_CRON overrides it)',
     external: true,
   },
   {
@@ -239,6 +263,9 @@ export const RUN_ALL_QUEUES: readonly QueueName[] = [
   QUEUES.drmsSnapshot,
   QUEUES.drmsAlarms,
   QUEUES.vantageOrders,
+  QUEUES.vantageMeters,
+  QUEUES.vantageContracts,
+  QUEUES.vantageWork,
   QUEUES.drmsRegistrationScan,
 ];
 

@@ -14,6 +14,8 @@ export interface CopyTextProps {
    * serial that is the link to the device page keeps being that link.
    */
   iconOnly?: boolean;
+  /** Overrides the accessible name (default `Copy {label} {text}`). */
+  ariaLabel?: string;
   className?: string;
 }
 
@@ -24,7 +26,7 @@ export interface CopyTextProps {
  * `navigator.clipboard` only exists on a secure origin, and the dashboard may be opened over plain
  * http on the office network, so a hidden-textarea `execCommand('copy')` covers that case.
  */
-export function CopyText({ text, label = 'serial', iconOnly, className }: CopyTextProps) {
+export function CopyText({ text, label = 'serial', iconOnly, ariaLabel, className }: CopyTextProps) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -45,7 +47,7 @@ export function CopyText({ text, label = 'serial', iconOnly, className }: CopyTe
       <button
         type="button"
         onClick={copy}
-        aria-label={`Copy ${label} ${text}`}
+        aria-label={ariaLabel ?? `Copy ${label} ${text}`}
         title="Copy to clipboard"
         className={cn(
           'inline-flex items-center gap-1 rounded-sm font-mono text-inherit transition-colors hover:text-foreground',

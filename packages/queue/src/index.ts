@@ -7,6 +7,12 @@ export const QUEUES = {
   drmsSnapshot: 'drms-snapshot',
   drmsAlarms: 'drms-alarms',
   vantageOrders: 'vantage-orders',
+  /** Nightly: Vantage meter readings for the last 12 months (feeds the toner-yield meter series). */
+  vantageMeters: 'vantage-meters',
+  /** Nightly: which contracts each Vantage machine is on, and whether they are active (PM due). */
+  vantageContracts: 'vantage-contracts',
+  /** Nightly: Vantage work visits for the last 12 months (PM due). */
+  vantageWork: 'vantage-work',
   replenishEvaluate: 'replenish-evaluate',
   /** Nightly: checks Discovered devices and fills the DRMS registration approval queue. */
   drmsRegistrationScan: 'drms-registration-scan',

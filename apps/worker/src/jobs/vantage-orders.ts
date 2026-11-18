@@ -13,7 +13,7 @@ import {
   type OrderLineContext,
 } from '@mps/core';
 import { excluded, vantageSalesOrderLines, vantageSalesOrders, type Db } from '@mps/db';
-import { getDeviceIsColourByVantageEquipmentIds } from '@mps/db/queries';
+import { getDeviceIsColourByVantageEquipmentIds, matchSalesOrders, type OrderWatchResult } from '@mps/db/queries';
 import { QUEUES } from '@mps/queue';
 import type { SalesOrderListOptions, VantageClient, VantageRecord } from '@mps/vantage';
 import { inArray } from 'drizzle-orm';
@@ -100,11 +100,19 @@ export interface VantageOrdersDeps {
   db: Db;
   vantage: Pick<VantageClient, 'listSalesOrders'>;
   now?: () => Date;
+  /** The watcher that runs after a successful pull; a seam for tests. */
+  match?: (db: Db, now: Date) => Promise<OrderWatchResult>;
 }
 
 /**
  * Pulls Vantage sales orders and their lines, read-only, so the device page can show what
  * consumables have already gone out. Nothing here creates or edits anything in Vantage.
+ *
+ * A successful pull ends by running the order watcher (`matchSalesOrders`), which moves approved
+ * toner orders out of *In progress* once their sales order has appeared. It runs on its own
+ * transaction after the pull is committed, and a failure in it is recorded in the stats rather than
+ * thrown: the pull stays a success (so the next one starts from it), and the watcher simply tries again
+ * after the next pull.
  */
 export async function runVantageOrders(deps: VantageOrdersDeps): Promise<JobResult> {
   const { db, vantage } = deps;
@@ -186,8 +194,17 @@ export async function runVantageOrders(deps: VantageOrdersDeps): Promise<JobResu
     });
   }
 
-  return {
-    status: 'success',
-    stats: { orders: orders.length, lines: lineCount, full: full ? 1 : 0 },
-  };
+  const stats: Record<string, number | boolean> = { orders: orders.length, lines: lineCount, full: full ? 1 : 0 };
+  try {
+    const watched = await (deps.match ?? matchSalesOrders)(db, (deps.now ?? (() => new Date()))());
+    Object.assign(stats, {
+      watchLinked: watched.linked,
+      watchMatched: watched.matched,
+      watchCompleted: watched.completed,
+      watchTopUpsSuperseded: watched.topUpsSuperseded,
+    });
+    return { status: 'success', stats };
+  } catch (err) {
+    return { status: 'success', stats: { ...stats, watcherFailed: true }, errorSample: `order watcher failed: ${errorMessage(err)}` };
+  }
 }

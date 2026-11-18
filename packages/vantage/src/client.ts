@@ -1,4 +1,4 @@
-import { AuthError, HttpError, ParseError, UncertainWriteError, errorMessage, getField, getNumber, getString, parseApiDate } from '@mps/core';
+import { AuthError, HttpError, ParseError, getField, getNumber, getString, parseApiDate } from '@mps/core';
 
 export interface VantageClientOptions {
   baseUrl: string;
@@ -32,34 +32,37 @@ export interface SalesOrderListOptions extends ListOptions {
  */
 const SALES_ORDER_EXPAND = 'Lines($expand=Item($select=Id,PartNumber,Description)),Type($select=Id,Name)';
 
+export interface MeterReadingListOptions {
+  /** Floor on `ReadingDateTime`: the app only ever keeps the last 12 months. */
+  readingFrom: Date;
+  /** Ceiling on `ReadingDateTime`; some entered readings carry a date in the future (typos). */
+  readingTo?: Date;
+  /** Only readings created or modified after this (incremental sync). */
+  since?: Date;
+}
+
 /** Contract fields the DRMS registration rules read (`autoRegisterEligibility` in @mps/core). */
 const CONTRACT_SELECT = '$select=Id,Reference,StatusId,ExpiryDate,IsEvergreen,IsOnHold,CancellationDate,DeletedDate';
 /**
  * Customer plus every contract reachable from the equipment, through its meters' charges and its
  * contract charges — the exact expand the hand-run batch selector used on 2026-09-21.
  */
-const REGISTRATION_EXPAND =
-  `Customer($select=Id,Reference,Name),Meters($select=TypeId;$expand=Charge($select=Id;$expand=Contract(${CONTRACT_SELECT})))` +
+const CONTRACTS_EXPAND =
+  `Meters($select=TypeId;$expand=Charge($select=Id;$expand=Contract(${CONTRACT_SELECT})))` +
   `,ContractCharges($select=Id;$expand=Contract(${CONTRACT_SELECT}))`;
+const REGISTRATION_EXPAND = `Customer($select=Id,Reference,Name),${CONTRACTS_EXPAND}`;
 
-/** Vantage consumable ENUM: 1 Black, 2 Cyan, 3 Magenta, 4 Yellow, 5 Waste, 6 Staples. */
-export type ConsumableType = 1 | 2 | 3 | 4 | 5 | 6;
+const WORK_UNIT_EXPAND =
+  'Work($select=Id,Reference,EquipmentId,CustomerId,CompletedDate,DeletedDate),' +
+  'Category($select=Id,Name;$expand=Type($select=Id,Name)),' +
+  'WorkItems($select=Id,ItemId,Quantity,Status;$expand=Item($select=PartNumber,Description))';
 
-export interface ConsumableComponent {
-  Type: ConsumableType;
-  /** Omitted: Vantage picks the first compatible consumable of that type. */
-  RequestedPartNumber?: string | null;
-  /** Null/omitted means 1. */
-  RequestedQuantity?: number | null;
+export interface WorkUnitListOptions {
+  /** Floor on the unit's work start, logged or scheduled start date. */
+  from: Date;
+  /** Only units modified after this (incremental sync). */
+  since?: Date;
 }
-
-export interface ConsumableOrderResponse {
-  status: number;
-  body: unknown;
-}
-
-/** From the Vantage docs; not yet confirmed live (plan Task 1 Step 7 records the probe result). Change here only if the probe says otherwise. */
-export const CONSUMABLE_ORDER_PATH = (equipmentId: number) => `Equipment(${equipmentId})/CreateConsumableOrder`;
 
 /**
  * `SalesOrder.OrderDate` is an `Edm.Date`, not an `Edm.DateTimeOffset`: comparing it to a full
@@ -148,49 +151,9 @@ export function createVantageClient(opts: VantageClientOptions) {
     return parseJson(text, `GET ${path}`, res.status);
   }
 
-  /**
-   * The only write this project makes to Vantage. Deliberately not retried: a POST that timed out
-   * or got a 5xx may already have created an order, so it surfaces as `UncertainWriteError` for a
-   * person to check. A 401 is the one exception — Vantage rejected the token before doing anything,
-   * so re-logging in and sending again cannot duplicate.
-   */
-  async function post(path: string, payload: unknown): Promise<ConsumableOrderResponse> {
-    const send = async () => {
-      try {
-        return await doFetch(`${base}/${path}`, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${token}`,
-            'api-version': opts.apiVersion,
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-      } catch (err) {
-        throw new UncertainWriteError(`Vantage POST ${path}: no response (${errorMessage(err)})`, null);
-      }
-    };
-    await ensureToken();
-    let res = await send();
-    if (res.status === 401) {
-      token = null;
-      await ensureToken();
-      res = await send();
-      if (res.status === 401) throw new AuthError(`Vantage POST ${path} unauthorised after re-login`, 401);
-    }
-    const text = await res.text();
-    if (res.status >= 500) {
-      throw new UncertainWriteError(`Vantage POST ${path} failed (${res.status})`, res.status, text.slice(0, 500));
-    }
-    if (!res.ok) throw new HttpError(`Vantage POST ${path} failed (${res.status})`, res.status, text.slice(0, 500));
-    return { status: res.status, body: parseJson(text, `POST ${path}`, res.status) };
-  }
-
   async function odataList(
     entity: string,
-    o: { filter?: string[]; expand?: string; includeDeleted?: boolean } = {},
+    o: { filter?: string[]; select?: string; expand?: string; includeDeleted?: boolean } = {},
   ): Promise<VantageRecord[]> {
     const filters = [...(o.filter ?? [])];
     if (!o.includeDeleted) filters.unshift('deleteddate eq null');
@@ -205,6 +168,7 @@ export function createVantageClient(opts: VantageClientOptions) {
       const pageFilters = lastId === null ? filters : [...filters, `Id gt ${lastId}`];
       const params: Record<string, string | number> = { $top: pageSize, $orderby: 'Id' };
       if (pageFilters.length > 0) params.$filter = pageFilters.map((f) => `(${f})`).join(' and ');
+      if (o.select) params.$select = o.select;
       if (o.expand) params.$expand = o.expand;
       const body = await get(entity, params);
       pagesFetched++;
@@ -245,6 +209,34 @@ export function createVantageClient(opts: VantageClientOptions) {
         expand: SALES_ORDER_EXPAND,
       }),
     /**
+     * Read-only. `MeterReading` has no `DeletedDate` (a 400 if filtered on), so this lists it with
+     * `includeDeleted` set purely to skip the client's automatic `deleteddate eq null`.
+     */
+    listMeterReadings: (o: MeterReadingListOptions) => {
+      const filter = [`readingdatetime ge ${o.readingFrom.toISOString()}`];
+      if (o.readingTo) filter.push(`readingdatetime le ${o.readingTo.toISOString()}`);
+      if (o.since) {
+        const since = o.since.toISOString();
+        filter.push(`modifieddate gt ${since} or createddate gt ${since}`);
+      }
+      return odataList('MeterReading', { filter, includeDeleted: true });
+    },
+    /** Read-only: every live Equipment with just the contracts reachable from it (PM due contract flag). */
+    listEquipmentContracts: () => odataList('Equipment', { select: 'Id', expand: CONTRACTS_EXPAND }),
+    /**
+     * Read-only. `WorkUnit` has no `DeletedDate` (a 400 if filtered on), so it is listed with
+     * `includeDeleted` to skip the automatic `deleteddate eq null`; callers drop units whose
+     * `Work.DeletedDate` is set.
+     */
+    listWorkUnits: (o: WorkUnitListOptions) => {
+      const from = o.from.toISOString();
+      const filter = [`workstartdate ge ${from} or loggeddate ge ${from} or scheduledstartdate ge ${from}`];
+      if (o.since) filter.push(`modifieddate gt ${o.since.toISOString()}`);
+      return odataList('WorkUnit', { filter, includeDeleted: true, expand: WORK_UNIT_EXPAND });
+    },
+    /** Read-only: the dozen `MeterType`s with their class (Mono/Colour), deleted ones included. */
+    listMeterTypes: () => odataList('MeterType', { includeDeleted: true, expand: 'Class($select=Id,Name)' }),
+    /**
      * Read-only: the live Vantage equipment with this serial (not deleted), with its customer and
      * contracts, for the DRMS registration scan. Not paged — a serial matches a handful at most.
      */
@@ -258,9 +250,6 @@ export function createVantageClient(opts: VantageClientOptions) {
       if (!Array.isArray(items)) throw new ParseError('Vantage Equipment response has no value array', 200);
       return items as VantageRecord[];
     },
-    /** Raises a real consumable sales order. Only `vantage-order-submit` may call this. */
-    createConsumableOrder: (equipmentId: number, components: ConsumableComponent[]) =>
-      post(CONSUMABLE_ORDER_PATH(equipmentId), { components }),
   };
 }
 

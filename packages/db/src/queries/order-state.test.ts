@@ -61,12 +61,12 @@ describe('getOrderStates', () => {
     expect(s.waste.lastCompletedAt).toEqual(d('2026-09-21T08:00:00Z'));
   });
 
-  it('stops counting an unpulled submitted order after the suppression window, but never an uncertain one', async () => {
+  it('stops counting an unpulled submitted order after the suppression window, but never a queued one', async () => {
     const [a] = await t.db.insert(replenishmentOrders).values({ drmsEquipmentId: 'dev', vantageEquipmentId: 100, status: 'submitted', request: {}, submittedAt: d('2026-09-01') }).returning();
-    const [b] = await t.db.insert(replenishmentOrders).values({ drmsEquipmentId: 'dev', vantageEquipmentId: 100, status: 'uncertain', request: {}, submittedAt: d('2026-09-01') }).returning();
+    const [b] = await t.db.insert(replenishmentOrders).values({ drmsEquipmentId: 'dev', vantageEquipmentId: 100, status: 'queued', request: {}, createdAt: d('2026-09-01') }).returning();
     await t.db.insert(replenishmentProposals).values([
       { drmsEquipmentId: 'dev', colour: 'black', trigger: 'threshold', status: 'ordered', orderId: a!.id },
-      { drmsEquipmentId: 'dev', colour: 'cyan', trigger: 'threshold', status: 'ordered', orderId: b!.id },
+      { drmsEquipmentId: 'dev', colour: 'cyan', trigger: 'threshold', status: 'approved', orderId: b!.id },
     ]);
     const s = (await getOrderStates(t.db, [100], NOW)).get(100)!;
     expect(s.black.open).toBeNull();

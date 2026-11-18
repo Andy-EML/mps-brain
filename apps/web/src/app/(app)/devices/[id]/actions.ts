@@ -4,7 +4,16 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { eq } from 'drizzle-orm';
 import { drmsEquipment } from '@mps/db';
-import { HideError, hideDevices, SettingsError, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
+import {
+  HideError,
+  SettingsError,
+  SiteStockError,
+  createShelf,
+  getDeviceShelfOffer,
+  hideDevices,
+  unhideDevices,
+  updateDeviceSettings,
+} from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { hrefWith } from '@/lib/href';
@@ -80,6 +89,39 @@ export async function unhideDeviceAction(formData: FormData): Promise<void> {
   }
   revalidatePath('/', 'layout');
   redirect(hrefWith(page.path, page.params));
+}
+
+/**
+ * *Create toner shelf* on the Replenishment card. The site and family are read from the device
+ * again, not the form, so a stale page or a crafted post cannot make a shelf this device would not
+ * be on. Opens the new shelf to set its holdings, as *+ New shelf* does. A refusal (such as a shelf
+ * made meanwhile) comes back to this device, not the site stock list, as `?shelfError=<code>`:
+ * plain `?error=` here belongs to the card's toner decisions.
+ */
+export async function createDeviceShelfAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const drmsId = String(formData.get('drmsId') ?? '');
+  if (!drmsId) redirect('/devices');
+  const page = devicePage(drmsId, formData);
+  let shelfId: number;
+  try {
+    const db = getDb();
+    const offer = await getDeviceShelfOffer(db, drmsId);
+    if (offer?.kind !== 'create') throw new SiteStockError('This device cannot have a shelf.', 'not_found');
+    ({ shelfId } = await createShelf(db, {
+      vantageCustomerId: offer.vantageCustomerId,
+      familyId: offer.familyId,
+      holding: {},
+      userId: user.userId,
+    }));
+  } catch (err) {
+    if (err instanceof SiteStockError) redirect(hrefWith(page.path, { ...page.params, shelfError: err.code }));
+    throw err;
+  }
+  // The site stock pages, and the device pages that show a shelf badge.
+  revalidatePath('/site-stock', 'layout');
+  revalidatePath('/devices', 'layout');
+  redirect(`/site-stock/${shelfId}`);
 }
 
 /**

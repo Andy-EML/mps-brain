@@ -12,6 +12,11 @@ export * from './hidden-devices';
 export * from './issue-actions';
 export * from './issues';
 export * from './order-state';
+export * from './meter-history';
+export * from './order-watch';
+export * from './pm-due';
+export * from './pm-actions';
+export * from './pm-queries';
 export * from './reconnect';
 export * from './registration-actions';
 export * from './registrations';
@@ -21,6 +26,7 @@ export * from './review-detail';
 export * from './settings';
 export * from './site-stock';
 export * from './site-stock-actions';
+export * from './toner-yield';
 // The counter names the UI has to ask `getCounterHistory` for, plus the latest-toner-and-meter
 // pivot the replenish-evaluate job reads directly. The rest of `./shared` is query-building
 // plumbing and stays internal.

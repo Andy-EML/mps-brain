@@ -83,6 +83,8 @@ const SETTINGS_ERRORS: Record<SettingsErrorCode | 'too_many', string> = {
   empty_patch: 'Nothing was changed — pick Inherit or a new value for at least one setting.',
   default_null: 'The default settings cannot inherit from anything — give each one a value.',
   no_devices: 'No devices were selected, so nothing was changed.',
+  invalid_pm_setting: 'A PM setting is out of range — use whole numbers of at least 1, and a due-soon percentage from 50 to 100.',
+  invalid_pm_action: 'That PM action is not valid — pick a snooze of 30, 90 or 180 days, and add a note when the reason is Other.',
   too_many: 'That is too many devices to pick one by one — use “Select all matching” instead.',
 };
 

@@ -1,15 +1,15 @@
 import Link from 'next/link';
-import { AlertTriangle, PowerOff } from 'lucide-react';
-import { getAppState } from '@mps/db';
-import { getReplenishmentStats, listReplenishmentQueue, type QueueTab } from '@mps/db/queries';
+import { Info } from 'lucide-react';
+import { getReplenishmentStats, getYieldCheckForProposals, listReplenishmentQueue, type QueueTab } from '@mps/db/queries';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
 import { replenishmentErrorMessage } from '@/components/replenishment';
 import { ReplenishmentQueue } from '@/components/replenishment-queue';
+import { YieldChecksProvider, type YieldChecks } from '@/components/yield-note';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { formatNumber, pluralise } from '@/lib/format';
+import { formatNumber } from '@/lib/format';
 
 export const metadata = { title: 'Toner orders · MPS Dashboard' };
 
@@ -31,15 +31,18 @@ export default async function OrdersPage({ searchParams }: PageProps<'/orders'>)
   const error = errorCode ? replenishmentErrorMessage(errorCode) : null;
 
   const db = getDb();
-  const [devices, inProgress, stats, ordersEnabled] = await Promise.all([
+  const [devices, inProgress, stats] = await Promise.all([
     listReplenishmentQueue(db, { tab }),
     // The In progress tab's count. `openMpsOrders` is not it: that also counts orders already in
-    // Vantage and not yet completed. The list is small (orders a person or the sender still owes).
+    // Vantage and not yet completed. The list is small (orders still waiting for their sales order).
     tab === 'in-progress' ? null : listReplenishmentQueue(db, { tab: 'in-progress' }),
     getReplenishmentStats(db),
-    getAppState<boolean>(db, 'vantage_orders_enabled'),
   ]);
   const inProgressOrders = (inProgress ?? devices).reduce((n, d) => n + d.orders.length, 0);
+
+  // Toner yield ("Last ordered … · N pages since"), one batched call for every live proposal shown.
+  const liveIds = devices.flatMap((d) => d.proposals.filter((p) => p.status === 'pending' || p.status === 'approved').map((p) => p.id));
+  const yieldChecks: YieldChecks = Object.fromEntries(await getYieldCheckForProposals(db, liveIds));
 
   const tabs: FilterTab[] = [
     { value: 'review', label: <TabLabel label="Review" count={stats.awaitingReviewDevices} /> },
@@ -54,7 +57,7 @@ export default async function OrdersPage({ searchParams }: PageProps<'/orders'>)
 
       <PageHeader
         title="Toner orders"
-        subtitle="Proposals from low toner and DRMS consumable alarms. Nothing is ordered until someone approves it."
+        subtitle="Proposals from low toner and DRMS consumable alarms. Nothing is queued until someone approves it."
         actions={
           <dl className="flex items-start gap-10">
             <HeaderStat label="Awaiting review" value={stats.awaitingReviewDevices} tone={stats.awaitingReviewDevices > 0 ? 'warn' : undefined} />
@@ -64,36 +67,21 @@ export default async function OrdersPage({ searchParams }: PageProps<'/orders'>)
         }
       />
 
-      {ordersEnabled !== true ? (
-        // Live ordering is on the roadmap, not switched on: until then this is a record of decisions.
-        // Still keyed on app_state, so it goes away by itself if sending is ever enabled.
-        <div role="status" className="mb-4 flex items-start gap-3 rounded-xl border border-warn/30 bg-warn/5 px-5 py-4">
-          <PowerOff aria-hidden className="mt-0.5 size-[18px] shrink-0 text-warn" />
-          <p className="text-[14px] text-warn">
-            Orders are not sent to Vantage yet — approving records the decision so the queue stays tidy. Raise the
-            order in Vantage as usual.
-          </p>
-        </div>
-      ) : null}
-
-      {stats.attentionOrders > 0 ? (
-        <div role="alert" className="mb-4 flex items-start gap-3 rounded-xl border border-critical/30 bg-critical/5 px-5 py-4">
-          <AlertTriangle aria-hidden className="mt-0.5 size-[18px] shrink-0 text-critical" />
-          <p className="text-[14px] text-critical">
-            {formatNumber(stats.attentionOrders)} {pluralise(stats.attentionOrders, 'order')}{' '}
-            {stats.attentionOrders === 1 ? 'needs' : 'need'} a person — failed, or Vantage did not answer.{' '}
-            {tab !== 'in-progress' ? (
-              <Link href="/orders?tab=in-progress" className="font-medium underline underline-offset-2">
-                Open In progress
-              </Link>
-            ) : null}
-          </p>
-        </div>
-      ) : null}
+      {/* The app never places a Vantage order, so this is permanent, not a stand-in for a switch. */}
+      <div role="note" className="mb-4 flex items-start gap-3 rounded-xl border border-line bg-muted/30 px-5 py-4">
+        <Info aria-hidden className="mt-0.5 size-[18px] shrink-0 text-muted-foreground" />
+        <p className="text-[14px] text-muted-foreground">
+          Approving records the decision; it does not place an order. Raise the order in Vantage as usual, and it
+          moves out of In progress by itself when the sales order shows up in the hourly sales-order sync.
+        </p>
+      </div>
 
       <section className="rounded-xl border border-line bg-card">
-        <div className="border-b border-line px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
           <FilterTabs basePath="/orders" param="tab" current={tab} tabs={tabs} defaultValue="review" ariaLabel="Toner order queue" />
+          <Link href="/orders/yield" className="text-[13px] font-medium text-brand hover:underline">
+            Toner yield
+          </Link>
         </div>
 
         {error ? (
@@ -102,7 +90,9 @@ export default async function OrdersPage({ searchParams }: PageProps<'/orders'>)
           </p>
         ) : null}
 
-        <ReplenishmentQueue tab={tab} devices={devices} />
+        <YieldChecksProvider checks={yieldChecks}>
+          <ReplenishmentQueue tab={tab} devices={devices} />
+        </YieldChecksProvider>
       </section>
     </>
   );

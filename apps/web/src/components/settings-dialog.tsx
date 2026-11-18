@@ -176,11 +176,29 @@ export function SettingsFields({
   isColour,
 }: Pick<SettingsDialogProps, 'fields' | 'initial' | 'allowInherit' | 'isColour'>) {
   const shown = fields.filter((f) => isColour || !CMY.includes(f));
+  const [thresholds, setThresholds] = useState<Partial<Record<ThresholdColour, ThresholdState>>>({});
+  const stateOf = (colour: ThresholdColour) => thresholds[colour] ?? KEEP;
+  const update = (colour: ThresholdColour, next: ThresholdState) => setThresholds((t) => ({ ...t, [colour]: next }));
+  // Black is the one set first; "copy" saves opening three more selects to repeat it.
+  const copyTargets = CMY.filter((f): f is ThresholdColour => shown.includes(f) && isThreshold(f));
+  const canCopy = shown.includes('black') && copyTargets.length > 0;
+  const copyBlack = () => {
+    const black = stateOf('black');
+    setThresholds((t) => ({ ...t, ...Object.fromEntries(copyTargets.map((c) => [c, { ...black }])) }));
+  };
   return (
     <div className="flex flex-col divide-y divide-line/70">
       {shown.map((field) =>
         isThreshold(field) ? (
-          <ThresholdField key={field} colour={field} hint={initial?.[field]} allowInherit={allowInherit} />
+          <ThresholdField
+            key={field}
+            colour={field}
+            hint={initial?.[field]}
+            allowInherit={allowInherit}
+            state={stateOf(field)}
+            onChange={(next) => update(field, next)}
+            onCopy={field === 'black' && canCopy ? copyBlack : undefined}
+          />
         ) : (
           <FlagField key={field} field={field} hint={initial?.[field]} allowInherit={allowInherit} />
         ),
@@ -201,11 +219,14 @@ function FieldShell({
   id,
   label,
   hint,
+  extra,
   children,
 }: {
   id: string;
   label: string;
   hint: SettingsHint | undefined;
+  /** Shown under the hint, e.g. Black's "Copy to C, M, Y". */
+  extra?: ReactNode;
   children: ReactNode;
 }) {
   const text = hintText(hint);
@@ -216,32 +237,64 @@ function FieldShell({
           {label}
         </label>
         {text ? <p className="text-xs text-muted-foreground">{text}</p> : null}
+        {extra}
       </div>
       <div className="flex shrink-0 items-center gap-2">{children}</div>
     </div>
   );
 }
 
-/** Keep / Inherit / Set to, and the percentage. Typing a number switches the mode to Set to. */
+interface ThresholdState {
+  mode: 'keep' | 'inherit' | 'set';
+  value: string;
+}
+
+const KEEP: ThresholdState = { mode: 'keep', value: '' };
+
+/**
+ * Keep / Inherit / Set to, and the percentage. Typing a number switches the mode to Set to.
+ * Black's row carries "Copy to C, M, Y", which gives the other colours the same mode and value.
+ */
 function ThresholdField({
   colour,
   hint,
   allowInherit,
+  state,
+  onChange,
+  onCopy,
 }: {
   colour: ThresholdColour;
   hint: SettingsHint | undefined;
   allowInherit: boolean;
+  state: ThresholdState;
+  onChange: (next: ThresholdState) => void;
+  onCopy?: () => void;
 }) {
   const id = useId();
-  const [mode, setMode] = useState<'keep' | 'inherit' | 'set'>('keep');
-  const [value, setValue] = useState('');
+  const { mode, value } = state;
   return (
-    <FieldShell id={id} label={LABELS[colour]} hint={hint}>
+    <FieldShell
+      id={id}
+      label={LABELS[colour]}
+      hint={hint}
+      extra={
+        onCopy ? (
+          <button
+            type="button"
+            onClick={onCopy}
+            disabled={mode === 'keep'}
+            className="text-xs font-medium text-brand underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline"
+          >
+            Copy to C, M, Y
+          </button>
+        ) : null
+      }
+    >
       <select
         id={id}
         name={`threshold-${colour}-mode`}
         value={mode}
-        onChange={(e) => setMode(e.target.value as typeof mode)}
+        onChange={(e) => onChange({ mode: e.target.value as ThresholdState['mode'], value })}
         className={cn(SELECT, 'w-28')}
       >
         <option value="keep">Keep</option>
@@ -260,10 +313,7 @@ function ThresholdField({
           required={mode === 'set'}
           placeholder={typeof hint?.value === 'number' ? String(hint.value) : undefined}
           value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
-            if (e.target.value !== '') setMode('set');
-          }}
+          onChange={(e) => onChange({ mode: e.target.value !== '' ? 'set' : mode, value: e.target.value })}
           className={cn('h-8 w-20 pr-6 tabular', mode !== 'set' && 'opacity-50')}
         />
         <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[13px] text-muted-foreground">

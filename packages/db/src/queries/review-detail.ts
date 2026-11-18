@@ -48,6 +48,12 @@ export interface ReviewAlarm {
   totalColorCount: number | null;
 }
 
+/** The latest reading of one meter; null when the newest snapshot did not carry it. */
+export interface ReviewMeter {
+  key: 'black' | 'colour' | 'scan';
+  value: number | null;
+}
+
 export interface ReviewDeviceDetail {
   drmsId: string;
   isColour: boolean;
@@ -56,6 +62,8 @@ export interface ReviewDeviceDetail {
   lastReadingAt: Date | null;
   /** No reading, or the newest is older than `STALE_READING_DAYS`. */
   readingStale: boolean;
+  /** Black and scan always; colour only on a colour device, which is the only kind that has one. */
+  meters: ReviewMeter[];
   orders: ReviewOrder[];
   alarms: ReviewAlarm[];
   /** Black always; cyan, magenta and yellow only on a colour device. */
@@ -68,7 +76,7 @@ export const STALE_READING_DAYS = 3;
 const ALARM_DAYS = 30;
 const ALARM_CATEGORIES = ['toner', 'waste', 'parts'];
 /** The last few Vantage sales orders of any kind — toner, parts, service. */
-const ORDER_COUNT = 4;
+const ORDER_COUNT = 6;
 /** Alarms scanned for page-count readings (all categories), newest first. */
 const ALARM_READING_LIMIT = 1000;
 
@@ -159,6 +167,12 @@ export async function getReviewDeviceDetail(db: Db, drmsId: string, now: Date = 
   const lastReadingAt = detail.latestSnapshotAt ?? device.lastCounterAt;
   const readingStale = lastReadingAt === null || now.getTime() - lastReadingAt.getTime() > STALE_READING_DAYS * DAY;
 
+  const meters: ReviewMeter[] = [
+    { key: 'black', value: device.meters.black },
+    ...(isColour ? [{ key: 'colour' as const, value: device.meters.colour }] : []),
+    { key: 'scan', value: device.meters.scan },
+  ];
+
   const reviewOrders: ReviewOrder[] = (orders?.orders ?? []).slice(0, ORDER_COUNT).map((o) => ({
     vantageId: o.vantageId,
     reference: o.reference,
@@ -201,6 +215,7 @@ export async function getReviewDeviceDetail(db: Db, drmsId: string, now: Date = 
     levels,
     lastReadingAt,
     readingStale,
+    meters,
     orders: reviewOrders,
     alarms: reviewAlarms,
     pagesSince,

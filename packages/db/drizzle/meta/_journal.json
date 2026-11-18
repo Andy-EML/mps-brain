@@ -92,6 +92,34 @@
       "when": 1793209319406,
       "tag": "0012_hidden_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793978217987,
+      "tag": "0013_order_watch",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794929199032,
+      "tag": "0014_vantage_meter_readings",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794992317820,
+      "tag": "0015_pm_due",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794998743737,
+      "tag": "0016_pm_actions",
+      "breakpoints": true
     }
   ]
 }

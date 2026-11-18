@@ -4,6 +4,7 @@ import {
   bigserial,
   boolean,
   check,
+  date,
   doublePrecision,
   index,
   integer,
@@ -135,6 +136,73 @@ export const vantageSalesOrderLines = pgTable(
     index('vantage_sales_order_lines_order_idx').on(t.salesOrderId),
     index('vantage_sales_order_lines_equipment_part_idx').on(t.vantageEquipmentId, t.itemPartNumber),
   ],
+);
+
+/**
+ * Vantage `MeterReading` rows for the last 12 months only (see `vantage-meters`). One row per
+ * reading of one meter on one machine. `Reading` is the absolute meter value, not a delta.
+ * Vantage has no `DeletedDate` on this entity, so there is no soft-delete column.
+ */
+export const vantageMeterReadings = pgTable(
+  'vantage_meter_readings',
+  {
+    vantageId: integer('vantage_id').primaryKey(),
+    vantageEquipmentId: integer('vantage_equipment_id').notNull(),
+    meterTypeId: integer('meter_type_id').notNull(),
+    /** `MeterType.Name`, e.g. Black, Colour, Scan, Black A3. Denormalised so queries need no join. */
+    meterTypeName: text('meter_type_name'),
+    /** `MeterType.Class.Name`: Mono or Colour. */
+    meterClass: text('meter_class'),
+    readingTypeId: integer('reading_type_id'),
+    readingAt: ts('reading_at').notNull(),
+    reading: integer('reading').notNull(),
+    raw: jsonb('raw').notNull(),
+    modifiedDate: ts('modified_date'),
+    syncedAt: ts('synced_at').notNull().defaultNow(),
+  },
+  (t) => [index('vantage_meter_readings_equipment_at_idx').on(t.vantageEquipmentId, t.readingAt)],
+);
+
+/** Contracts reachable from each Vantage equipment (Meters->Charge->Contract, ContractCharges->Contract). */
+export const vantageEquipmentContracts = pgTable(
+  'vantage_equipment_contracts',
+  {
+    vantageEquipmentId: integer('vantage_equipment_id').notNull(),
+    contractId: integer('contract_id').notNull(),
+    contractReference: text('contract_reference'),
+    /** `isActiveContract` (@mps/core) at sync time. */
+    isActive: boolean('is_active').notNull(),
+    syncedAt: ts('synced_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.vantageEquipmentId, t.contractId] })],
+);
+
+/** Vantage `WorkUnit` visits (with Work and Category), for the PM due list. */
+export const vantageWorkVisits = pgTable(
+  'vantage_work_visits',
+  {
+    workUnitId: integer('work_unit_id').primaryKey(),
+    workId: integer('work_id').notNull(),
+    workReference: text('work_reference'),
+    vantageEquipmentId: integer('vantage_equipment_id'),
+    customerId: integer('customer_id'),
+    categoryId: integer('category_id'),
+    categoryName: text('category_name'),
+    categoryType: text('category_type'),
+    loggedAt: ts('logged_at'),
+    workStart: ts('work_start'),
+    workEnd: ts('work_end'),
+    workHours: doublePrecision('work_hours'),
+    scheduledStart: ts('scheduled_start'),
+    /** `Work.CompletedDate`. */
+    completedAt: ts('completed_at'),
+    maintenancePerformed: boolean('maintenance_performed'),
+    actionDetails: text('action_details'),
+    raw: jsonb('raw').notNull(),
+    modifiedDate: ts('modified_date'),
+    syncedAt: ts('synced_at').notNull().defaultNow(),
+  },
+  (t) => [index('vantage_work_visits_equipment_start_idx').on(t.vantageEquipmentId, t.workStart)],
 );
 
 export const drmsEquipment = pgTable(
@@ -361,8 +429,8 @@ export const appState = pgTable('app_state', {
 export type SettingScope = 'default' | 'customer' | 'device';
 export type ReplenishColour = 'black' | 'cyan' | 'magenta' | 'yellow' | 'waste';
 export type ProposalTrigger = 'threshold' | 'alarm' | 'site_stock';
-export type ProposalStatus = 'pending' | 'approved' | 'ordered' | 'failed' | 'rejected' | 'superseded';
-export type OrderStatus = 'queued' | 'submitting' | 'submitted' | 'failed' | 'uncertain';
+export type ProposalStatus = 'pending' | 'approved' | 'ordered' | 'rejected' | 'superseded';
+export type OrderStatus = 'queued' | 'submitted' | 'cancelled';
 
 /**
  * Replenishment settings, cascading default → customer → device. A null column means "inherit";
@@ -406,6 +474,33 @@ export const replenishmentSettings = pgTable(
   ],
 );
 
+/**
+ * A person's note on a PM-due machine: `booked` (a PM is arranged) or `dismissed` (snoozed, or serviced
+ * outside). Recorded in the app only; nothing is written to Vantage. One open row per machine.
+ */
+export const pmActions = pgTable(
+  'pm_actions',
+  {
+    id: serial('id').primaryKey(),
+    vantageEquipmentId: integer('vantage_equipment_id').notNull(),
+    /** `booked` | `dismissed`. */
+    kind: text('kind').notNull(),
+    bookedFor: date('booked_for', { mode: 'date' }),
+    reference: text('reference'),
+    /** Dismiss reason: `not_now` | `declined` | `serviced_outside` | `other`. */
+    reason: text('reason'),
+    note: text('note'),
+    snoozeUntil: date('snooze_until', { mode: 'date' }),
+    servicedOn: date('serviced_on', { mode: 'date' }),
+    createdBy: integer('created_by').references(() => users.id),
+    createdAt: ts('created_at').notNull().defaultNow(),
+    clearedAt: ts('cleared_at'),
+    /** `replaced` | `undo` | `visit_seen` | `expired`. */
+    clearedReason: text('cleared_reason'),
+  },
+  (t) => [uniqueIndex('pm_actions_open_equipment_idx').on(t.vantageEquipmentId).where(sql`${t.clearedAt} is null`)],
+);
+
 /** Who changed what. One row per write — a bulk edit of 400 devices is one row listing 400 ids. */
 export const auditLog = pgTable(
   'audit_log',
@@ -421,7 +516,11 @@ export const auditLog = pgTable(
   (t) => [index('audit_log_entity_at_idx').on(t.entity, t.at)],
 );
 
-/** Sent (or to be sent) to Vantage as one CreateConsumableOrder call: one device, 1..n components. */
+/**
+ * One approved order for one device, 1..n components. The app never places it in Vantage: a person
+ * raises it by hand and the watcher (`order-watch`) moves it on. Rows are `queued`, `submitted` or
+ * `cancelled`. `submitting`, `failed` and `uncertain` were dropped from the type; no row held them.
+ */
 export const replenishmentOrders = pgTable(
   'replenishment_orders',
   {
@@ -430,8 +529,8 @@ export const replenishmentOrders = pgTable(
       .notNull()
       .references(() => drmsEquipment.drmsId),
     vantageEquipmentId: integer('vantage_equipment_id').notNull(),
-    status: text('status', { enum: ['queued', 'submitting', 'submitted', 'failed', 'uncertain'] }).notNull(),
-    /** Exactly the body POSTed (or about to be). */
+    status: text('status', { enum: ['queued', 'submitted', 'cancelled'] }).notNull(),
+    /** The approved components, in the old CreateConsumableOrder shape. Never sent anywhere; kept because the column is NOT NULL. */
     request: jsonb('request').notNull(),
     response: jsonb('response'),
     vantageSalesOrderId: integer('vantage_sales_order_id'),
@@ -441,7 +540,7 @@ export const replenishmentOrders = pgTable(
     createdBy: integer('created_by').references(() => users.id),
     createdAt: ts('created_at').notNull().defaultNow(),
     submittedAt: ts('submitted_at'),
-    /** Set when an operator settles an `uncertain` order by hand. */
+    /** Set when an operator settles a `queued` order by hand. */
     resolvedBy: integer('resolved_by').references(() => users.id),
     resolvedAt: ts('resolved_at'),
   },
@@ -462,6 +561,8 @@ export const cartridgeFamilies = pgTable('cartridge_families', {
     ratedYieldMagenta: integer('rated_yield_magenta'),
     ratedYieldYellow: integer('rated_yield_yellow'),
     ratedYieldWaste: integer('rated_yield_waste'),
+  /** Page interval between preventive-maintenance visits; null when not set. */
+  pmIntervalPages: integer('pm_interval_pages'),
   notes: text('notes'),
   updatedBy: integer('updated_by').references(() => users.id),
   updatedAt: ts('updated_at').notNull().defaultNow(),
@@ -570,7 +671,7 @@ export const replenishmentProposals = pgTable(
     alarmDescription: text('alarm_description'),
     quantity: integer('quantity').notNull().default(1),
     status: text('status', {
-      enum: ['pending', 'approved', 'ordered', 'failed', 'rejected', 'superseded'],
+      enum: ['pending', 'approved', 'ordered', 'rejected', 'superseded'],
     }).notNull(),
     orderId: integer('order_id').references(() => replenishmentOrders.id),
     createdAt: ts('created_at').notNull().defaultNow(),
@@ -579,8 +680,17 @@ export const replenishmentProposals = pgTable(
     note: text('note'),
     /** Set for a site-stock top-up; those are live independently of a device's own proposal. */
     shelfId: integer('shelf_id').references(() => siteStockShelves.id),
+    /**
+     * The Vantage sales order and line that closed this proposal (`order-watch`), or that a typed
+     * reference was linked to. Proposals differ within one order on a partial match, so it lives
+     * here, not on the order. No foreign keys: lines are replaced wholesale on every pull.
+     */
+    vantageSalesOrderId: integer('vantage_sales_order_id'),
+    vantageSalesOrderLineId: integer('vantage_sales_order_line_id'),
   },
   (t) => [
+    // A line closes at most one proposal, ever, including across pulls.
+    uniqueIndex('replenishment_proposals_so_line_uq').on(t.vantageSalesOrderLineId).where(sql`vantage_sales_order_line_id is not null`),
     uniqueIndex('replenishment_proposals_live_uq')
       .on(t.drmsEquipmentId, t.colour)
       .where(sql`status in ('pending', 'approved') and shelf_id is null`),

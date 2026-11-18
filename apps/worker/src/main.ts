@@ -44,6 +44,9 @@ async function main(): Promise<void> {
   await boss.schedule(QUEUES.drmsSnapshot, env.SNAPSHOT_CRON, {}, { tz });
   await boss.schedule(QUEUES.drmsAlarms, env.ALARMS_CRON, {}, { tz });
   await boss.schedule(QUEUES.vantageOrders, env.ORDERS_CRON, {}, { tz });
+  await boss.schedule(QUEUES.vantageMeters, env.METERS_CRON, {}, { tz });
+  await boss.schedule(QUEUES.vantageContracts, env.CONTRACTS_CRON, {}, { tz });
+  await boss.schedule(QUEUES.vantageWork, env.WORK_CRON, {}, { tz });
   // After the 02:00 Vantage pull and its link run.
   await boss.schedule(QUEUES.drmsRegistrationScan, '30 3 * * *', {}, { tz });
   // Sweeps up approved registrations the web app's wake-up missed (and polls unfinished ones).

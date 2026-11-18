@@ -18,28 +18,43 @@ import { drmsEquipmentName } from './shared';
 const MONITORED = sql`upper(${drmsEquipment.status}) in ('REGISTERED','DISCOVERED') and ${drmsEquipment.missingSince} is null`;
 
 /**
+ * One row per monitored device with an active link: its model and the customer its Vantage equipment
+ * sits at (null when Vantage names none). What a device needs to be able to be on a shelf, shared by
+ * `shelfDevicesSubquery` and `getDeviceShelfOffer` so an offered shelf is one the device will be on.
+ */
+function linkedDevicesSubquery(db: Db) {
+  return db
+    .select({
+      drmsId: drmsEquipment.drmsId,
+      model: drmsEquipment.modelName,
+      vantageEquipmentId: deviceLinks.vantageEquipmentId,
+      vantageCustomerId: vantageEquipment.vantageCustomerId,
+    })
+    .from(drmsEquipment)
+    .innerJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
+    .innerJoin(vantageEquipment, eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId))
+    .where(MONITORED)
+    .as('linked_devices');
+}
+
+/**
  * One row per monitored device on a shelf: its active link points at the shelf's customer and its
  * model belongs to the shelf's family. THE place shelf membership is expressed — the evaluator,
  * the shelf counter and the pages all read this, so they cannot disagree.
  */
 export function shelfDevicesSubquery(db: Db) {
+  const linked = linkedDevicesSubquery(db);
   return db
     .select({
       shelfId: siteStockShelves.id,
-      drmsId: drmsEquipment.drmsId,
-      vantageEquipmentId: deviceLinks.vantageEquipmentId,
+      drmsId: linked.drmsId,
+      vantageEquipmentId: linked.vantageEquipmentId,
       vantageCustomerId: siteStockShelves.vantageCustomerId,
       familyId: siteStockShelves.familyId,
     })
     .from(siteStockShelves)
     .innerJoin(cartridgeFamilyModels, eq(cartridgeFamilyModels.familyId, siteStockShelves.familyId))
-    .innerJoin(drmsEquipment, eq(drmsEquipment.modelName, cartridgeFamilyModels.model))
-    .innerJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
-    .innerJoin(
-      vantageEquipment,
-      and(eq(vantageEquipment.vantageId, deviceLinks.vantageEquipmentId), eq(vantageEquipment.vantageCustomerId, siteStockShelves.vantageCustomerId)),
-    )
-    .where(MONITORED)
+    .innerJoin(linked, and(eq(linked.model, cartridgeFamilyModels.model), eq(linked.vantageCustomerId, siteStockShelves.vantageCustomerId)))
     .as('shelf_devices');
 }
 
@@ -230,6 +245,42 @@ export async function listShelfForDevice(db: Db, drmsId: string): Promise<{ shel
   return row ? { shelfId: row.shelfId, siteName: row.siteName ?? `Customer ${row.customerId}`, familyName: row.familyName } : null;
 }
 
+/** What the device page can offer a device on no shelf; see `getDeviceShelfOffer`. */
+export type DeviceShelfOffer =
+  | { kind: 'create'; vantageCustomerId: number; siteName: string; familyId: number; familyName: string }
+  | { kind: 'no_family' };
+
+/**
+ * For a device on no shelf (check `listShelfForDevice` first): the site and family a shelf for it
+ * would have, or `no_family` when its model is in no cartridge family. Null when the device could
+ * not be on a shelf whatever was created: unlinked, no longer monitored, or at no Vantage customer.
+ */
+export async function getDeviceShelfOffer(db: Db, drmsId: string): Promise<DeviceShelfOffer | null> {
+  const linked = linkedDevicesSubquery(db);
+  const [row] = await db
+    .select({
+      customerId: linked.vantageCustomerId,
+      siteName: vantageCustomers.name,
+      familyId: cartridgeFamilies.id,
+      familyName: cartridgeFamilies.name,
+    })
+    .from(linked)
+    .leftJoin(cartridgeFamilyModels, eq(cartridgeFamilyModels.model, linked.model))
+    .leftJoin(cartridgeFamilies, eq(cartridgeFamilies.id, cartridgeFamilyModels.familyId))
+    .leftJoin(vantageCustomers, eq(vantageCustomers.vantageId, linked.vantageCustomerId))
+    .where(eq(linked.drmsId, drmsId))
+    .limit(1);
+  if (!row || row.customerId === null) return null;
+  if (row.familyId === null || row.familyName === null) return { kind: 'no_family' };
+  return {
+    kind: 'create',
+    vantageCustomerId: row.customerId,
+    siteName: row.siteName ?? `Customer ${row.customerId}`,
+    familyId: row.familyId,
+    familyName: row.familyName,
+  };
+}
+
 export interface FamilySummary {
   id: number;
   name: string;
@@ -238,6 +289,8 @@ export interface FamilySummary {
   ratedYield: Partial<Record<ReplenishColour, number>>;
   notes: string | null;
   shelves: number;
+  /** Pages between PM visits for this family's machines; null uses the global interval. */
+  pmIntervalPages: number | null;
 }
 
 export async function listFamilies(db: Db): Promise<FamilySummary[]> {
@@ -262,6 +315,7 @@ export async function listFamilies(db: Db): Promise<FamilySummary[]> {
       ratedYield,
       notes: f.notes,
       shelves: shelfBy.get(f.id) ?? 0,
+      pmIntervalPages: f.pmIntervalPages,
     };
   });
 }

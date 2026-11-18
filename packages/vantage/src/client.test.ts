@@ -192,61 +192,6 @@ describe('Vantage client', () => {
     expect(getCalls).toHaveLength(3);
   });
 
-  describe('createConsumableOrder', () => {
-    const login = (req: Req) => req.url.pathname.endsWith('/application/loginsingle');
-
-    it('POSTs the components with api-version and a bearer token, and returns status + body', async () => {
-      const { client, calls } = make((req) =>
-        login(req) ? session('t1', '2026-09-17T11:00:00Z') : json({ Id: 991, Reference: 'SO991' }, 201),
-      );
-      const res = await client.createConsumableOrder(42, [{ Type: 1, RequestedQuantity: 2 }]);
-      expect(res).toEqual({ status: 201, body: { Id: 991, Reference: 'SO991' } });
-      const post = calls.find((c) => c.method === 'POST' && !login(c))!;
-      expect(post.url.pathname).toBe('/Equipment(42)/CreateConsumableOrder');
-      expect(post.headers['api-version']).toBe('1.22');
-      expect(post.headers.authorization).toBe('Bearer t1');
-      expect(JSON.parse(post.body!)).toEqual({ components: [{ Type: 1, RequestedQuantity: 2 }] });
-    });
-
-    it('accepts a 204 with no body', async () => {
-      const { client } = make((req) => (login(req) ? session('t1', '2026-09-17T11:00:00Z') : new Response(null, { status: 204 })));
-      expect(await client.createConsumableOrder(42, [{ Type: 5 }])).toEqual({ status: 204, body: null });
-    });
-
-    it('throws HttpError on a 4xx and sends exactly one POST', async () => {
-      const { client, calls } = make((req) => (login(req) ? session('t1', '2026-09-17T11:00:00Z') : json({ Message: 'no compatible toner' }, 400)));
-      await expect(client.createConsumableOrder(42, [{ Type: 2 }])).rejects.toMatchObject({ name: 'HttpError', status: 400 });
-      expect(calls.filter((c) => c.method === 'POST' && !login(c))).toHaveLength(1);
-    });
-
-    it('treats a 5xx as uncertain and never re-sends', async () => {
-      const { client, calls } = make((req) => (login(req) ? session('t1', '2026-09-17T11:00:00Z') : json({}, 502)));
-      await expect(client.createConsumableOrder(42, [{ Type: 1 }])).rejects.toMatchObject({ name: 'UncertainWriteError' });
-      expect(calls.filter((c) => c.method === 'POST' && !login(c))).toHaveLength(1);
-    });
-
-    it('treats a network failure as uncertain and never re-sends', async () => {
-      let posts = 0;
-      const { client } = make((req) => {
-        if (login(req)) return session('t1', '2026-09-17T11:00:00Z');
-        posts++;
-        throw new TypeError('fetch failed');
-      });
-      await expect(client.createConsumableOrder(42, [{ Type: 1 }])).rejects.toMatchObject({ name: 'UncertainWriteError' });
-      expect(posts).toBe(1);
-    });
-
-    it('re-logs in and re-sends once after a 401 (the order was not accepted)', async () => {
-      let posts = 0;
-      const { client } = make((req) => {
-        if (login(req)) return session(`t${posts}`, '2026-09-17T11:00:00Z');
-        posts++;
-        return posts === 1 ? json({}, 401) : json({ Id: 5 }, 201);
-      });
-      expect(await client.createConsumableOrder(42, [{ Type: 1 }])).toEqual({ status: 201, body: { Id: 5 } });
-      expect(posts).toBe(2);
-    });
-  });
   describe('findEquipmentBySerial', () => {
     it('GETs Equipment by serial, not deleted, with Customer and contracts expanded as select-batch did', async () => {
       const row = { Id: 4321, SerialNumber: 'A7PU021012345' };
@@ -272,6 +217,44 @@ describe('Vantage client', () => {
       expect(await bare.client.findEquipmentBySerial('S')).toEqual([{ Id: 1 }]);
       const bad = make(({ url }) => (url.pathname.startsWith('/application') ? session('t', '2026-09-17T10:30:00Z') : json({ nope: 1 })));
       await expect(bad.client.findEquipmentBySerial('S')).rejects.toBeInstanceOf(ParseError);
+    });
+  });
+
+  describe('PM due reads', () => {
+    const ok = (url: URL) => url.pathname.startsWith('/application');
+    it('listEquipmentContracts requests Equipment with contract expand', async () => {
+      const { client, calls } = make(({ url }) => (ok(url) ? session('t', '2026-09-17T10:30:00Z') : json({ value: [{ Id: 1 }] })));
+      expect(await client.listEquipmentContracts()).toEqual([{ Id: 1 }]);
+      const get = calls[1]!;
+      expect(get.method).toBe('GET');
+      expect(get.url.pathname).toBe('/Equipment');
+      expect(get.url.searchParams.get('$select')).toBe('Id');
+      expect(get.url.searchParams.get('$filter')).toContain('deleteddate eq null');
+      const c = '$select=Id,Reference,StatusId,ExpiryDate,IsEvergreen,IsOnHold,CancellationDate,DeletedDate';
+      expect(get.url.searchParams.get('$expand')).toBe(
+        `Meters($select=TypeId;$expand=Charge($select=Id;$expand=Contract(${c}))),ContractCharges($select=Id;$expand=Contract(${c}))`,
+      );
+    });
+
+    it('listWorkUnits filters by date window and since', async () => {
+      const { client, calls } = make(({ url }) => (ok(url) ? session('t', '2026-09-17T10:30:00Z') : json({ value: [] })));
+      const from = new Date('2025-01-01T00:00:00Z');
+      const since = new Date('2026-09-01T00:00:00Z');
+      await client.listWorkUnits({ from, since });
+      const get = calls[1]!;
+      expect(get.url.pathname).toBe('/WorkUnit');
+      expect(get.url.searchParams.get('$expand')).toBe(
+        'Work($select=Id,Reference,EquipmentId,CustomerId,CompletedDate,DeletedDate),Category($select=Id,Name;$expand=Type($select=Id,Name)),WorkItems($select=Id,ItemId,Quantity,Status;$expand=Item($select=PartNumber,Description))',
+      );
+      const f = get.url.searchParams.get('$filter')!;
+      const iso = from.toISOString();
+      expect(f).toContain(`(workstartdate ge ${iso} or loggeddate ge ${iso} or scheduledstartdate ge ${iso})`);
+      expect(f).toContain(`(modifieddate gt ${since.toISOString()})`);
+      // WorkUnit has no DeletedDate: the client must not add `deleteddate eq null`.
+      expect(f).not.toContain('deleteddate');
+
+      await client.listWorkUnits({ from });
+      expect(calls[2]!.url.searchParams.get('$filter')).not.toContain('modifieddate');
     });
   });
 });

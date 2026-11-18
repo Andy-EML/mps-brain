@@ -18,6 +18,12 @@ const envSchema = z.object({
    * resets its pending toner proposal the same day — the pull queues `replenish-evaluate`.
    */
   ORDERS_CRON: z.string().min(1).default('20 * * * *'),
+  /** Vantage meter readings (12-month window, incremental by ModifiedDate). Nightly, after the 02:00 Vantage pull. */
+  METERS_CRON: z.string().min(1).default('45 2 * * *'),
+  /** Vantage equipment contracts (full refresh). Nightly, after meters. */
+  CONTRACTS_CRON: z.string().min(1).default('55 2 * * *'),
+  /** Vantage work visits (12-month window, incremental). Nightly, after contracts. */
+  WORK_CRON: z.string().min(1).default('5 3 * * *'),
   OFFLINE_ALERT_HOURS: z.coerce.number().int().positive().default(24),
   TZ_SCHEDULE: z.string().min(1).default('Europe/London'),
   ADMIN_USERNAME: z.string().min(1).default('admin'),

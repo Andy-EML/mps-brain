@@ -85,6 +85,7 @@ describe('parseFamilyForm', () => {
       models: ['bizhub C300i', 'bizhub C250i', 'bizhub C360i'],
       ratedYield: { black: 28000, cyan: 28000, magenta: null, yellow: 28000, waste: 125000 },
       notes: 'TN-328',
+      pmIntervalPages: null,
     });
   });
 
@@ -107,6 +108,23 @@ describe('parseFamilyForm', () => {
   it('refuses a crafted id and a bad yield', () => {
     expect(codeOf(() => parseFamilyForm(form([['id', 'x'], ['name', 'A']])))).toBe('not_found');
     expect(codeOf(() => parseFamilyForm(form([['name', 'A'], ['yield-black', '0']])))).toBe('bad_value');
+  });
+});
+
+describe('PM interval', () => {
+  it('blank PM interval = null (use global)', () => {
+    expect(parseFamilyForm(form([['name', 'A'], ['pmInterval', '  ']])).pmIntervalPages).toBeNull();
+    expect(parseFamilyForm(form([['name', 'A']])).pmIntervalPages).toBeNull();
+  });
+
+  it('120,000 → 120000', () => {
+    expect(parseFamilyForm(form([['name', 'A'], ['pmInterval', '120,000']])).pmIntervalPages).toBe(120000);
+  });
+
+  it('refuses zero, decimals and words', () => {
+    for (const raw of ['0', '-1', '1.5', 'often']) {
+      expect(codeOf(() => parseFamilyForm(form([['name', 'A'], ['pmInterval', raw]])))).toBe('bad_value');
+    }
   });
 });
 

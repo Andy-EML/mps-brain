@@ -1,5 +1,7 @@
 # MPS Brain — Sub-project 4: Site stock
 
+> **Note 2026-11-06:** the app never places Vantage orders (decided; the `CreateConsumableOrder` code, the `vantage-order-submit` job and the `VANTAGE_ORDERS_ENABLED` kill switch are gone). People raise orders by hand and the `vantage-orders` watcher (`packages/db/src/queries/order-watch.ts`) tracks them. Read the ordering parts of this document as history. See `CLAUDE.md` and `docs/HANDOFF.md`.
+
 > Status: design drafted 2026-10-22 from a brainstorm with the user (mockup:
 > `.superpowers/brainstorm/site-stock-mockup.html`, approved "looks fine"). Builds on sub-project 3
 > (replenishment, `2026-09-21-replenishment-design.md`) — read that first; its tables, engine,

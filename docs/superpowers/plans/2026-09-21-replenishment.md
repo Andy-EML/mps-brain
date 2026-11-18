@@ -1,5 +1,7 @@
 # MPS Brain Sub-project 3 — Replenishment Implementation Plan
 
+> **Note 2026-11-06:** the app never places Vantage orders (decided; the `CreateConsumableOrder` code, the `vantage-order-submit` job and the `VANTAGE_ORDERS_ENABLED` kill switch are gone). People raise orders by hand and the `vantage-orders` watcher (`packages/db/src/queries/order-watch.ts`) tracks them. Read the ordering parts of this document as history. See `CLAUDE.md` and `docs/HANDOFF.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn low toner (our cascaded thresholds) and DRMS consumable alarms into operator-approved, real Vantage consumable orders, with per-device / per-customer / default settings editable in bulk.

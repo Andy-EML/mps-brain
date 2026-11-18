@@ -9,7 +9,10 @@ import { familyCarries, parseModels } from './family-fields';
  * - `id` (absent for a new family), `name`, `kind` = `colour` | `mono`, `notes`;
  * - one `model` per chip, plus `modelsText` — whatever is still typed in the box, which may be a
  *   pasted list (comma, semicolon or newline separated);
- * - `yield-<consumable>` for each consumable: blank for "not known", otherwise whole pages.
+ * - `yield-<consumable>` for each consumable: blank for "not known", otherwise whole pages;
+ * - `pmInterval`: pages between preventive-maintenance visits for this family; blank uses the
+ *   global interval from `/settings/pm`. Saved separately (`setFamilyPmInterval`), so it rides
+ *   alongside the `saveFamily` arguments as `pmIntervalPages`.
  *
  * Pure. Throws `SiteStockError` with the queries' own codes, so the action handles both alike;
  * `saveFamily` validates again.
@@ -38,7 +41,19 @@ export function parseFamilyId(formData: FormData): number | undefined {
   return Number(raw);
 }
 
-export function parseFamilyForm(formData: FormData): Omit<SaveFamilyArgs, 'userId' | 'now'> {
+/** Blank is "use the global interval"; otherwise whole pages, 1 or more (`120,000` is fine). */
+export function parsePmInterval(raw: string): number | null {
+  const text = raw.trim().replace(/[,\s]/g, '');
+  if (text === '') return null;
+  if (!/^\d{1,9}$/.test(text) || Number(text) < 1) {
+    throw new SiteStockError('A PM interval is a whole number of pages, 1 or more.', 'bad_value');
+  }
+  return Number(text);
+}
+
+export type ParsedFamilyForm = Omit<SaveFamilyArgs, 'userId' | 'now'> & { pmIntervalPages: number | null };
+
+export function parseFamilyForm(formData: FormData): ParsedFamilyForm {
   const isColour = text(formData, 'kind') !== 'mono';
   const chips = formData.getAll('model').filter((v): v is string => typeof v === 'string');
   const models = parseModels([...chips, text(formData, 'modelsText')].join('\n'));
@@ -50,12 +65,20 @@ export function parseFamilyForm(formData: FormData): Omit<SaveFamilyArgs, 'userI
   }
 
   const id = parseFamilyId(formData);
-  return { ...(id === undefined ? {} : { id }), name: text(formData, 'name'), isColour, models, ratedYield, notes: text(formData, 'notes') };
+  return {
+    ...(id === undefined ? {} : { id }),
+    name: text(formData, 'name'),
+    isColour,
+    models,
+    ratedYield,
+    notes: text(formData, 'notes'),
+    pmIntervalPages: parsePmInterval(text(formData, 'pmInterval')),
+  };
 }
 
 const FAMILY_ERRORS: Record<SiteStockErrorCode, string> = {
   not_found: 'That family no longer exists. Refresh the page and try again.',
-  bad_value: 'Check the form: a family needs a name, and a rated yield is a whole number of pages, 1 or more.',
+  bad_value: 'Check the form: a family needs a name, and a rated yield or PM interval is a whole number of pages, 1 or more.',
   duplicate: 'Another family already has that name, or one of those models already belongs to another family.',
   in_use: 'Shelves still use this family. Delete them first; to make it mono, set their cyan, magenta and yellow to 0 first.',
   empty: 'Nothing was changed.',

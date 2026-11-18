@@ -135,7 +135,7 @@ export function customerMatch(drmsName: string | null | undefined, vantageName: 
 const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
 /** Active = status 1, not on hold, not cancelled, not deleted. */
-function isActiveContract(c: unknown): boolean {
+export function isActiveContract(c: unknown): boolean {
   if (c == null || typeof c !== 'object') return false;
   return (
     getNumber(c, 'StatusId') === 1 &&
@@ -146,7 +146,7 @@ function isActiveContract(c: unknown): boolean {
 }
 
 /** Contracts reachable from the equipment: Meters → Charge → Contract, and ContractCharges → Contract. */
-function contractsOf(v: unknown): unknown[] {
+export function contractsOf(v: unknown): unknown[] {
   return [
     ...asArray(getField(v, 'Meters')).map((m) => getField(getField(m, 'Charge'), 'Contract')),
     ...asArray(getField(v, 'ContractCharges')).map((c) => getField(c, 'Contract')),

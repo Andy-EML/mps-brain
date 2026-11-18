@@ -3,6 +3,9 @@ import {
   colourLabel,
   compactProposalText,
   decisionBackPath,
+  orderHref,
+  orderStatusLabel,
+  orderProgress,
   orderStatusTone,
   proposalStatusLink,
   replenishmentErrorMessage,
@@ -66,15 +69,30 @@ describe('sourceLabel', () => {
 });
 
 describe('orderStatusTone', () => {
-  it('flags orders a person has to look at', () => {
-    expect(orderStatusTone('uncertain')).toBe('critical');
-    expect(orderStatusTone('failed')).toBe('critical');
+  it('shows a queued order as warn and a submitted one as ok', () => {
+    expect(orderStatusTone('queued')).toBe('warn');
+    expect(orderStatusTone('submitted')).toBe('ok');
   });
 
-  it('shows in-flight orders as warn and sent ones as ok', () => {
-    expect(orderStatusTone('queued')).toBe('warn');
-    expect(orderStatusTone('submitting')).toBe('warn');
-    expect(orderStatusTone('submitted')).toBe('ok');
+  it('mutes a cancelled order: nobody has to act on it', () => {
+    expect(orderStatusTone('cancelled')).toBe('muted');
+  });
+});
+
+describe('orderStatusLabel', () => {
+  it('names a cancelled order', () => {
+    expect(orderStatusLabel('cancelled')).toBe('Cancelled');
+  });
+});
+
+describe('orderHref', () => {
+  it('sends an order to the tab that lists it', () => {
+    expect(orderHref('queued')).toBe('/orders?tab=in-progress');
+    expect(orderHref('submitted')).toBe('/orders?tab=ordered');
+  });
+
+  it('has nowhere to send a cancelled order: no tab lists one', () => {
+    expect(orderHref('cancelled')).toBeNull();
   });
 });
 
@@ -177,5 +195,25 @@ describe('compactProposalText', () => {
       tag: null,
       detail: 'Last black spare went in 19 Oct 2026',
     });
+  });
+});
+
+describe('orderProgress', () => {
+  const p = (colour: 'black' | 'cyan' | 'magenta', status: string, salesOrderReference: string | null = null) => ({ colour, status, salesOrderReference }) as never;
+
+  it('says which colours are already in Vantage, under which sales order, and which are waiting', () => {
+    expect(orderProgress([p('cyan', 'approved'), p('black', 'ordered', 'SO2609-07'), p('magenta', 'approved')])).toEqual({
+      inVantage: 'Black SO2609-07',
+      waiting: 'Cyan, Magenta',
+    });
+  });
+
+  it('is null unless the order is partly matched: nothing matched yet, or nothing left waiting', () => {
+    expect(orderProgress([p('black', 'approved'), p('cyan', 'approved')])).toBeNull();
+    expect(orderProgress([p('black', 'ordered', 'SO1'), p('cyan', 'ordered', 'SO1')])).toBeNull();
+  });
+
+  it('ignores a colour rejected or failed earlier, and copes with a matched colour that has no reference', () => {
+    expect(orderProgress([p('black', 'ordered'), p('cyan', 'approved'), p('magenta', 'rejected')])).toEqual({ inVantage: 'Black', waiting: 'Cyan' });
   });
 });

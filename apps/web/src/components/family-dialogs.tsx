@@ -68,6 +68,7 @@ interface FamilyState {
   isColour: boolean;
   models: string[];
   yields: Record<ReplenishColour, string>;
+  pmInterval: string;
   notes: string;
 }
 
@@ -82,6 +83,7 @@ function initialState(family: FamilySummary | undefined): FamilyState {
     isColour: family?.isColour ?? true,
     models: family?.models ?? [],
     yields,
+    pmInterval: family?.pmIntervalPages == null ? '' : String(family.pmIntervalPages),
     notes: family?.notes ?? '',
   };
 }
@@ -107,7 +109,7 @@ export function FamilyDialog({ family, unmapped, error }: FamilyDialogProps) {
   const [state, setState] = useState<FamilyState>(() => initialState(family));
   const [typed, setTyped] = useState('');
   const router = useRouter();
-  const ids = { name: useId(), kind: useId(), models: useId(), list: useId(), notes: useId() };
+  const ids = { name: useId(), kind: useId(), models: useId(), list: useId(), pm: useId(), notes: useId() };
 
   function onOpenChange(next: boolean) {
     // Opening starts from the saved family (or a blank one), not from an abandoned edit.
@@ -297,6 +299,25 @@ export function FamilyDialog({ family, unmapped, error }: FamilyDialogProps) {
               <p className="text-xs text-muted-foreground">A mono family holds black and waste toner only.</p>
             ) : null}
           </fieldset>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={ids.pm} className="text-sm font-medium">
+              PM interval (pages) <span className="font-normal text-muted-foreground">(optional)</span>
+            </label>
+            <Input
+              id={ids.pm}
+              name="pmInterval"
+              inputMode="numeric"
+              value={state.pmInterval}
+              onChange={(e) => setState((s) => ({ ...s, pmInterval: e.target.value }))}
+              placeholder="Global interval"
+              className="h-8 w-40 tabular"
+            />
+            <p className="text-xs text-muted-foreground">
+              Pages between preventive-maintenance visits for these models. Leave blank to use the global interval
+              in PM settings.
+            </p>
+          </div>
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor={ids.notes} className="text-sm font-medium">

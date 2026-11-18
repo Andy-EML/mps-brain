@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { SiteStockError, deleteFamily, saveFamily } from '@mps/db/queries';
+import { SettingsError, SiteStockError, deleteFamily, saveFamily, setFamilyPmInterval } from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { parseFamilyForm, parseFamilyId } from '@/lib/family-form';
@@ -23,19 +23,26 @@ function fail(code: string, dialog: string): never {
   redirect(`${PAGE}?error=${encodeURIComponent(code)}&errorFor=${encodeURIComponent(dialog)}`);
 }
 
-/** *Add family* and a row's *Edit*: the same form, with `id` for an edit. */
+/**
+ * *Add family* and a row's *Edit*: the same form, with `id` for an edit. The optional PM interval
+ * is saved after the family (it needs the new family's id); blank clears it back to the global one.
+ */
 export async function saveFamilyAction(formData: FormData): Promise<void> {
   const user = await requireUser();
   let dialog = 'add';
   try {
-    const args = parseFamilyForm(formData);
+    const { pmIntervalPages, ...args } = parseFamilyForm(formData);
     if (args.id !== undefined) dialog = `family-${args.id}`;
-    await saveFamily(getDb(), { ...args, userId: user.userId });
+    const db = getDb();
+    const { familyId } = await saveFamily(db, { ...args, userId: user.userId });
+    await setFamilyPmInterval(db, familyId, pmIntervalPages);
   } catch (err) {
     if (err instanceof SiteStockError) fail(err.code, dialog);
+    if (err instanceof SettingsError) fail('bad_value', dialog);
     throw err;
   }
   revalidatePath(PAGE);
+  revalidatePath('/pm');
 }
 
 /** A row's *Delete*, offered only for a family no shelf uses; `deleteFamily` checks again. */

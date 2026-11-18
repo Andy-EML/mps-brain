@@ -1,7 +1,7 @@
 import { normaliseSerial } from '@mps/core';
 import { drmsEquipment, vantageEquipment, type Db } from '@mps/db';
 import type { DrmsEquipment } from '@mps/drms';
-import type { ListOptions, SalesOrderListOptions, VantageRecord } from '@mps/vantage';
+import type { ListOptions, MeterReadingListOptions, SalesOrderListOptions, VantageRecord, WorkUnitListOptions } from '@mps/vantage';
 
 /** A `listSalesOrders` stub that records its options, or throws the error it was handed. */
 export function fakeVantageOrders(orders: VantageRecord[] | Error) {
@@ -13,6 +13,55 @@ export function fakeVantageOrders(orders: VantageRecord[] | Error) {
         calls.push(opts);
         if (orders instanceof Error) throw orders;
         return orders;
+      },
+    },
+  };
+}
+
+export function fakeVantageMeters(readings: VantageRecord[] | Error, types: VantageRecord[] = []) {
+  const calls: MeterReadingListOptions[] = [];
+  return {
+    calls,
+    client: {
+      async listMeterTypes() {
+        return types;
+      },
+      async listMeterReadings(opts: MeterReadingListOptions) {
+        calls.push(opts);
+        if (readings instanceof Error) throw readings;
+        return readings;
+      },
+    },
+  };
+}
+
+/** A `listEquipmentContracts` stub that returns the rows, or throws the error it was handed. */
+export function fakeVantageContracts(rows: VantageRecord[] | Error) {
+  let calls = 0;
+  return {
+    get calls() {
+      return calls;
+    },
+    client: {
+      async listEquipmentContracts() {
+        calls++;
+        if (rows instanceof Error) throw rows;
+        return rows;
+      },
+    },
+  };
+}
+
+/** A `listWorkUnits` stub that records its options, or throws the error it was handed. */
+export function fakeVantageWork(units: VantageRecord[] | Error) {
+  const calls: WorkUnitListOptions[] = [];
+  return {
+    calls,
+    client: {
+      async listWorkUnits(opts: WorkUnitListOptions) {
+        calls.push(opts);
+        if (units instanceof Error) throw units;
+        return units;
       },
     },
   };

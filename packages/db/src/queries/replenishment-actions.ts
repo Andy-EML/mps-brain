@@ -1,17 +1,20 @@
 import { CONSUMABLE_TYPE, REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { auditLog, deviceLinks, replenishmentOrders, replenishmentProposals, siteStockShelves } from '../schema';
+import { auditLog, deviceLinks, replenishmentOrders, replenishmentProposals, siteStockShelves, vantageSalesOrders } from '../schema';
 
 /**
  * The toner-order queue's decisions: approve proposals into a queued Vantage order, reject them,
- * settle an `uncertain` order by hand, retry a `failed` one. Each is one transaction with one
+ * and take a `queued` one out of the queue (raised by hand in Vantage, back to review, or deleted). Each is one transaction with one
  * `audit_log` row, and every state change is a guarded update (`where status = <expected>`) so two
  * operators on stale pages cannot both act on the same row — the loser gets a `ReplenishmentError`
  * and nothing is written.
  *
- * None of these call Vantage. Approval only queues the order; the `vantage-order-submit` job sends
- * it. `userId` is always supplied by the caller, from the session, never from the form.
+ * None of these call Vantage, and the app never places an order there: people raise them by hand in
+ * Vantage. Approval records the intent and queues the order; the `vantage-orders` job's watcher
+ * (`matchSalesOrders`, `./order-watch`) moves it on when the sales order appears. `userId` is always
+ * supplied by the caller, from the session, never from the form. (The watcher is the exception: it
+ * writes no user.)
  */
 
 export type ReplenishmentErrorCode = 'not_pending' | 'mixed_devices' | 'unlinked' | 'bad_quantity' | 'not_found' | 'bad_state' | 'empty';
@@ -31,7 +34,10 @@ export const MAX_ORDER_QUANTITY = 20;
 
 const STALE = 'Some of these have already been decided — refresh the page and try again.';
 
-/** The `CreateConsumableOrder` body for these cartridges, components in K, C, M, Y, waste order. */
+/**
+ * The `request` column's value: these cartridges as components in K, C, M, Y, waste order. Nothing
+ * sends it to Vantage; the column is NOT NULL and keeps a record of what was approved.
+ */
 function orderRequest(lines: { colour: ReplenishColour; quantity: number }[]) {
   const components = [...lines]
     .sort((a, b) => REPLENISH_COLOURS.indexOf(a.colour) - REPLENISH_COLOURS.indexOf(b.colour))
@@ -54,10 +60,10 @@ export interface ShelfAdjust {
   by: number;
 }
 
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 /** Moves shelf `used` counts by `sign * by`, never below zero. */
-async function adjustShelfUsed(tx: Tx, adjusts: ShelfAdjust[], sign: 1 | -1): Promise<void> {
+export async function adjustShelfUsed(tx: Tx, adjusts: ShelfAdjust[], sign: 1 | -1): Promise<void> {
   for (const a of adjusts) {
     const field = USED_FIELD[a.colour];
     await tx
@@ -73,9 +79,9 @@ export interface ApproveItem {
 }
 
 /**
- * Turns one device's pending proposals into a single `queued` order whose `request` is exactly the
- * `CreateConsumableOrder` body, components in K, C, M, Y, waste order. The order goes to the
- * device's **current** link, not the equipment recorded when the proposal was raised.
+ * Turns one device's pending proposals into a single `queued` order whose `request` records the
+ * approved components, in K, C, M, Y, waste order. The order is for the device's **current** link,
+ * not the equipment recorded when the proposal was raised.
  */
 export async function approveProposals(
   db: Db,
@@ -158,9 +164,8 @@ export async function approveProposals(
 }
 
 /**
- * Says no to proposals (any devices), all or nothing. Accepts `pending` ones and `failed` ones —
- * Vantage refused the order and the operator does not want it retried; the order row stays
- * `failed` as history. Suppresses re-proposing for a while.
+ * Says no to proposals (any devices), all or nothing. Only `pending` ones can be rejected.
+ * Suppresses re-proposing for a while.
  */
 export async function rejectProposals(
   db: Db,
@@ -173,29 +178,19 @@ export async function rejectProposals(
 
   return db.transaction(async (tx) => {
     const p = replenishmentProposals;
-    const before = await tx
-      .select({ id: p.id, status: p.status, colour: p.colour, quantity: p.quantity, shelfId: p.shelfId })
-      .from(p)
-      .where(inArray(p.id, ids));
     const done = await tx
       .update(p)
       .set({ status: 'rejected', decidedBy: args.userId, decidedAt: now, note })
-      .where(and(inArray(p.id, ids), inArray(p.status, ['pending', 'failed'])))
+      .where(and(inArray(p.id, ids), eq(p.status, 'pending')))
       .returning({ id: p.id });
     if (done.length !== ids.length) throw new ReplenishmentError(STALE, 'not_pending');
-    // A failed top-up had already come off the shelf's used count when it was approved; the order
-    // never happened, so put it back. A pending one never touched the shelf.
-    const shelfAdjust: ShelfAdjust[] = before.flatMap((r) =>
-      r.status === 'failed' && r.shelfId !== null ? [{ shelfId: r.shelfId, colour: r.colour, by: r.quantity }] : [],
-    );
-    await adjustShelfUsed(tx, shelfAdjust, 1);
     await tx.insert(auditLog).values({
       at: now,
       userId: args.userId,
       action: 'proposal.reject',
       entity: 'proposal',
       entityIds: ids,
-      details: { note, ...(shelfAdjust.length > 0 && { shelfAdjust }) },
+      details: { note },
     });
     return { rejected: done.length };
   });
@@ -204,7 +199,7 @@ export async function rejectProposals(
 async function loadOrder(tx: Pick<Db, 'select'>, orderId: number) {
   const o = replenishmentOrders;
   const [row] = await tx
-    .select({ id: o.id, status: o.status, drmsId: o.drmsEquipmentId, vantageReference: o.vantageReference, error: o.error, submittedAt: o.submittedAt })
+    .select({ id: o.id, status: o.status })
     .from(o)
     .where(eq(o.id, orderId));
   if (!row) throw new ReplenishmentError('That order no longer exists — refresh the page.', 'not_found');
@@ -212,109 +207,175 @@ async function loadOrder(tx: Pick<Db, 'select'>, orderId: number) {
 }
 
 /**
- * Settles an `uncertain` order (the POST timed out or got a 5xx, so it may or may not exist in
- * Vantage) after a person has checked Vantage. `ordered` → `submitted` with the reference they
- * found and its proposals `ordered`; `failed` → `failed` and its proposals `failed`, which the
- * operator can then retry.
+ * The first step of every way out of `queued`: the guarded update that decides who won. Any other
+ * status has its own flow.
  */
-export async function resolveOrder(
+async function leaveQueue(tx: Tx, orderId: number, set: Partial<typeof replenishmentOrders.$inferInsert>): Promise<void> {
+  const order = await loadOrder(tx, orderId);
+  if (order.status !== 'queued') throw new ReplenishmentError('Only a queued order can be changed here.', 'bad_state');
+  const o = replenishmentOrders;
+  const done = await tx
+    .update(o)
+    .set(set)
+    .where(and(eq(o.id, orderId), eq(o.status, 'queued')))
+    .returning({ id: o.id });
+  if (done.length === 0) throw new ReplenishmentError(STALE, 'bad_state');
+}
+
+/**
+ * This order's proposals that are still `approved`: a colour rejected before a retry stays rejected.
+ * The rest of an order's proposals have already been dealt with and are left alone.
+ */
+function approvedOn(orderId: number) {
+  const p = replenishmentProposals;
+  return and(eq(p.orderId, orderId), eq(p.status, 'approved'));
+}
+
+/**
+ * The sales order(s) an order's `ordered` proposals were matched to, in proposal order: the first
+ * one's id for `vantage_sales_order_id`, every distinct reference for `vantage_reference`
+ * ("SO1, SO2"). Both null while nothing on the order has been matched.
+ */
+export async function salesOrderLinkOf(
+  tx: Pick<Db, 'select'>,
+  orderId: number,
+): Promise<{ vantageSalesOrderId: number | null; vantageReference: string | null }> {
+  const rows = await tx
+    .select({ salesOrderId: replenishmentProposals.vantageSalesOrderId, reference: vantageSalesOrders.reference })
+    .from(replenishmentProposals)
+    .leftJoin(vantageSalesOrders, eq(vantageSalesOrders.vantageId, replenishmentProposals.vantageSalesOrderId))
+    .where(
+      and(
+        eq(replenishmentProposals.orderId, orderId),
+        eq(replenishmentProposals.status, 'ordered'),
+        isNotNull(replenishmentProposals.vantageSalesOrderId),
+      ),
+    )
+    .orderBy(replenishmentProposals.id);
+  const refs: string[] = [];
+  for (const r of rows) if (r.reference && !refs.includes(r.reference)) refs.push(r.reference);
+  return { vantageSalesOrderId: rows[0]?.salesOrderId ?? null, vantageReference: refs.length > 0 ? refs.join(', ') : null };
+}
+
+const MOVED_PROPOSAL = {
+  id: replenishmentProposals.id,
+  colour: replenishmentProposals.colour,
+  quantity: replenishmentProposals.quantity,
+  shelfId: replenishmentProposals.shelfId,
+};
+
+/** An approved top-up came off the shelf's used count; these rows' quantities go back on. */
+function shelfAdjustOf(rows: { colour: ReplenishColour; quantity: number; shelfId: number | null }[]): ShelfAdjust[] {
+  return rows.flatMap((r) => (r.shelfId === null ? [] : [{ shelfId: r.shelfId, colour: r.colour, by: r.quantity }]));
+}
+
+/**
+ * After a person takes the still-`approved` proposals off a `queued` order, what is left of it. An
+ * order the watcher had partly matched really was ordered in part, so it ends `submitted` (linked to
+ * the sales order(s) that closed its other colours) rather than `cancelled`. An order with nothing
+ * ordered on it stays `cancelled`. Returns the ids of the proposals that stayed `ordered`.
+ */
+async function endPartialOrder(tx: Tx, orderId: number, userId: number, now: Date): Promise<number[]> {
+  const kept = await tx
+    .select({ id: replenishmentProposals.id })
+    .from(replenishmentProposals)
+    .where(and(eq(replenishmentProposals.orderId, orderId), eq(replenishmentProposals.status, 'ordered')))
+    .orderBy(replenishmentProposals.id);
+  if (kept.length === 0) return [];
+  const link = await salesOrderLinkOf(tx, orderId);
+  await tx
+    .update(replenishmentOrders)
+    .set({ status: 'submitted', submittedAt: now, resolvedBy: userId, resolvedAt: now, ...link })
+    .where(eq(replenishmentOrders.id, orderId));
+  return kept.map((k) => k.id);
+}
+
+/**
+ * A person has raised this `queued` order by hand in Vantage and says which one it is. `submitted`
+ * with that reference, its proposals `ordered`; shelf counts stay as they are, having come off at
+ * approval. Linking that reference to a pulled sales order is the watcher's job (`matchSalesOrders`).
+ * On a partly matched order only the colours still `approved` are closed here, and the typed
+ * reference is the order's.
+ */
+export async function markOrderOrdered(
   db: Db,
-  args: { orderId: number; outcome: 'ordered' | 'failed'; reference?: string; userId: number; now?: Date },
+  args: { orderId: number; reference?: string; userId: number; now?: Date },
 ): Promise<void> {
   const now = args.now ?? new Date();
   const reference = args.reference?.trim() || null;
-  // The operator has just found the order in Vantage, so they can say which one it is.
-  if (args.outcome === 'ordered' && !reference) {
-    throw new ReplenishmentError('Enter the Vantage order reference you found for this order.', 'bad_state');
-  }
+  if (!reference) throw new ReplenishmentError('Enter the Vantage order reference for this order.', 'bad_state');
   await db.transaction(async (tx) => {
-    const order = await loadOrder(tx, args.orderId);
-    if (order.status !== 'uncertain') throw new ReplenishmentError('Only an order whose outcome is unknown can be resolved.', 'bad_state');
-
-    const o = replenishmentOrders;
-    const ordered = args.outcome === 'ordered';
-    const done = await tx
-      .update(o)
-      .set(
-        ordered
-          ? { status: 'submitted', vantageReference: reference, submittedAt: order.submittedAt ?? now, resolvedBy: args.userId, resolvedAt: now }
-          : { status: 'failed', error: order.error ?? 'Marked as not placed in Vantage by an operator.', resolvedBy: args.userId, resolvedAt: now },
-      )
-      .where(and(eq(o.id, args.orderId), eq(o.status, 'uncertain')))
-      .returning({ id: o.id });
-    if (done.length === 0) throw new ReplenishmentError(STALE, 'bad_state');
-
-    await tx
-      .update(replenishmentProposals)
-      .set({ status: ordered ? 'ordered' : 'failed' })
-      .where(and(eq(replenishmentProposals.orderId, args.orderId), eq(replenishmentProposals.status, 'approved')));
+    await leaveQueue(tx, args.orderId, { status: 'submitted', vantageReference: reference, submittedAt: now, resolvedBy: args.userId, resolvedAt: now });
+    const p = replenishmentProposals;
+    const moved = await tx.update(p).set({ status: 'ordered' }).where(approvedOn(args.orderId)).returning({ id: p.id });
     await tx.insert(auditLog).values({
       at: now,
       userId: args.userId,
-      action: 'order.resolve',
+      action: 'order.mark_ordered',
       entity: 'order',
       entityIds: [args.orderId],
-      details: { outcome: args.outcome, reference },
+      details: { reference, proposalIds: moved.map((m) => m.id) },
     });
   });
 }
 
 /**
- * Puts a `failed` order back in the queue; the submit job sends it again. The request body is
- * rebuilt from the proposals still `failed` (a colour rejected since would otherwise be POSTed).
- * Refused when the engine has since raised a new live proposal for one of its colours —
- * a failed proposal is not "live", so that can happen — because re-approving would give the
- * device two live proposals for one colour. A failed shelf top-up also clashes with a newer live
- * top-up for that shelf and colour, which may sit on another device of the shelf.
+ * Undoes an approval: the `queued` order is `cancelled` and its proposals go back to `pending` as
+ * if never decided, keeping the quantity the operator chose. They stay live throughout (pending and
+ * approved share the live-proposal indexes), so the engine cannot have raised a duplicate. A top-up's
+ * quantity goes back on the shelf. Only proposals still `approved` move: on an order the watcher has
+ * partly matched, the colours already in Vantage stay `ordered` and the order ends `submitted`.
  */
-export async function retryOrder(db: Db, args: { orderId: number; userId: number; now?: Date }): Promise<void> {
+export async function returnOrderToReview(db: Db, args: { orderId: number; userId: number; now?: Date }): Promise<void> {
   const now = args.now ?? new Date();
   await db.transaction(async (tx) => {
-    const order = await loadOrder(tx, args.orderId);
-    if (order.status !== 'failed') throw new ReplenishmentError('Only a failed order can be retried.', 'bad_state');
-
-    const p = replenishmentProposals;
-    const failed = await tx
-      .select({ colour: p.colour, quantity: p.quantity, shelfId: p.shelfId })
-      .from(p)
-      .where(and(eq(p.orderId, args.orderId), eq(p.status, 'failed')));
-    if (failed.length === 0) throw new ReplenishmentError('This order has nothing left to retry.', 'bad_state');
-    const live = inArray(p.status, ['pending', 'approved']);
-    const [clash] = await tx
-      .select({ colour: p.colour })
-      .from(p)
-      .where(and(eq(p.drmsEquipmentId, order.drmsId), inArray(p.colour, failed.map((f) => f.colour)), live));
-    if (clash) {
-      throw new ReplenishmentError(`A newer ${clash.colour} proposal for this device is already in the queue; decide that one instead.`, 'bad_state');
-    }
-    const shelfIds = [...new Set(failed.map((f) => f.shelfId).filter((id): id is number => id !== null))];
-    for (const shelfId of shelfIds) {
-      const colours = failed.filter((f) => f.shelfId === shelfId).map((f) => f.colour);
-      const [shelfClash] = await tx
-        .select({ colour: p.colour })
-        .from(p)
-        .where(and(eq(p.shelfId, shelfId), inArray(p.colour, colours), live));
-      if (shelfClash) {
-        throw new ReplenishmentError(`A newer ${shelfClash.colour} top-up for this shelf is already in the queue; decide that one instead.`, 'bad_state');
-      }
-    }
-
-    const o = replenishmentOrders;
-    const done = await tx
-      .update(o)
-      .set({ status: 'queued', error: null, request: orderRequest(failed) })
-      .where(and(eq(o.id, args.orderId), eq(o.status, 'failed')))
-      .returning({ id: o.id });
-    if (done.length === 0) throw new ReplenishmentError(STALE, 'bad_state');
-
-    await tx.update(p).set({ status: 'approved' }).where(and(eq(p.orderId, args.orderId), eq(p.status, 'failed')));
+    await leaveQueue(tx, args.orderId, { status: 'cancelled', resolvedBy: args.userId, resolvedAt: now });
+    const moved = await tx
+      .update(replenishmentProposals)
+      .set({ status: 'pending', orderId: null, decidedBy: null, decidedAt: null })
+      .where(approvedOn(args.orderId))
+      .returning(MOVED_PROPOSAL);
+    const shelfAdjust = shelfAdjustOf(moved);
+    await adjustShelfUsed(tx, shelfAdjust, 1);
+    const keptOrdered = await endPartialOrder(tx, args.orderId, args.userId, now);
     await tx.insert(auditLog).values({
       at: now,
       userId: args.userId,
-      action: 'order.retry',
+      action: 'order.return_to_review',
       entity: 'order',
       entityIds: [args.orderId],
-      details: {},
+      details: { proposalIds: moved.map((m) => m.id), ...(shelfAdjust.length > 0 && { shelfAdjust }), ...(keptOrdered.length > 0 && { keptOrdered }) },
+    });
+  });
+}
+
+/**
+ * Says no to a `queued` order, as Reject does to a proposal: the order is `cancelled` and its
+ * proposals `rejected` with the reason, so they show on the Rejected tab and are held off in the
+ * usual way (the engine looks at their status and `decidedAt`, not at the order). `orderId` stays.
+ * A top-up's quantity goes back on the shelf. Only proposals still `approved` are rejected: colours
+ * the watcher already matched stay `ordered`, and that order ends `submitted`, not `cancelled`.
+ */
+export async function deleteOrder(db: Db, args: { orderId: number; userId: number; note?: string; now?: Date }): Promise<void> {
+  const now = args.now ?? new Date();
+  const note = args.note?.trim() || null;
+  await db.transaction(async (tx) => {
+    await leaveQueue(tx, args.orderId, { status: 'cancelled', resolvedBy: args.userId, resolvedAt: now });
+    const moved = await tx
+      .update(replenishmentProposals)
+      .set({ status: 'rejected', note, decidedBy: args.userId, decidedAt: now })
+      .where(approvedOn(args.orderId))
+      .returning(MOVED_PROPOSAL);
+    const shelfAdjust = shelfAdjustOf(moved);
+    await adjustShelfUsed(tx, shelfAdjust, 1);
+    const keptOrdered = await endPartialOrder(tx, args.orderId, args.userId, now);
+    await tx.insert(auditLog).values({
+      at: now,
+      userId: args.userId,
+      action: 'order.delete',
+      entity: 'order',
+      entityIds: [args.orderId],
+      details: { note, proposalIds: moved.map((m) => m.id), ...(shelfAdjust.length > 0 && { shelfAdjust }), ...(keptOrdered.length > 0 && { keptOrdered }) },
     });
   });
 }

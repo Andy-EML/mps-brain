@@ -5,10 +5,11 @@ import { redirect } from 'next/navigation';
 import {
   ReplenishmentError,
   approveProposals,
+  deleteOrder,
   getReviewDeviceDetail,
+  markOrderOrdered,
   rejectProposals,
-  resolveOrder,
-  retryOrder,
+  returnOrderToReview,
   type ReviewDeviceDetail,
 } from '@mps/db/queries';
 import { decisionBackPath } from '@/components/replenishment';
@@ -60,7 +61,6 @@ export async function approveAction(formData: FormData): Promise<void> {
     const ids = formData.getAll('proposalId').map(Number).filter((n) => Number.isInteger(n) && n > 0);
     const items = ids.map((proposalId) => ({ proposalId, quantity: Number(formData.get(`qty-${proposalId}`) ?? 1) }));
     await approveProposals(getDb(), { drmsId, items, userId });
-    // Task 8 wakes the Vantage order sender here.
   }, decisionBackPath(formData.get('back'), String(formData.get('drmsId') ?? '')));
   revalidateDevice(formData);
 }
@@ -75,23 +75,29 @@ export async function rejectAction(formData: FormData): Promise<void> {
   revalidateDevice(formData);
 }
 
-export async function resolveOrderAction(formData: FormData): Promise<void> {
+/** *Mark ordered*: a person raised this queued order by hand in Vantage and gives its reference. */
+export async function markOrderedAction(formData: FormData): Promise<void> {
   const orderId = idFrom(formData, 'orderId');
-  const outcome = formData.get('outcome') === 'ordered' ? 'ordered' : 'failed';
   const reference = String(formData.get('reference') ?? '').trim().slice(0, 100) || undefined;
-  await run(
-    (userId) => resolveOrder(getDb(), { orderId: requireId(orderId), outcome, reference, userId }),
-    '/orders?tab=in-progress',
-  );
+  const back = decisionBackPath(formData.get('back'), formData.get('drmsId'));
+  await run((userId) => markOrderOrdered(getDb(), { orderId: requireId(orderId), reference, userId }), back);
   revalidateDevice(formData);
 }
 
-export async function retryOrderAction(formData: FormData): Promise<void> {
+/** *Back to review*: undoes the approval of a queued order. */
+export async function returnToReviewAction(formData: FormData): Promise<void> {
   const orderId = idFrom(formData, 'orderId');
-  await run(async (userId) => {
-    await retryOrder(getDb(), { orderId: requireId(orderId), userId });
-    // Task 8 wakes the Vantage order sender here.
-  }, '/orders?tab=in-progress');
+  const back = decisionBackPath(formData.get('back'), formData.get('drmsId'));
+  await run((userId) => returnOrderToReview(getDb(), { orderId: requireId(orderId), userId }), back);
+  revalidateDevice(formData);
+}
+
+/** *Delete*: rejects a queued order's proposals, with the dialog's optional reason. */
+export async function deleteOrderAction(formData: FormData): Promise<void> {
+  const orderId = idFrom(formData, 'orderId');
+  const note = String(formData.get('note') ?? '').trim().slice(0, 500) || undefined;
+  const back = decisionBackPath(formData.get('back'), formData.get('drmsId'));
+  await run((userId) => deleteOrder(getDb(), { orderId: requireId(orderId), userId, note }), back);
   revalidateDevice(formData);
 }
 

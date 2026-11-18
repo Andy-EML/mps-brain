@@ -111,9 +111,9 @@ describe('getReviewDeviceDetail', () => {
       await t.db.insert(counterValues).values(Object.entries(values).map(([name, value]) => ({ snapshotId: s!.id, name, value })));
     }
     await snap('col', 'c1', ago(40), { 'Black:Total': 10_000, 'Full Color:Total': 5_000, BlackTonerLevel: 60, CyanTonerLevel: 50 });
-    await snap('col', 'c2', ago(5), { 'Black:Total': 12_000, 'Full Color:Total': 5_800, BlackTonerLevel: 30, CyanTonerLevel: 2, MagentaTonerLevel: 40, YellowTonerLevel: 70 });
+    await snap('col', 'c2', ago(5), { 'Black:Total': 12_000, 'Full Color:Total': 5_800, 'Scanner/FAX:Scan': 900, BlackTonerLevel: 30, CyanTonerLevel: 2, MagentaTonerLevel: 40, YellowTonerLevel: 70 });
     // A mono device that still reports a stray colour level: the detail must not show it.
-    await snap('mono', 'm1', ago(1), { 'Black:Total': 3_000, BlackTonerLevel: 8, CyanTonerLevel: 0 });
+    await snap('mono', 'm1', ago(1), { 'Black:Total': 3_000, 'Full Color:Total': 7, BlackTonerLevel: 8, CyanTonerLevel: 0 });
 
     await t.db.insert(vantageSalesOrders).values([
       { vantageId: 1, reference: 'SO1', orderDate: ago(30), completedDate: ago(28), vantageEquipmentId: 100, raw: {} },
@@ -162,6 +162,23 @@ describe('getReviewDeviceDetail', () => {
     expect(Object.keys(detail.pagesSince)).toEqual(['black']);
   });
 
+  it('gives the latest black, colour and scan meters on a colour device', async () => {
+    const detail = (await getReviewDeviceDetail(t.db, 'col', NOW))!;
+    expect(detail.meters).toEqual([
+      { key: 'black', value: 12_000 },
+      { key: 'colour', value: 5_800 },
+      { key: 'scan', value: 900 },
+    ]);
+  });
+
+  it('leaves the colour meter off a mono device and keeps a meter with no reading as null', async () => {
+    const detail = (await getReviewDeviceDetail(t.db, 'mono', NOW))!;
+    expect(detail.meters).toEqual([
+      { key: 'black', value: 3_000 },
+      { key: 'scan', value: null },
+    ]);
+  });
+
   it('lists sales orders of any kind newest first, without deleted orders', async () => {
     const detail = (await getReviewDeviceDetail(t.db, 'col', NOW))!;
     expect(detail.orders.map((o) => [o.reference, o.open, o.lines])).toEqual([
@@ -171,12 +188,15 @@ describe('getReviewDeviceDetail', () => {
     ]);
   });
 
-  it('keeps only the last four orders, with toner, part and empty orders alike', async () => {
+  it('keeps only the last six orders, with toner, part and empty orders alike', async () => {
     await t.db.insert(vantageSalesOrders).values([
       { vantageId: 5, reference: 'SO-PARTS', orderDate: ago(6), completedDate: ago(5), vantageEquipmentId: 100, raw: {} },
       { vantageId: 6, reference: 'SO-EMPTY', orderDate: ago(3), vantageEquipmentId: 100, raw: {} },
       // Linked only through its line, as Vantage sometimes does.
       { vantageId: 7, reference: 'SO-MIX', orderDate: ago(2), raw: {} },
+      // With SO1, SO2 and SO-SERVICE from the fixture that makes eight; the two oldest fall off the cap of six.
+      { vantageId: 8, reference: 'SO-OLD-A', orderDate: ago(40), vantageEquipmentId: 100, raw: {} },
+      { vantageId: 9, reference: 'SO-OLD-B', orderDate: ago(50), vantageEquipmentId: 100, raw: {} },
     ]);
     await t.db.insert(vantageSalesOrderLines).values([
       { vantageId: 51, salesOrderId: 5, vantageEquipmentId: 100, quantity: '1', colour: 'unknown', details: '  Drum unit DR-316  ', itemDescription: 'Drum', raw: {} },
@@ -212,7 +232,10 @@ describe('getReviewDeviceDetail', () => {
         ],
       ],
       ['SO-SERVICE', true, [{ kind: 'other', text: 'Engineer visit', quantity: 1 }]],
+      ['SO2', true, [{ kind: 'toner', colour: 'cyan', quantity: 2 }]],
+      ['SO1', false, [{ kind: 'toner', colour: 'black', quantity: 1 }]],
     ]);
+    expect(detail.orders).toHaveLength(6);
   });
 
   it('keeps only toner, waste and parts alarms from the last 30 days', async () => {

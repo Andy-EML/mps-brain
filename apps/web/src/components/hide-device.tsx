@@ -35,12 +35,12 @@ export function HideReasonField({ id }: { id: string }) {
 }
 
 /** Where the device page was opened from, so the action can bring its Back link along. */
-interface Origin {
+export interface Origin {
   from?: string;
   back?: string;
 }
 
-function OriginFields({ from, back }: Origin) {
+export function OriginFields({ from, back }: Origin) {
   return (
     <>
       {from ? <input type="hidden" name="from" value={from} /> : null}

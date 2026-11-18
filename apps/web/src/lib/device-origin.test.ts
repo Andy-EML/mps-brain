@@ -14,6 +14,7 @@ describe('resolveDeviceOrigin', () => {
     expect(resolveDeviceOrigin('registrations', undefined).label).toBe('DRMS registrations');
     expect(resolveDeviceOrigin('alerts', undefined).href).toBe('/alerts');
     expect(resolveDeviceOrigin('issues', undefined).label).toBe('Link issues');
+    expect(resolveDeviceOrigin('pm', '/pm?status=all')).toEqual({ key: 'pm', label: 'PM due', href: '/pm?status=all' });
   });
 
   it('treats an unknown or inherited key as Devices', () => {

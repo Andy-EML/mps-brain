@@ -109,6 +109,11 @@ export default async function CartridgeFamiliesPage({ searchParams }: PageProps<
                     <td className={cn(CELL, 'max-w-[220px]')}>
                       <span className="font-medium">{f.name}</span>
                       {f.notes ? <p className="mt-0.5 text-[12px] text-muted-foreground">{f.notes}</p> : null}
+                      {f.pmIntervalPages !== null ? (
+                        <p className="mt-0.5 text-[12px] text-muted-foreground">
+                          PM every {formatNumber(f.pmIntervalPages)} pages
+                        </p>
+                      ) : null}
                     </td>
                     <td className={CELL}>
                       <ToneBadge tone="muted" dot={false} className="text-[12px]">

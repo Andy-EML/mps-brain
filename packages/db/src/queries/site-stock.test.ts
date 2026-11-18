@@ -15,6 +15,7 @@ import {
 } from '../schema';
 import { createTestDb, type TestDb } from '../testing';
 import {
+  getDeviceShelfOffer,
   getShelf,
   listFamilies,
   listShelfForDevice,
@@ -85,6 +86,8 @@ describe('site stock reads', () => {
   });
   afterEach(() => t.close());
 
+  const db = () => t.db;
+
   it('a shelf has the linked monitored devices of its customer and family, nothing else', async () => {
     const shelves = await listShelves(t.db, {});
     expect(shelves).toHaveLength(1);
@@ -149,6 +152,56 @@ describe('site stock reads', () => {
     expect(await listShelfForDevice(t.db, 'd1')).toEqual({ shelfId, siteName: 'Site One', familyName: 'C-series' });
     expect(await listShelfForDevice(t.db, 'd4')).toBeNull();
     expect(await listShelfForDevice(t.db, 'd5')).toBeNull();
+  });
+
+  describe('getDeviceShelfOffer', () => {
+    it('offers the site and family of a linked device of a family model', async () => {
+      await db().delete(siteStockShelves);
+      expect(await listShelfForDevice(db(), 'd1')).toBeNull();
+      expect(await getDeviceShelfOffer(db(), 'd1')).toEqual({
+        kind: 'create',
+        vantageCustomerId: 1,
+        siteName: 'Site One',
+        familyId: famC,
+        familyName: 'C-series',
+      });
+    });
+
+    it('says when the model is in no family', async () => {
+      expect(await getDeviceShelfOffer(db(), 'd5')).toEqual({ kind: 'no_family' });
+    });
+
+    it('treats a device with no model as in no family', async () => {
+      await db().update(drmsEquipment).set({ modelName: null }).where(eq(drmsEquipment.drmsId, 'd5'));
+      expect(await getDeviceShelfOffer(db(), 'd5')).toEqual({ kind: 'no_family' });
+    });
+
+    it('offers nothing for a device that could not join a shelf: unlinked, missing, gone from DRMS, or an unknown id', async () => {
+      expect(await getDeviceShelfOffer(db(), 'd4')).toBeNull(); // unlinked
+      expect(await getDeviceShelfOffer(db(), 'd6')).toBeNull(); // missing_since set
+      await db().update(drmsEquipment).set({ status: 'Deleted' }).where(eq(drmsEquipment.drmsId, 'd2'));
+      expect(await getDeviceShelfOffer(db(), 'd2')).toBeNull();
+      expect(await getDeviceShelfOffer(db(), 'nope')).toBeNull();
+    });
+
+    it('offers nothing when the Vantage equipment has no customer', async () => {
+      await db().update(vantageEquipment).set({ vantageCustomerId: null }).where(eq(vantageEquipment.vantageId, 10));
+      expect(await getDeviceShelfOffer(db(), 'd1')).toBeNull();
+    });
+
+    it('falls back to the customer id when the customer row has not arrived', async () => {
+      await db().update(vantageEquipment).set({ vantageCustomerId: 99 }).where(eq(vantageEquipment.vantageId, 10));
+      expect(await getDeviceShelfOffer(db(), 'd1')).toMatchObject({ kind: 'create', vantageCustomerId: 99, siteName: 'Customer 99' });
+    });
+
+    it('agrees with shelf membership: a shelf made from the offer holds the device', async () => {
+      await db().delete(siteStockShelves);
+      const offer = await getDeviceShelfOffer(db(), 'd1');
+      if (offer?.kind !== 'create') throw new Error('expected an offer');
+      await db().insert(siteStockShelves).values({ vantageCustomerId: offer.vantageCustomerId, familyId: offer.familyId, countingFrom: NOW });
+      expect(await listShelfForDevice(db(), 'd1')).toMatchObject({ siteName: 'Site One', familyName: 'C-series' });
+      expect(await listShelfForDevice(db(), 'd2')).toMatchObject({ siteName: 'Site One', familyName: 'C-series' });
+    });
   });
 
   it('lists families with models, rated yield and shelf counts', async () => {

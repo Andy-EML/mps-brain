@@ -97,7 +97,8 @@ export async function getOrderStates(
     .where(
       and(
         inArray(replenishmentOrders.vantageEquipmentId, vantageEquipmentIds),
-        inArray(replenishmentOrders.status, ['queued', 'submitting', 'uncertain', 'submitted']),
+        // Not `cancelled`: that order was taken back, so nothing is on its way.
+        inArray(replenishmentOrders.status, ['queued', 'submitted']),
       ),
     )
     // Newest in-flight order first, so ties within this loop resolve deterministically.

@@ -1,4 +1,4 @@
-import type { ReplenishColour } from '@mps/core';
+import { REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
 import type { OrderStatus, ProposalStatus, ProposalTrigger } from '@mps/db';
 import type { EffectiveSettings, SettingSource } from '@mps/db/queries';
 import type { Tone } from '@/components/toner';
@@ -118,28 +118,52 @@ export function settingOrigin(
 
 const ORDER_TONES: Record<OrderStatus, Tone> = {
   queued: 'warn',
-  submitting: 'warn',
   submitted: 'ok',
-  failed: 'critical',
-  uncertain: 'critical',
+  cancelled: 'muted',
 };
 
-/** The badge tone for one of our orders: red when a person has to act on it. */
+/** The badge tone for one of our orders. */
 export function orderStatusTone(status: OrderStatus): Tone {
   return ORDER_TONES[status];
 }
 
 const ORDER_LABELS: Record<OrderStatus, string> = {
   queued: 'Queued',
-  submitting: 'Sending',
   submitted: 'Ordered',
-  failed: 'Failed',
-  uncertain: 'Uncertain',
+  cancelled: 'Cancelled',
 };
 
 /** The badge text for one of our orders. */
 export function orderStatusLabel(status: OrderStatus): string {
   return ORDER_LABELS[status];
+}
+
+/**
+ * A partly matched order, as two short phrases: the colours already in Vantage with their sales
+ * order reference ("Black SO2609-07"), and the colours still waiting ("Cyan, Magenta"). Null unless
+ * the order has both: the watcher closes colours one at a time and the order stays In progress while
+ * any is still `approved`. A colour rejected earlier is neither.
+ */
+export function orderProgress(
+  proposals: { colour: ReplenishColour; status: ProposalStatus; salesOrderReference: string | null }[],
+): { inVantage: string; waiting: string } | null {
+  const byColour = (a: { colour: ReplenishColour }, b: { colour: ReplenishColour }) => REPLENISH_COLOURS.indexOf(a.colour) - REPLENISH_COLOURS.indexOf(b.colour);
+  const done = proposals.filter((p) => p.status === 'ordered').sort(byColour);
+  const waiting = proposals.filter((p) => p.status === 'approved').sort(byColour);
+  if (done.length === 0 || waiting.length === 0) return null;
+  return {
+    inVantage: done.map((p) => [colourLabel(p.colour), p.salesOrderReference].filter(Boolean).join(' ')).join(', '),
+    waiting: waiting.map((p) => colourLabel(p.colour)).join(', '),
+  };
+}
+
+/**
+ * Where an order sits on `/orders`: the In progress tab until it has reached Vantage. Null for a
+ * `cancelled` order, which no tab lists.
+ */
+export function orderHref(status: OrderStatus): string | null {
+  if (status === 'cancelled') return null;
+  return status === 'submitted' ? '/orders?tab=ordered' : '/orders?tab=in-progress';
 }
 
 /** `?error=` codes from the queue's actions (`ReplenishmentErrorCode`), as sentences. */
@@ -178,7 +202,6 @@ export function supersededText(note: string | null): string {
 const PROPOSAL_STATUS: Record<ProposalStatus, { text: string; href: string }> = {
   pending: { text: 'Awaiting review', href: '/orders' },
   approved: { text: 'Approved', href: '/orders?tab=in-progress' },
-  failed: { text: 'Failed', href: '/orders?tab=in-progress' },
   ordered: { text: 'Ordered', href: '/orders?tab=ordered' },
   rejected: { text: 'Rejected', href: '/orders?tab=rejected' },
   superseded: { text: 'Superseded', href: '/orders?tab=rejected' },

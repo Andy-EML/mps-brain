@@ -111,7 +111,7 @@ describe('statLines', () => {
 });
 
 describe('JOB_CARDS', () => {
-  it('covers all nine queues and flags the ones that call an external API', () => {
+  it('covers all twelve queues and flags the ones that call an external API', () => {
     expect(JOB_CARDS.map((c) => c.queue)).toEqual([
       'vantage-pull',
       'drms-pull',
@@ -119,6 +119,9 @@ describe('JOB_CARDS', () => {
       'drms-snapshot',
       'drms-alarms',
       'vantage-orders',
+      'vantage-meters',
+      'vantage-contracts',
+      'vantage-work',
       'replenish-evaluate',
       'drms-registration-scan',
       'drms-registration-submit',

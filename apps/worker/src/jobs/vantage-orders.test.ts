@@ -1,5 +1,6 @@
 import { AuthError, RateLimitError } from '@mps/core';
-import { deviceLinks, drmsEquipment, syncRuns, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
+import { deviceLinks, drmsEquipment, replenishmentOrders, replenishmentProposals, syncRuns, users, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
+import { approveProposals } from '@mps/db/queries';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { QUEUES } from '@mps/queue';
 import { eq } from 'drizzle-orm';
@@ -193,6 +194,64 @@ describe('runVantageOrders', () => {
       expect(result.stats).toMatchObject({ orders: 0, lines: 0 });
       expect(result.errorSample).toContain('stopped');
     }
+  });
+
+  describe('the order watcher after a pull', () => {
+    async function queuedBlackOrder() {
+      await t.db.insert(drmsEquipment).values({ drmsId: 'd1', modelName: 'Xerox B310', serial: 'S1', isColour: false, raw: {} });
+      await t.db.insert(vantageEquipment).values({ vantageId: 5001, raw: {} });
+      await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'd1', vantageEquipmentId: 5001, method: 'serial' });
+      const [p] = await t.db
+        .insert(replenishmentProposals)
+        .values({ drmsEquipmentId: 'd1', vantageEquipmentId: 5001, colour: 'black', trigger: 'threshold', status: 'pending', createdAt: new Date('2026-09-17T08:00:00Z') })
+        .returning();
+      const [u] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning();
+      const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: p!.id, quantity: 2 }], userId: u!.id, now: new Date('2026-09-17T09:00:00Z') });
+      return orderId;
+    }
+
+    it('closes an approved order whose sales order was just pulled, and counts it in the stats', async () => {
+      const orderId = await queuedBlackOrder();
+      const v = fakeVantageOrders([order(1, { OrderDate: '2026-09-17T00:00:00Z' })]);
+
+      const result = await runVantageOrders({ db: t.db, vantage: v.client, now: () => NOW });
+
+      expect(result).toMatchObject({ status: 'success', stats: { orders: 1, watchLinked: 0, watchMatched: 1, watchCompleted: 1, watchTopUpsSuperseded: 0 } });
+      const [row] = await t.db.select().from(replenishmentOrders).where(eq(replenishmentOrders.id, orderId));
+      expect(row).toMatchObject({ status: 'submitted', vantageSalesOrderId: 1, vantageReference: 'SO2609-01' });
+    });
+
+    it('does not run the watcher when the pull stopped early', async () => {
+      let ran = false;
+      const result = await runVantageOrders({
+        db: t.db,
+        vantage: fakeVantageOrders(new RateLimitError('429', new Date(NOW.getTime() + 60_000))).client,
+        now: () => NOW,
+        match: async () => {
+          ran = true;
+          return { linked: 0, matched: 0, completed: 0, topUpsSuperseded: 0 };
+        },
+      });
+      expect(result.status).toBe('partial');
+      expect(ran).toBe(false);
+    });
+
+    it('keeps the pull when the watcher throws, and says so in the stats', async () => {
+      const v = fakeVantageOrders([order(1), order(2)]);
+      const result = await runVantageOrders({
+        db: t.db,
+        vantage: v.client,
+        now: () => NOW,
+        match: async () => {
+          throw new Error('boom');
+        },
+      });
+
+      // Still a success, so the next pull starts from here instead of re-fetching the same window.
+      expect(result).toMatchObject({ status: 'success', stats: { orders: 2, lines: 2, watcherFailed: true }, errorSample: 'order watcher failed: Error: boom' });
+      expect(await t.db.select().from(vantageSalesOrders)).toHaveLength(2);
+      expect(await t.db.select().from(vantageSalesOrderLines)).toHaveLength(2);
+    });
   });
 
   it('lets an unexpected error fail the run', async () => {

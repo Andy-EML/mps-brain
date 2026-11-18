@@ -19,6 +19,7 @@ const proposal = (over: Partial<QueueProposal> = {}): QueueProposal => ({
   note: null,
   shelfId: null,
   orderId: null,
+  salesOrderReference: null,
   lastOrder: null,
   openOrder: null,
   ...over,

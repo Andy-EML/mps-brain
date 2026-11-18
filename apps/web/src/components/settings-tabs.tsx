@@ -4,6 +4,7 @@ import { cn } from 'cn';
 const TABS = [
   { href: '/settings/replenishment', label: 'Replenishment' },
   { href: '/settings/cartridge-families', label: 'Cartridge families' },
+  { href: '/settings/pm', label: 'Preventive maintenance' },
 ] as const;
 
 export type SettingsTab = (typeof TABS)[number]['href'];

@@ -1,0 +1,131 @@
+import { DEFAULT_PM_SETTINGS, inPmView, type PmRow, type PmSettings, type PmStatus, type PmView } from '@mps/db/queries';
+// Relative, not `@/`: vitest has no path alias.
+import { overdueKind } from '../../../components/pm-status';
+
+/**
+ * The `/pm` page's search params, shared with its CSV export. `view` is the tab — Due (the
+ * default), Booked, Dismissed or All; `status` narrows within it to one PM status (`all` = any).
+ */
+
+export const PM_VIEWS = ['due', 'booked', 'dismissed', 'all'] as const satisfies readonly (PmView | 'all')[];
+export const PM_STATUSES = ['overdue', 'due_soon', 'held', 'booked', 'unknown', 'ok'] as const satisfies readonly PmStatus[];
+export const OVERDUE_FILTERS = ['all', 'pages', 'time'] as const;
+
+export type PmViewFilter = (typeof PM_VIEWS)[number];
+export type PmStatusFilter = PmStatus | 'all';
+export type OverdueFilter = (typeof OVERDUE_FILTERS)[number];
+
+export interface PmFilters {
+  view: PmViewFilter;
+  status: PmStatusFilter;
+  customer: string | undefined;
+  family: number | undefined;
+  q: string | undefined;
+  /** Narrows overdue rows by reason; other statuses are left alone. */
+  overdue: OverdueFilter;
+}
+
+type Params = URLSearchParams | Record<string, string | string[] | undefined>;
+
+function get(params: Params, key: string): string | undefined {
+  if (params instanceof URLSearchParams) return params.get(key) ?? undefined;
+  const v = params[key];
+  return Array.isArray(v) ? v[0] : v;
+}
+
+const text = (v: string | undefined): string | undefined => v?.trim() || undefined;
+
+export function parsePmFilters(params: Params): PmFilters {
+  const view = get(params, 'view');
+  const status = get(params, 'status');
+  const familyRaw = get(params, 'family')?.trim();
+  const family = familyRaw && /^\d+$/.test(familyRaw) ? Number(familyRaw) : undefined;
+  const overdue = get(params, 'overdue');
+  return {
+    view: PM_VIEWS.includes(view as PmViewFilter) ? (view as PmViewFilter) : 'due',
+    status: PM_STATUSES.includes(status as PmStatus) ? (status as PmStatus) : 'all',
+    customer: text(get(params, 'customer')),
+    family,
+    // The shared SearchInput submits `search`; `q` is accepted too.
+    q: text(get(params, 'search')) ?? text(get(params, 'q')),
+    overdue: OVERDUE_FILTERS.includes(overdue as OverdueFilter) ? (overdue as OverdueFilter) : 'all',
+  };
+}
+
+// The tab rule lives in @mps/db (`inPmView`, also used by `listPmDue`); re-exported for the page.
+export { inPmView };
+
+export type DueKind = 'pages' | 'time';
+export type DueSoonSettings = Pick<PmSettings, 'dueSoonPct' | 'dueSoonDays'>;
+const DAY_MS = 86_400_000;
+
+/**
+ * Why a Due-tab row needs PM, for the "Due by pages" / "Due by time" chips. Overdue follows its
+ * reason (`pages` is pages; `time_cap` and `no_visit_12m` are time). Due soon is by pages when the
+ * interval is `dueSoonPct` used or the estimated due date is within `dueSoonDays`, and by time when
+ * the time cap is within `dueSoonDays`. A held machine in the list is past its interval or its cap.
+ * A row can be both; a row that is neither (a booking that went unseen) is in no chip.
+ */
+export function dueKinds(r: PmRow, now: Date, soon: DueSoonSettings = DEFAULT_PM_SETTINGS): DueKind[] {
+  const { status, reason, pctUsed, pagesSince, estDueDate, timeCapDate } = r.result;
+  const nowMs = now.getTime();
+  const within = (d: Date | null) => d !== null && d.getTime() - nowMs <= soon.dueSoonDays * DAY_MS;
+  let pages = false;
+  let time = false;
+  if (status === 'overdue') {
+    const kind = overdueKind(reason);
+    pages = kind === 'pages';
+    time = kind === 'time';
+  } else if (status === 'due_soon') {
+    pages = (pctUsed !== null && pctUsed >= soon.dueSoonPct) || within(estDueDate);
+    time = within(timeCapDate);
+  } else if (status === 'held') {
+    pages = pagesSince !== null && pagesSince >= r.intervalPages;
+    time = timeCapDate !== null && nowMs >= timeCapDate.getTime();
+  }
+  return [...(pages ? (['pages'] as const) : []), ...(time ? (['time'] as const) : [])];
+}
+
+/**
+ * The rows a view + status + due-reason selection shows, in the order given. The reason
+ * (`overdue` param: pages / time) narrows the Due tab only.
+ */
+export function applyPmView(
+  rows: PmRow[],
+  f: Pick<PmFilters, 'view' | 'status' | 'overdue'>,
+  now: Date,
+  soon: DueSoonSettings = DEFAULT_PM_SETTINGS,
+): PmRow[] {
+  return rows.filter((r) => {
+    if (!inPmView(r, f.view, now)) return false;
+    if (f.status !== 'all' && r.result.status !== f.status) return false;
+    if (f.overdue !== 'all' && f.view === 'due' && !dueKinds(r, now, soon).includes(f.overdue)) return false;
+    return true;
+  });
+}
+
+export type PmCounts = Record<
+  PmViewFilter | 'overdue' | 'overdueByPages' | 'overdueByTime' | 'dueByPages' | 'dueByTime',
+  number
+>;
+
+/** Tab counts over rows already loaded (customer/family/search applied); the overdue and due-by-reason splits are within Due. */
+export function countPm(rows: PmRow[], now: Date, soon: DueSoonSettings = DEFAULT_PM_SETTINGS): PmCounts {
+  const c: PmCounts = { due: 0, booked: 0, dismissed: 0, all: rows.length, overdue: 0, overdueByPages: 0, overdueByTime: 0, dueByPages: 0, dueByTime: 0 };
+  for (const r of rows) {
+    if (inPmView(r, 'due', now)) {
+      c.due += 1;
+      const kinds = dueKinds(r, now, soon);
+      if (kinds.includes('pages')) c.dueByPages += 1;
+      if (kinds.includes('time')) c.dueByTime += 1;
+      if (r.result.status === 'overdue') {
+        c.overdue += 1;
+        const kind = overdueKind(r.result.reason);
+        if (kind === 'pages') c.overdueByPages += 1;
+        else if (kind === 'time') c.overdueByTime += 1;
+      }
+    } else if (r.view === 'booked') c.booked += 1;
+    else if (r.view === 'dismissed') c.dismissed += 1;
+  }
+  return c;
+}
