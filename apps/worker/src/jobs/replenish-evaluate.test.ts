@@ -1,4 +1,4 @@
-import { users, cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
+import { users, cartridgeChanges, cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, replenishmentSettings, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { hideDevices, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
 import { and, eq } from 'drizzle-orm';
@@ -126,6 +126,39 @@ describe('runReplenishEvaluate', () => {
       ['superseded', 'threshold', 'level recovered'],
       ['pending', 'alarm', null],
     ]);
+  });
+
+  it('runs the spare-black step and reports its stats', async () => {
+    await t.db.update(replenishmentSettings).set({ spareBlackFrom: new Date('2026-09-01T00:00:00Z') }).where(eq(replenishmentSettings.scope, 'default'));
+    await t.db.update(deviceLinks).set({ linkedAt: new Date('2026-09-02T00:00:00Z') });
+    await t.db.insert(deviceAlarms).values({
+      alarmId: 'sb1', drmsEquipmentId: 'mono', receivedTime: new Date('2026-09-10T08:00:00Z'), category: 'toner', status: 'Acknowledged', description: 'Toner Empty(K)', raw: {},
+    });
+    const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+    expect(r.stats).toMatchObject({ spareChanges: 1, spareProposed: 1, spareCovered: 0, spareIneligible: 0 });
+    const rows = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.trigger, 'spare_used'));
+    expect(rows.map((p) => [p.drmsEquipmentId, p.colour])).toEqual([['mono', 'black']]);
+  });
+
+  it('does not supersede a threshold proposal that covers a recorded cartridge change, even once the level recovers', async () => {
+    await t.db.update(replenishmentSettings).set({ spareBlackFrom: new Date('2026-09-01T00:00:00Z') }).where(eq(replenishmentSettings.scope, 'default'));
+    await t.db.update(deviceLinks).set({ linkedAt: new Date('2026-09-02T00:00:00Z') });
+    await t.db.insert(deviceAlarms).values({
+      alarmId: 'sb1', drmsEquipmentId: 'mono', receivedTime: new Date('2026-09-10T08:00:00Z'), category: 'toner', status: 'Acknowledged', description: 'Toner Empty(K)', raw: {},
+    });
+    await levels('mono', 'm1', 10, 50); // black low: a pending threshold proposal T is raised this run
+    const r1 = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+    expect(r1.stats).toMatchObject({ spareChanges: 1, spareProposed: 0, spareCovered: 1 });
+    const [tp] = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.drmsEquipmentId, 'mono'));
+    expect(tp).toMatchObject({ trigger: 'threshold', status: 'pending' });
+    const [chg] = await t.db.select().from(cartridgeChanges);
+    expect(chg).toMatchObject({ outcome: 'covered', proposalId: tp!.id });
+
+    await levels('mono', 'm2', 90, 50); // the cartridge is replaced: the level recovers
+    const r2 = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+    expect(r2.stats).toMatchObject({ superseded: 0 });
+    const [after] = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.id, tp!.id));
+    expect(after).toMatchObject({ status: 'pending', note: null });
   });
 
   describe('an order appearing in Vantage', () => {

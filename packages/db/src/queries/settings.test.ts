@@ -98,6 +98,38 @@ describe('replenishment settings', () => {
     await expect(updateDefaultSettings(t.db, { patch: { thresholdBlack: null }, userId })).rejects.toBeInstanceOf(SettingsError);
   });
 
+  it('default spare_black is on after migration', async () => {
+    const e = await effective();
+    expect(e.unlinked).toMatchObject({ spareBlack: true, spareBlackSource: 'default' });
+    const [d] = await t.db.select().from(replenishmentSettings).where(eq(replenishmentSettings.scope, 'default'));
+    expect(d!.spareBlackFrom).toBeInstanceOf(Date);
+  });
+
+  it('customer off overrides default', async () => {
+    await updateCustomerSettings(t.db, { vantageCustomerId: 7, patch: { spareBlack: false }, userId });
+    const e = await effective();
+    expect(e.linked).toMatchObject({ spareBlack: false, spareBlackSource: 'customer' });
+    expect(e.unlinked).toMatchObject({ spareBlack: true, spareBlackSource: 'default' });
+  });
+
+  it('device on overrides customer off', async () => {
+    await updateCustomerSettings(t.db, { vantageCustomerId: 7, patch: { spareBlack: false }, userId });
+    await updateDeviceSettings(t.db, { drmsIds: ['linked'], patch: { spareBlack: true }, userId });
+    const e = await effective();
+    expect(e.linked).toMatchObject({ spareBlack: true, spareBlackSource: 'device' });
+    expect(e.other).toMatchObject({ spareBlack: false, spareBlackSource: 'customer' });
+  });
+
+  it('patch spareBlack inherit clears device value', async () => {
+    await updateDeviceSettings(t.db, { drmsIds: ['linked'], patch: { spareBlack: false }, userId });
+    await updateDeviceSettings(t.db, { drmsIds: ['linked'], patch: { spareBlack: null }, userId });
+    const rows = await t.db.select().from(replenishmentSettings).where(eq(replenishmentSettings.scope, 'device'));
+    expect(rows).toEqual([]);
+    expect((await effective()).linked).toMatchObject({ spareBlack: true, spareBlackSource: 'default' });
+    await expect(updateDefaultSettings(t.db, { patch: { spareBlack: null }, userId })).rejects.toBeInstanceOf(SettingsError);
+    expect((await getDeviceSettings(t.db, 'linked'))?.spareBlack).toEqual({ value: true, source: 'default' });
+  });
+
   it('updates the default row', async () => {
     await updateDefaultSettings(t.db, { patch: { thresholdBlack: 12 }, userId });
     expect((await effective()).unlinked?.thresholdBlack).toBe(12);
@@ -122,7 +154,7 @@ describe('replenishment settings', () => {
     let d = await getDefaultSettings(t.db);
     expect(d).toEqual({
       thresholdBlack: 15, thresholdCyan: 10, thresholdMagenta: 10, thresholdYellow: 10,
-      autoReplenish: true, alertsEnabled: true, lastChange: null,
+      autoReplenish: true, alertsEnabled: true, spareBlack: true, lastChange: null,
     });
     await updateDefaultSettings(t.db, { patch: { thresholdBlack: 12 }, userId, now: new Date('2026-09-20T09:00:00Z') });
     // A customer write is newer, but it is not a change to the defaults.

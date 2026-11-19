@@ -29,7 +29,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 
-const FIELDS: SettingsField[] = ['black', 'cyan', 'magenta', 'yellow', 'autoReplenish', 'alertsEnabled'];
+const FIELDS: SettingsField[] = ['black', 'cyan', 'magenta', 'yellow', 'autoReplenish', 'spareBlack', 'alertsEnabled'];
 
 function deviceCount(n: number): string {
   return `${n} linked ${n === 1 ? 'device' : 'devices'}`;

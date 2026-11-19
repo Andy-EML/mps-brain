@@ -428,7 +428,7 @@ export const appState = pgTable('app_state', {
 
 export type SettingScope = 'default' | 'customer' | 'device';
 export type ReplenishColour = 'black' | 'cyan' | 'magenta' | 'yellow' | 'waste';
-export type ProposalTrigger = 'threshold' | 'alarm' | 'site_stock';
+export type ProposalTrigger = 'threshold' | 'alarm' | 'site_stock' | 'spare_used';
 export type ProposalStatus = 'pending' | 'approved' | 'ordered' | 'rejected' | 'superseded';
 export type OrderStatus = 'queued' | 'submitted' | 'cancelled';
 
@@ -453,6 +453,10 @@ export const replenishmentSettings = pgTable(
     thresholdYellow: integer('threshold_yellow'),
     autoReplenish: boolean('auto_replenish'),
     alertsEnabled: boolean('alerts_enabled'),
+    /** Spare black cartridge kept on site; null = inherit. */
+    spareBlack: boolean('spare_black'),
+    /** Default row only: cartridge changes before this are never counted. */
+    spareBlackFrom: ts('spare_black_from'),
     updatedBy: integer('updated_by').references(() => users.id),
     updatedAt: ts('updated_at').notNull().defaultNow(),
   },
@@ -642,7 +646,11 @@ export const siteStockEvents = pgTable(
     shelfId: integer('shelf_id')
       .notNull()
       .references(() => siteStockShelves.id, { onDelete: 'cascade' }),
-    alarmId: text('alarm_id').notNull(),
+    /** Null for level-detected rows (`source = 'level'`). */
+    alarmId: text('alarm_id'),
+    source: text('source', { enum: ['empty_alarm', 'level'] }).notNull().default('empty_alarm'),
+    highSnapshotId: integer('high_snapshot_id'),
+    lowSnapshotId: integer('low_snapshot_id'),
     drmsEquipmentId: text('drms_equipment_id').references(() => drmsEquipment.drmsId),
     colour: text('colour', { enum: ['black', 'cyan', 'magenta', 'yellow', 'waste'] }),
     receivedAt: ts('received_at').notNull(),
@@ -650,7 +658,12 @@ export const siteStockEvents = pgTable(
     reason: text('reason').notNull(),
     createdAt: ts('created_at').notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('site_stock_events_shelf_alarm_uq').on(t.shelfId, t.alarmId)],
+  (t) => [
+    uniqueIndex('site_stock_events_shelf_alarm_uq').on(t.shelfId, t.alarmId),
+    uniqueIndex('site_stock_events_level_uq')
+      .on(t.shelfId, t.drmsEquipmentId, t.colour, t.highSnapshotId)
+      .where(sql`source = 'level'`),
+  ],
 );
 
 /** One per device + colour per episode; see the status table in the spec. */
@@ -663,7 +676,7 @@ export const replenishmentProposals = pgTable(
       .references(() => drmsEquipment.drmsId),
     vantageEquipmentId: integer('vantage_equipment_id'),
     colour: text('colour', { enum: ['black', 'cyan', 'magenta', 'yellow', 'waste'] }).notNull(),
-    trigger: text('trigger', { enum: ['threshold', 'alarm', 'site_stock'] }).notNull(),
+    trigger: text('trigger', { enum: ['threshold', 'alarm', 'site_stock', 'spare_used'] }).notNull(),
     /** Toner % when proposed; null for waste (DRMS has no waste counter). */
     level: doublePrecision('level'),
     threshold: integer('threshold'),
@@ -783,3 +796,32 @@ export const hiddenDevices = pgTable('hidden_devices', {
   hiddenAt: ts('hidden_at').notNull().defaultNow(),
   reason: text('reason'),
 });
+
+/**
+ * A detected black cartridge change (Toner Empty alarm, or a level rise after a low reading), each
+ * decided exactly once: `proposed` | `covered` | `ineligible`. See the spare-black spec.
+ */
+export const cartridgeChanges = pgTable(
+  'cartridge_changes',
+  {
+    id: serial('id').primaryKey(),
+    drmsEquipmentId: text('drms_equipment_id')
+      .notNull()
+      .references(() => drmsEquipment.drmsId),
+    colour: text('colour').notNull(),
+    changedAt: ts('changed_at').notNull(),
+    source: text('source', { enum: ['empty_alarm', 'level'] }).notNull(),
+    alarmId: text('alarm_id'),
+    lowSnapshotId: integer('low_snapshot_id'),
+    highSnapshotId: integer('high_snapshot_id'),
+    lowLevel: doublePrecision('low_level'),
+    highLevel: doublePrecision('high_level'),
+    outcome: text('outcome', { enum: ['proposed', 'covered', 'ineligible'] }).notNull(),
+    reason: text('reason'),
+    proposalId: integer('proposal_id').references(() => replenishmentProposals.id),
+    /** The Vantage order line that covered this change; no FK, lines are replaced wholesale on every pull. */
+    coveredLineId: integer('covered_line_id'),
+    createdAt: ts('created_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('cartridge_changes_uq').on(t.drmsEquipmentId, t.colour, t.source, t.changedAt)],
+);

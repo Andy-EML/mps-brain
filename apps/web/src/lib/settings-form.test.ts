@@ -86,6 +86,16 @@ describe('parseSettingsForm', () => {
     });
   });
 
+  it('parses spareBlack on/off/inherit/keep', () => {
+    expect(parseSettingsForm(form({ spareBlack: 'on' }), colour)).toEqual({ spareBlack: true });
+    expect(parseSettingsForm(form({ spareBlack: 'off' }), colour)).toEqual({ spareBlack: false });
+    expect(parseSettingsForm(form({ spareBlack: 'inherit' }), colour)).toEqual({ spareBlack: null });
+    expect(parseSettingsForm(form({ spareBlack: 'keep' }), colour)).toEqual({});
+    expect(codeOf(() => parseSettingsForm(form({ spareBlack: 'inherit' }), { allowInherit: false, isColour: true }))).toBe(
+      'default_null',
+    );
+  });
+
   it('ignores cyan, magenta and yellow on a mono device, even when they are invalid', () => {
     const patch = parseSettingsForm(
       form({
@@ -133,6 +143,11 @@ describe('describeSettingsPatch', () => {
     expect(describeSettingsPatch({ autoReplenish: true, alertsEnabled: false })).toBe(
       'Turn auto-replenish on and turn no-meter-reading alerts off',
     );
+  });
+
+  it('names spare black on site', () => {
+    expect(describeSettingsPatch({ spareBlack: true })).toBe('Turn spare black on site on');
+    expect(describeSettingsPatch({ spareBlack: null })).toBe('Reset spare black on site to inherited');
   });
 
   it('says so when there is nothing to change', () => {

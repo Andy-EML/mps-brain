@@ -1,0 +1,1 @@
+ALTER TABLE "cartridge_changes" ADD COLUMN "covered_line_id" integer;

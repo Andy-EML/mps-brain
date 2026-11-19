@@ -390,11 +390,15 @@ export function ReviewForm({ drmsId, proposals, unlinked, back, deviceName, shel
   );
 }
 
-/** The reason's colour: red for a low level, amber for a DRMS alarm, plain for a site stock top-up. */
+/**
+ * The reason's colour: red for a low level, amber for a DRMS alarm, plain for a restock — a site
+ * stock top-up, or a spare used (the machine already has a fresh cartridge; this replaces the spare).
+ */
 const TRIGGER_TEXT: Record<QueueProposal['trigger'], string> = {
   threshold: 'text-critical',
   alarm: 'text-warn',
   site_stock: 'text-muted-foreground',
+  spare_used: 'text-muted-foreground',
 };
 
 function ProposalRow({ proposal: p, deviceName }: { proposal: QueueProposal; deviceName?: string }) {

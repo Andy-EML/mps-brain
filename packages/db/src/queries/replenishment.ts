@@ -3,6 +3,7 @@ import { and, count, countDistinct, desc, eq, gte, inArray, lt, sql, type SQL } 
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import {
+  cartridgeChanges,
   drmsEquipment,
   replenishmentOrders,
   replenishmentProposals,
@@ -58,6 +59,19 @@ export interface QueueProposal {
   /** The newest order of this colour on the device's current Vantage equipment, open or not. */
   lastOrder: (OrderRef & { open: boolean }) | null;
   openOrder: OrderRef | null;
+  /**
+   * For a `spare_used` proposal: the detected cartridge change (`cartridge_changes`, outcome
+   * `proposed`) that raised it — when, and for a level change the readings either side. Null for
+   * every other trigger, or when the change row is missing.
+   */
+  change: CartridgeChangeRef | null;
+}
+
+export interface CartridgeChangeRef {
+  source: 'empty_alarm' | 'level';
+  changedAt: Date;
+  lowLevel: number | null;
+  highLevel: number | null;
 }
 
 export interface QueueOrder {
@@ -120,10 +134,16 @@ function selectProposals(db: Db, where: SQL | undefined) {
       shelfId: p.shelfId,
       orderId: p.orderId,
       salesOrderReference: vantageSalesOrders.reference,
+      changeSource: cartridgeChanges.source,
+      changedAt: cartridgeChanges.changedAt,
+      changeLowLevel: cartridgeChanges.lowLevel,
+      changeHighLevel: cartridgeChanges.highLevel,
     })
     .from(p)
     .leftJoin(decider, eq(decider.id, p.decidedBy))
     .leftJoin(vantageSalesOrders, eq(vantageSalesOrders.vantageId, p.vantageSalesOrderId))
+    // A change proposes at most once, so this adds at most one row per proposal.
+    .leftJoin(cartridgeChanges, and(eq(cartridgeChanges.proposalId, p.id), eq(cartridgeChanges.outcome, 'proposed')))
     .where(where);
 }
 
@@ -272,6 +292,10 @@ async function assemble(db: Db, proposals: ProposalRow[], orders: OrderRow[], no
       salesOrderReference: p.salesOrderReference,
       lastOrder: state?.last ?? null,
       openOrder: state?.open ?? null,
+      change:
+        p.changeSource && p.changedAt
+          ? { source: p.changeSource, changedAt: p.changedAt, lowLevel: p.changeLowLevel, highLevel: p.changeHighLevel }
+          : null,
     });
     const shelf = p.shelfId === null ? undefined : shelves.get(p.shelfId);
     if (shelf && !device.shelf) device.shelf = { id: shelf.id, siteName: shelf.siteName, familyName: shelf.familyName, machines: shelf.machines };

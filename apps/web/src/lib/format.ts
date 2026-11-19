@@ -63,6 +63,17 @@ export function formatDate(value: Date | string | null | undefined): string {
   return `${part(p, 'day')} ${part(p, 'month')} ${part(p, 'year')}`;
 }
 
+const dayMonthParts = new Intl.DateTimeFormat('en-GB', { timeZone: TIME_ZONE, day: 'numeric', month: 'short' });
+
+/** `d MMM`, e.g. `8 Sep` — for a recent event where the year goes without saying. */
+export function formatDayMonth(value: Date | string | null | undefined): string {
+  if (value == null) return '—';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const p = dayMonthParts.formatToParts(date);
+  return `${part(p, 'day')} ${part(p, 'month')}`;
+}
+
 /** Coarse "how long ago", for sync freshness lines: `4 minutes ago`, `2 days ago`. */
 export function formatRelative(value: Date | string | null | undefined, now: Date = new Date()): string {
   if (value == null) return 'never';

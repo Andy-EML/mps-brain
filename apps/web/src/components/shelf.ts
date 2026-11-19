@@ -80,6 +80,7 @@ export function coveredColoursText(colours: readonly ReplenishColour[]): string 
 const REASONS: Record<string, string> = {
   first: 'counted, first one from this machine',
   fresh_cartridge: 'counted, a fresh cartridge went in since the last',
+  level_rise: 'counted, a fresh cartridge went in',
   after_recount_days: `counted, more than ${RECOUNT_DAYS} days since the last`,
   repeat: 'repeat, not counted',
   before_counting_start: 'before this shelf existed, not counted',
@@ -90,8 +91,12 @@ export function eventOutcome(event: { counted: boolean; reason: string }): strin
   return REASONS[event.reason] ?? (event.counted ? 'counted' : 'not counted');
 }
 
-/** What the alarm was, from the consumable it counted against: `Toner Empty (black)`, `Waste toner bottle full`. */
-export function eventAlarmText(colour: ReplenishColour | null): string {
+/**
+ * What the alarm was, from the consumable it counted against: `Toner Empty (black)`, `Waste toner
+ * bottle full`. A use seen as a toner level rise (reason `level_rise`, no alarm) says so instead.
+ */
+export function eventAlarmText(colour: ReplenishColour | null, reason?: string): string {
+  if (reason === 'level_rise') return colour === null ? 'Toner level rise' : `Toner level rise (${colour})`;
   if (colour === null) return 'Alarm';
   return colour === 'waste' ? 'Waste toner bottle full' : `Toner Empty (${colour})`;
 }

@@ -78,6 +78,7 @@ export function ReplenishmentCard({
 
   const initial: Partial<Record<SettingsField, SettingsHint>> = {
     autoReplenish: { value: settings.autoReplenish.value, origin: settingOrigin(settings.autoReplenish.source, settings) },
+    spareBlack: { value: settings.spareBlack.value, origin: settingOrigin(settings.spareBlack.source, settings) },
     alertsEnabled: { value: settings.alertsEnabled.value, origin: settingOrigin(settings.alertsEnabled.source, settings) },
   };
   for (const c of colours) {
@@ -90,7 +91,7 @@ export function ReplenishmentCard({
         <h2 className="text-[15px] font-medium">Replenishment</h2>
         <SettingsDialog
           title="Replenishment settings for this device"
-          fields={[...colours, 'autoReplenish', 'alertsEnabled']}
+          fields={[...colours, 'autoReplenish', 'spareBlack', 'alertsEnabled']}
           initial={initial}
           allowInherit
           isColour={isColour}
@@ -155,6 +156,12 @@ export function ReplenishmentCard({
           value={settings.autoReplenish.value ? 'On' : 'Off'}
           origin={initial.autoReplenish?.origin}
           originHref={hrefFor(settings.autoReplenish.source)}
+        />
+        <SettingRow
+          label="Spare black on site"
+          value={settings.spareBlack.value ? 'On' : 'Off'}
+          origin={initial.spareBlack?.origin}
+          originHref={hrefFor(settings.spareBlack.source)}
         />
         <SettingRow
           label="No-meter-reading alerts"

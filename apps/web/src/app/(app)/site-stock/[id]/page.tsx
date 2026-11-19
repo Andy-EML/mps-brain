@@ -190,7 +190,7 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
                       'Unknown machine'
                     )}
                     {' · '}
-                    {eventAlarmText(e.colour)}
+                    {eventAlarmText(e.colour, e.reason)}
                     {' — '}
                     <span className={e.counted ? 'font-medium' : undefined}>{eventOutcome(e)}</span>
                   </li>

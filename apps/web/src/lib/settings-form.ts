@@ -7,7 +7,7 @@ import { SettingsError, type SettingsErrorCode, type SettingsPatch } from '@mps/
  *
  * - thresholds: `threshold-<colour>-mode` = `keep` | `inherit` | `set`, and the number in
  *   `threshold-<colour>` when the mode is `set`;
- * - flags: `autoReplenish` / `alertsEnabled` = `keep` | `inherit` | `on` | `off`.
+ * - flags: `autoReplenish` / `spareBlack` / `alertsEnabled` = `keep` | `inherit` | `on` | `off`.
  *
  * `keep` (or a field the form does not carry, or a mode it does not recognise) leaves the key out,
  * so nothing is written for it; `inherit` gives `null`. Pure, and it throws the same
@@ -31,7 +31,7 @@ const THRESHOLDS: { colour: ThresholdColour; key: 'thresholdBlack' | 'thresholdC
   { colour: 'yellow', key: 'thresholdYellow' },
 ];
 
-const FLAGS = ['autoReplenish', 'alertsEnabled'] as const;
+const FLAGS = ['autoReplenish', 'spareBlack', 'alertsEnabled'] as const;
 
 function text(formData: FormData, name: string): string {
   const value = formData.get(name);
@@ -98,6 +98,7 @@ export function settingsErrorMessage(code: string): string {
 const FLAG_LABELS: Record<(typeof FLAGS)[number], string> = {
   autoReplenish: 'auto-replenish',
   alertsEnabled: 'no-meter-reading alerts',
+  spareBlack: 'spare black on site',
 };
 
 /** `a`, `a and b`, `a, b and c`. */

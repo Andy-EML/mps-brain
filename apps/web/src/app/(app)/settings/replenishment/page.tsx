@@ -17,7 +17,7 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-const FIELDS: SettingsField[] = ['black', 'cyan', 'magenta', 'yellow', 'autoReplenish', 'alertsEnabled'];
+const FIELDS: SettingsField[] = ['black', 'cyan', 'magenta', 'yellow', 'autoReplenish', 'spareBlack', 'alertsEnabled'];
 
 const THRESHOLDS = [
   { field: 'black', key: 'thresholdBlack', label: 'Black' },
@@ -28,6 +28,7 @@ const THRESHOLDS = [
 
 const FLAGS = [
   { field: 'autoReplenish', key: 'autoReplenish', label: 'Auto-replenish' },
+  { field: 'spareBlack', key: 'spareBlack', label: 'Spare black on site' },
   { field: 'alertsEnabled', key: 'alertsEnabled', label: 'No-meter-reading alerts' },
 ] as const;
 
@@ -154,7 +155,7 @@ export default async function ReplenishmentSettingsPage({ searchParams }: PagePr
 
         {customers.length > 0 ? (
           <div className="w-full overflow-x-auto border-t border-line">
-            <table className="w-full min-w-[960px] border-collapse text-left">
+            <table className="w-full min-w-[1040px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-line">
                   <th scope="col" className={HEAD}>Customer</th>
@@ -168,6 +169,7 @@ export default async function ReplenishmentSettingsPage({ searchParams }: PagePr
                     </th>
                   ))}
                   <th scope="col" className={HEAD}>Auto-replenish</th>
+                  <th scope="col" className={HEAD}>Spare black</th>
                   <th scope="col" className={HEAD}>Alerts</th>
                   <th scope="col" className={HEAD}>Changed</th>
                   <th scope="col" className={cn(HEAD, 'text-right')}>

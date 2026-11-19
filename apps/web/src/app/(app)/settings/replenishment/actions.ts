@@ -40,6 +40,7 @@ const RESET_ALL: SettingsPatch = {
   thresholdYellow: null,
   autoReplenish: null,
   alertsEnabled: null,
+  spareBlack: null,
 };
 
 function fail(code: string, dialog: string): never {

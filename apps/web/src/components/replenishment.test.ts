@@ -53,6 +53,39 @@ describe('triggerLabel', () => {
     );
   });
 
+  it('replenishment text for spare_used level: when black was changed and the levels either side', () => {
+    expect(
+      triggerLabel({
+        trigger: 'spare_used',
+        colour: 'black',
+        createdAt: new Date('2026-11-13T02:00:00Z'),
+        change: { source: 'level', changedAt: new Date('2026-11-12T09:00:00Z'), lowLevel: 3, highLevel: 92 },
+      }),
+    ).toBe('Spare used: black changed 12 Nov (3% → 92%)');
+  });
+
+  it('spare_used from alarm: quotes the Toner Empty alarm and its date', () => {
+    expect(
+      triggerLabel({
+        trigger: 'spare_used',
+        colour: 'black',
+        alarmDescription: 'Toner Empty(K)',
+        createdAt: new Date('2026-11-13T02:00:00Z'),
+        change: { source: 'empty_alarm', changedAt: new Date('2026-11-12T09:00:00Z'), lowLevel: null, highLevel: null },
+      }),
+    ).toBe('Spare used: Toner Empty(K) 12 Nov');
+  });
+
+  it('spare_used still reads with no change row: the proposal date, and the London day', () => {
+    // 23:30 UTC on 11 Nov is still 11 Nov in London (GMT in November).
+    expect(triggerLabel({ trigger: 'spare_used', colour: 'black', createdAt: new Date('2026-11-11T23:30:00Z') })).toBe(
+      'Spare used: black changed 11 Nov',
+    );
+    expect(
+      triggerLabel({ trigger: 'spare_used', alarmDescription: 'Toner Empty(K)', createdAt: new Date('2026-11-12T09:00:00Z') }),
+    ).toBe('Spare used: Toner Empty(K) 12 Nov');
+  });
+
   it('drops the device for a top-up when no name is given', () => {
     expect(triggerLabel({ trigger: 'site_stock', colour: 'cyan', createdAt: new Date('2026-10-01T09:00:00Z') })).toBe(
       'Last cyan spare went in 1 Oct 2026',
@@ -167,6 +200,18 @@ describe('compactProposalText', () => {
     expect(
       compactProposalText({ trigger: 'threshold', level: 2, threshold: 15, thresholdSource: 'default', currentLevel: 1 }),
     ).toEqual({ level: '1%', tag: 'below threshold', detail: 'Threshold 15% · default setting · proposed at 2%' });
+  });
+
+  it('shows the level now for a spare_used proposal, tagged, with the change beneath', () => {
+    expect(
+      compactProposalText({
+        trigger: 'spare_used',
+        colour: 'black',
+        level: 92,
+        currentLevel: 90,
+        change: { source: 'level', changedAt: new Date('2026-11-12T09:00:00Z'), lowLevel: 3, highLevel: 92 },
+      }),
+    ).toEqual({ level: '90%', tag: 'spare used', detail: 'Spare used: black changed 12 Nov (3% → 92%)' });
   });
 
   it('leaves out the proposal-time level when it has not moved', () => {

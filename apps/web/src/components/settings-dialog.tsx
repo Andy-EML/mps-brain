@@ -18,8 +18,10 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
-/** A field the dialog can edit: a colour's threshold, or one of the two flags. */
-export type SettingsField = ThresholdColour | 'autoReplenish' | 'alertsEnabled';
+/** A field the dialog can edit: a colour's threshold, or one of the flags. */
+export type SettingsField = ThresholdColour | FlagField;
+
+type FlagField = 'autoReplenish' | 'alertsEnabled' | 'spareBlack';
 
 /** What applies now, shown as a hint beside the field: `Now 15% · default`. */
 export interface SettingsHint {
@@ -60,6 +62,12 @@ const LABELS: Record<SettingsField, string> = {
   yellow: 'Yellow threshold',
   autoReplenish: 'Auto-replenish',
   alertsEnabled: 'No-meter-reading alerts',
+  spareBlack: 'Spare black on site',
+};
+
+/** A line of help under a field's label, for a flag whose name does not say what it does. */
+const HELP: Partial<Record<SettingsField, string>> = {
+  spareBlack: 'When black toner is changed, propose 1 black to replace the spare.',
 };
 
 const CMY: readonly SettingsField[] = ['cyan', 'magenta', 'yellow'];
@@ -69,7 +77,7 @@ const SELECT =
   'h-8 rounded-lg border border-input bg-transparent px-2 text-[13px] transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none dark:bg-input/30';
 
 function isThreshold(field: SettingsField): field is ThresholdColour {
-  return field !== 'autoReplenish' && field !== 'alertsEnabled';
+  return field !== 'autoReplenish' && field !== 'alertsEnabled' && field !== 'spareBlack';
 }
 
 function hintText(hint: SettingsHint | undefined): string | null {
@@ -218,12 +226,15 @@ export function SettingsFormError({ error }: { error?: string | null }) {
 function FieldShell({
   id,
   label,
+  help,
   hint,
   extra,
   children,
 }: {
   id: string;
   label: string;
+  /** What the setting does, under the label. */
+  help?: string;
   hint: SettingsHint | undefined;
   /** Shown under the hint, e.g. Black's "Copy to C, M, Y". */
   extra?: ReactNode;
@@ -236,6 +247,7 @@ function FieldShell({
         <label htmlFor={id} className="text-sm font-medium">
           {label}
         </label>
+        {help ? <p className="text-xs text-muted-foreground">{help}</p> : null}
         {text ? <p className="text-xs text-muted-foreground">{text}</p> : null}
         {extra}
       </div>
@@ -330,13 +342,13 @@ function FlagField({
   hint,
   allowInherit,
 }: {
-  field: 'autoReplenish' | 'alertsEnabled';
+  field: FlagField;
   hint: SettingsHint | undefined;
   allowInherit: boolean;
 }) {
   const id = useId();
   return (
-    <FieldShell id={id} label={LABELS[field]} hint={hint}>
+    <FieldShell id={id} label={LABELS[field]} help={HELP[field]} hint={hint}>
       <select id={id} name={field} defaultValue="keep" className={cn(SELECT, 'w-28')}>
         <option value="keep">Keep</option>
         {allowInherit ? <option value="inherit">Inherit</option> : null}

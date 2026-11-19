@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   auditLog,
+  cartridgeChanges,
   cartridgeFamilies,
   cartridgeFamilyModels,
   counterSnapshots,
@@ -147,6 +148,42 @@ describe('replenishment queue', () => {
     ]);
 
     expect(await listReplenishmentQueue(t.db, { tab: 'review', limit: 1 })).toHaveLength(1);
+  });
+
+  it('carries the detected cartridge change on a spare_used proposal, and none on the others', async () => {
+    await t.db.delete(replenishmentProposals).where(eq(replenishmentProposals.id, black));
+    const changedAt = new Date('2026-09-20T08:00:00Z');
+    const alarmAt = new Date('2026-09-19T08:00:00Z');
+    const [lvl, alm] = await t.db
+      .insert(replenishmentProposals)
+      .values([
+        { drmsEquipmentId: 'd1', vantageEquipmentId: 100, colour: 'black', trigger: 'spare_used', level: 92, status: 'pending', createdAt: NOW },
+        { drmsEquipmentId: 'd2', vantageEquipmentId: 101, colour: 'black', trigger: 'spare_used', alarmId: 'e1', alarmDescription: 'Toner Empty(K)', status: 'rejected', decidedAt: NOW, createdAt: NOW },
+      ])
+      .returning();
+    await t.db.insert(cartridgeChanges).values([
+      // An earlier change on the same device that was covered: no proposal, so never joined.
+      { drmsEquipmentId: 'd1', colour: 'black', changedAt: alarmAt, source: 'level', lowLevel: 1, highLevel: 80, outcome: 'covered' },
+      { drmsEquipmentId: 'd1', colour: 'black', changedAt, source: 'level', lowLevel: 3, highLevel: 92, outcome: 'proposed', proposalId: lvl!.id },
+      { drmsEquipmentId: 'd2', colour: 'black', changedAt: alarmAt, source: 'empty_alarm', alarmId: 'e1', outcome: 'proposed', proposalId: alm!.id },
+    ]);
+
+    const [d1] = await listReplenishmentQueue(t.db, { tab: 'review' });
+    expect(d1!.proposals.find((p) => p.id === lvl!.id)).toMatchObject({
+      trigger: 'spare_used',
+      change: { source: 'level', changedAt, lowLevel: 3, highLevel: 92 },
+    });
+    expect(d1!.proposals.find((p) => p.id === cyan)!.change).toBeNull();
+
+    const rejected = await listReplenishmentQueue(t.db, { tab: 'rejected', now: NOW });
+    const d2 = rejected.find((d) => d.drmsId === 'd2')!;
+    expect(d2.proposals).toEqual([
+      expect.objectContaining({
+        id: alm!.id,
+        alarmDescription: 'Toner Empty(K)',
+        change: { source: 'empty_alarm', changedAt: alarmAt, lowLevel: null, highLevel: null },
+      }),
+    ]);
   });
 
   it('gives each device its colour flag and every latest toner level, proposed or not', async () => {

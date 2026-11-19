@@ -5,6 +5,7 @@ import {
   deviceLinks,
   drmsEquipment,
   replenishmentProposals,
+  replenishmentSettings,
   siteStockEvents,
   siteStockMembers,
   siteStockShelves,
@@ -386,6 +387,110 @@ describe('evaluateSiteStock', () => {
       const run = await evaluateSiteStock(t.db, FIRST_RUN);
       expect(run.stats).toMatchObject({ considered: 1, counted: 1 });
       expect((await shelfFor(300)).usedBlack).toBe(1);
+    });
+  });
+
+  describe('level rises', () => {
+    beforeEach(async () => {
+      await t.db.update(replenishmentSettings).set({ spareBlackFrom: COUNTING_FROM }).where(eq(replenishmentSettings.scope, 'default'));
+    });
+    const levelRows = async () => (await events()).filter((e) => e.source === 'level');
+
+    it('counts a black rise (6 -> 91) with no alarm as one shelf use', async () => {
+      await reading('dA', '2026-09-05 02:00:00', 6);
+      await reading('dA', '2026-09-06 02:00:00', 91);
+      const { stats } = await evaluateSiteStock(t.db, NOW);
+      expect(stats).toMatchObject({ considered: 1, counted: 1 });
+      const rows = await events();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        source: 'level', alarmId: null, drmsEquipmentId: 'dA', colour: 'black', counted: true, reason: 'level_rise',
+        receivedAt: new Date('2026-09-06T02:00:00Z'),
+      });
+      expect(rows[0]!.highSnapshotId).not.toBeNull();
+      expect(rows[0]!.lowSnapshotId).not.toBeNull();
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('counts a counted Empty(K) followed by 5 -> 88 as one use', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Empty(BK)');
+      await reading('dA', '2026-09-06 02:00:00', 5);
+      await reading('dA', '2026-09-07 02:00:00', 88);
+      await evaluateSiteStock(t.db, NOW);
+      expect((await events()).map((e) => [e.source, e.counted])).toEqual([['empty_alarm', true]]);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('records a rise once across reruns', async () => {
+      await reading('dA', '2026-09-05 02:00:00', 6);
+      await reading('dA', '2026-09-06 02:00:00', 91);
+      await evaluateSiteStock(t.db, NOW);
+      const again = await evaluateSiteStock(t.db, new Date('2026-09-22T12:00:00Z'));
+      expect(again.stats).toMatchObject({ considered: 0, counted: 0 });
+      expect(await levelRows()).toHaveLength(1);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('still counts the next real Empty after a counted rise (fresh_cartridge)', async () => {
+      await reading('dA', '2026-09-05 02:00:00', 6);
+      await reading('dA', '2026-09-06 02:00:00', 91);
+      await evaluateSiteStock(t.db, NOW);
+      await alarm('dA', '2026-09-10 08:00:00', 'Toner Empty(BK)');
+      await evaluateSiteStock(t.db, new Date('2026-09-22T12:00:00Z'));
+      expect((await events()).map((e) => [e.source, e.counted, e.reason])).toEqual([
+        ['level', true, 'level_rise'],
+        ['empty_alarm', true, 'fresh_cartridge'],
+      ]);
+      expect(await shelf()).toMatchObject({ usedBlack: 2 });
+    });
+
+    it('leaves waste alone: a waste alarm counts, a rise never counts waste', async () => {
+      await t.db.update(siteStockShelves).set({ holdingWaste: 1 });
+      await alarm('dA', '2026-09-04 08:00:00', 'Waste Toner Bottle Full');
+      await reading('dA', '2026-09-05 02:00:00', 6);
+      await reading('dA', '2026-09-06 02:00:00', 91);
+      await evaluateSiteStock(t.db, NOW);
+      expect(await shelf()).toMatchObject({ usedWaste: 1, usedBlack: 1 });
+      expect((await events()).filter((e) => e.colour === 'waste')).toHaveLength(1);
+    });
+
+    it('counts the Empty weeks after a rise that only reached 70', async () => {
+      await reading('dA', '2026-09-05 02:00:00', 6);
+      await reading('dA', '2026-09-06 02:00:00', 70);
+      await evaluateSiteStock(t.db, NOW);
+      await alarm('dA', '2026-09-26 08:00:00', 'Toner Empty(BK)');
+      await evaluateSiteStock(t.db, new Date('2026-09-27T12:00:00Z'));
+      expect((await events()).map((e) => [e.source, e.counted, e.reason])).toEqual([
+        ['level', true, 'level_rise'],
+        ['empty_alarm', true, 'fresh_cartridge'],
+      ]);
+      expect(await shelf()).toMatchObject({ usedBlack: 2 });
+    });
+
+    it('ignores rises before spare_black_from and counts those after it', async () => {
+      await t.db.update(replenishmentSettings).set({ spareBlackFrom: new Date('2026-09-10T00:00:00Z') }).where(eq(replenishmentSettings.scope, 'default'));
+      await reading('dA', '2026-09-05 02:00:00', 6);
+      await reading('dA', '2026-09-06 02:00:00', 91);
+      await evaluateSiteStock(t.db, NOW);
+      expect(await levelRows()).toEqual([]);
+      expect(await shelf()).toMatchObject({ usedBlack: 0 });
+      await reading('dA', '2026-09-12 02:00:00', 5);
+      await reading('dA', '2026-09-13 02:00:00', 90);
+      await evaluateSiteStock(t.db, NOW);
+      expect(await levelRows()).toHaveLength(1);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('raises a top-up whose trigger is a level rise', async () => {
+      for (const [d, low, high] of [['05', 6, 91], ['10', 5, 90], ['15', 4, 92]] as const) {
+        await reading('dA', `2026-09-${d} 02:00:00`, low);
+        await reading('dA', `2026-09-${String(Number(d) + 1).padStart(2, '0')} 02:00:00`, high);
+      }
+      const { stats } = await evaluateSiteStock(t.db, NOW);
+      expect(stats).toMatchObject({ counted: 3, topUps: 1 });
+      const rows = await t.db.select().from(replenishmentProposals);
+      expect(rows.map((p) => [p.colour, p.quantity, p.drmsEquipmentId, p.alarmId])).toEqual([['black', 3, 'dA', null]]);
+      expect(rows[0]!.alarmDescription).toMatch(/level/i);
     });
   });
 

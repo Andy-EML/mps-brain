@@ -11,3 +11,4 @@ export * from './site-stock';
 export * from './registration';
 export * from './device-name';
 export * from './site-stock-csv';
+export * from './cartridge-change';

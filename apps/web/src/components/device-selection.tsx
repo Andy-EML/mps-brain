@@ -251,7 +251,7 @@ function ActiveBulkBar({ search, filter, filters, page, count }: BulkSettingsBar
       <div className="ml-auto flex items-center gap-2">
         <SettingsDialog
           title={`Change settings on ${formatNumber(count)} ${pluralise(count, 'device')}`}
-          fields={['black', 'cyan', 'magenta', 'yellow', 'autoReplenish', 'alertsEnabled']}
+          fields={['black', 'cyan', 'magenta', 'yellow', 'autoReplenish', 'spareBlack', 'alertsEnabled']}
           allowInherit
           isColour
           action={review}

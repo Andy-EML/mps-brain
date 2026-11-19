@@ -92,6 +92,7 @@ describe('eventOutcome', () => {
     expect(eventOutcome({ counted: true, reason: 'first' })).toBe('counted, first one from this machine');
     expect(eventOutcome({ counted: true, reason: 'fresh_cartridge' })).toBe('counted, a fresh cartridge went in since the last');
     expect(eventOutcome({ counted: true, reason: 'after_recount_days' })).toBe('counted, more than 14 days since the last');
+    expect(eventOutcome({ counted: true, reason: 'level_rise' })).toBe('counted, a fresh cartridge went in');
   });
 
   it('falls back on counted / not counted for a reason it does not know', () => {
@@ -105,5 +106,10 @@ describe('eventAlarmText', () => {
     expect(eventAlarmText('black')).toBe('Toner Empty (black)');
     expect(eventAlarmText('waste')).toBe('Waste toner bottle full');
     expect(eventAlarmText(null)).toBe('Alarm');
+  });
+
+  it('names a level-rise use as a toner level rise, not an alarm', () => {
+    expect(eventAlarmText('black', 'level_rise')).toBe('Toner level rise (black)');
+    expect(eventAlarmText('black', 'fresh_cartridge')).toBe('Toner Empty (black)');
   });
 });

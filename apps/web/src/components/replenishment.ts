@@ -1,9 +1,9 @@
 import { REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
 import type { OrderStatus, ProposalStatus, ProposalTrigger } from '@mps/db';
-import type { EffectiveSettings, SettingSource } from '@mps/db/queries';
+import type { CartridgeChangeRef, EffectiveSettings, SettingSource } from '@mps/db/queries';
 import type { Tone } from '@/components/toner';
 // Relative, not `@/lib/format`: Vitest has no `@/` alias and this module is unit-tested.
-import { formatDate } from '../lib/format';
+import { formatDate, formatDayMonth } from '../lib/format';
 
 /**
  * Pure display helpers for the toner-order queue (`/orders`). Free of JSX so they can be
@@ -31,14 +31,37 @@ export interface TriggerFields {
   /** For a site stock top-up: the consumable whose last spare went in, and when (the proposal time). */
   colour?: ReplenishColour;
   createdAt?: Date | string | null;
+  /** For a `spare_used` proposal: the detected cartridge change that raised it. */
+  change?: CartridgeChangeRef | null;
 }
 
 /**
- * Why the proposal exists: `4% · below 10%`, `DRMS alarm: Toner Near Empty(C)`, or for a site
+ * A `spare_used` proposal's reason: `Spare used: black changed 12 Nov (3% → 92%)` for a level
+ * change, `Spare used: Toner Empty(K) 12 Nov` for one seen as an Empty alarm. Without the change
+ * row it falls back on the proposal's own alarm text and date.
+ */
+function spareUsedLabel(p: TriggerFields): string {
+  const change = p.change ?? null;
+  const when = formatDayMonth(change?.changedAt ?? p.createdAt);
+  const alarm = p.alarmDescription?.trim();
+  if (change?.source === 'empty_alarm' || (!change && alarm)) {
+    return `Spare used: ${alarm || 'Toner Empty(K)'} ${when}`;
+  }
+  const levels =
+    change?.lowLevel != null && change.highLevel != null
+      ? ` (${Math.round(change.lowLevel)}% → ${Math.round(change.highLevel)}%)`
+      : '';
+  return `Spare used: black changed ${when}${levels}`;
+}
+
+/**
+ * Why the proposal exists: `4% · below 10%`, `DRMS alarm: Toner Near Empty(C)`, a spare used
+ * (`Spare used: black changed 12 Nov (3% → 92%)`), or for a site
  * stock top-up `Last black spare went in 19 Oct 2026 (Reception C450i)` — `deviceName` is the
  * machine that raised it, left out when not given (the device page is that machine).
  */
 export function triggerLabel(p: TriggerFields, deviceName?: string): string {
+  if (p.trigger === 'spare_used') return spareUsedLabel(p);
   if (p.trigger === 'site_stock') {
     const what = p.colour ? `Last ${colourLabel(p.colour).toLowerCase()} spare` : 'Last spare';
     const where = deviceName ? ` (${deviceName})` : '';
@@ -85,6 +108,7 @@ export function compactProposalText(
     const description = p.alarmDescription?.trim();
     return { level, tag: 'DRMS alarm', detail: description || 'Raised by a DRMS consumable alarm' };
   }
+  if (p.trigger === 'spare_used') return { level, tag: 'spare used', detail: spareUsedLabel(p) };
   const parts: string[] = [];
   if (p.threshold != null) parts.push(`Threshold ${p.threshold}%`);
   if (p.thresholdSource) parts.push(sourceLabel(p.thresholdSource));

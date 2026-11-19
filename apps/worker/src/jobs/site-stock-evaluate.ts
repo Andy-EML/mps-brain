@@ -1,17 +1,18 @@
-import { MEMBER_GRACE_DAYS, REPLENISH_COLOURS, countUse, siteStockUse, topUpLines, type LevelPoint, type ReplenishColour, type ShelfConsumableCounts, type TonerColour } from '@mps/core';
+import { MEMBER_GRACE_DAYS, REPLENISH_COLOURS, countUse, detectChanges, siteStockUse, topUpLines, type EmptyEvent, type LevelPoint, type LevelReading, type ReplenishColour, type ShelfConsumableCounts, type TonerColour } from '@mps/core';
 import {
   cartridgeFamilies,
   counterSnapshots,
   counterValues,
   deviceAlarms,
   replenishmentProposals,
+  replenishmentSettings,
   siteStockEvents,
   siteStockMembers,
   siteStockShelves,
   type Db,
 } from '@mps/db';
 import { TONER_NAMES, shelfDevicesSubquery } from '@mps/db/queries';
-import { and, asc, desc, eq, gt, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 
 type ShelfRow = typeof siteStockShelves.$inferSelect;
 
@@ -23,6 +24,8 @@ export interface SiteStockStats {
 }
 
 const cap = (c: ReplenishColour) => (c.charAt(0).toUpperCase() + c.slice(1)) as Capitalize<ReplenishColour>;
+
+const LEVEL_LABEL = { black: 'BK', cyan: 'C', magenta: 'M', yellow: 'Y', waste: 'W' } as const;
 
 const USED_COLUMN = {
   black: siteStockShelves.usedBlack,
@@ -146,7 +149,7 @@ export async function evaluateSiteStock(
     const seen = await db
       .select({ shelfId: siteStockEvents.shelfId, alarmId: siteStockEvents.alarmId })
       .from(siteStockEvents)
-      .where(inArray(siteStockEvents.shelfId, [...new Set([...shelfOf.values()].map((s) => s.shelfId))]));
+      .where(and(eq(siteStockEvents.source, 'empty_alarm'), inArray(siteStockEvents.shelfId, [...new Set([...shelfOf.values()].map((s) => s.shelfId))])));
     const seenKeys = new Set(seen.map((s) => `${s.shelfId}:${s.alarmId}`));
 
     for (const a of alarms) {
@@ -159,7 +162,7 @@ export async function evaluateSiteStock(
 
       await db.transaction(async (tx) => {
         const [previous] = await tx
-          .select({ receivedAt: siteStockEvents.receivedAt })
+          .select({ receivedAt: siteStockEvents.receivedAt, source: siteStockEvents.source })
           .from(siteStockEvents)
           .where(
             and(
@@ -183,7 +186,8 @@ export async function evaluateSiteStock(
               and(
                 eq(counterSnapshots.drmsEquipmentId, a.drmsId),
                 eq(counterValues.name, TONER_NAMES[colour as TonerColour]),
-                gt(counterSnapshots.receivedTime, previous.receivedAt),
+                // A level use is recorded at its high reading, which is itself the fresh-cartridge evidence.
+                (previous.source === 'level' ? gte : gt)(counterSnapshots.receivedTime, previous.receivedAt),
                 lte(counterSnapshots.receivedTime, a.receivedAt),
                 isNotNull(counterValues.value),
               ),
@@ -191,13 +195,19 @@ export async function evaluateSiteStock(
           levels = rows.map((r) => ({ at: r.at!, value: r.value! }));
         }
 
-        const { counted, reason } = countUse({
+        let { counted, reason } = countUse({
           colour,
           receivedAt: a.receivedAt,
           countingFrom: shelf.countingFrom,
           previous: previous ?? null,
           levelsSincePrevious: levels,
         });
+        // The first Empty after a counted level rise is the new cartridge running out, even if the
+        // rise only reached 50-79 (countUse would call it a repeat without a reading >= 80).
+        if (!counted && reason === 'repeat' && previous?.source === 'level' && colour !== 'waste' && a.receivedAt > previous.receivedAt) {
+          counted = true;
+          reason = 'fresh_cartridge';
+        }
         const inserted = await tx
           .insert(siteStockEvents)
           .values({ shelfId: shelf.id, alarmId: a.alarmId, drmsEquipmentId: a.drmsId, colour, receivedAt: a.receivedAt, counted, reason, createdAt: now })
@@ -212,6 +222,89 @@ export async function evaluateSiteStock(
         }
       });
       seenKeys.add(`${shelf.id}:${a.alarmId}`);
+    }
+  }
+
+  // Level rises: a counted rise is a shelf use like an Empty. Empties were decided above, so each
+  // (device, colour) starts from its latest counted use (an Empty there absorbs the rise that follows).
+  // Precedence trade-off: Empties are decided first, so when a newer counted Empty lands in the same
+  // window as an older rise, the Empty becomes `since` and that older rise is skipped.
+  // Level history before spare_black_from (ship time) is never looked at, so deploy does not backfill.
+  const [defSettings] = await db
+    .select({ from: replenishmentSettings.spareBlackFrom })
+    .from(replenishmentSettings)
+    .where(eq(replenishmentSettings.scope, 'default'));
+  const levelFloor = defSettings?.from ?? null;
+  if (shelfOf.size > 0) {
+    for (const [drmsId, member] of shelfOf) {
+      const memberStart = levelFloor && levelFloor > member.from ? levelFloor : member.from;
+      const shelf = shelfById.get(member.shelfId)!;
+      for (const colour of member.tracked) {
+        if (colour === 'waste') continue;
+        const [last] = await db
+          .select({ receivedAt: siteStockEvents.receivedAt, source: siteStockEvents.source })
+          .from(siteStockEvents)
+          .where(
+            and(
+              eq(siteStockEvents.shelfId, shelf.id),
+              eq(siteStockEvents.drmsEquipmentId, drmsId),
+              eq(siteStockEvents.colour, colour),
+              eq(siteStockEvents.counted, true),
+            ),
+          )
+          .orderBy(desc(siteStockEvents.receivedAt), desc(siteStockEvents.id))
+          .limit(1);
+        const since = last && last.receivedAt > memberStart ? last.receivedAt : memberStart;
+        const afterEmpty = last !== undefined && last.receivedAt >= memberStart && last.source === 'empty_alarm';
+
+        const rows = await db
+          .select({ at: counterSnapshots.receivedTime, value: counterValues.value, snapshotId: counterSnapshots.id })
+          .from(counterValues)
+          .innerJoin(counterSnapshots, eq(counterSnapshots.id, counterValues.snapshotId))
+          .where(
+            and(
+              eq(counterSnapshots.drmsEquipmentId, drmsId),
+              eq(counterValues.name, TONER_NAMES[colour as TonerColour]),
+              isNotNull(counterValues.value),
+              gt(counterSnapshots.receivedTime, since),
+            ),
+          )
+          .orderBy(asc(counterSnapshots.receivedTime), asc(counterSnapshots.id));
+        if (rows.length === 0) continue;
+        const readings: LevelReading[] = rows.map((r) => ({ at: r.at!, value: r.value!, snapshotId: r.snapshotId }));
+        const empties: EmptyEvent[] = []; // counted Empties after `since` cannot exist: `since` is the latest counted use
+
+        for (const c of detectChanges({ since, afterEmpty, readings, empties })) {
+          if (c.source !== 'level' || c.highSnapshotId === null) continue;
+          stats.considered++;
+          await db.transaction(async (tx) => {
+            const inserted = await tx
+              .insert(siteStockEvents)
+              .values({
+                shelfId: shelf.id,
+                alarmId: null,
+                source: 'level',
+                highSnapshotId: c.highSnapshotId,
+                lowSnapshotId: c.lowSnapshotId,
+                drmsEquipmentId: drmsId,
+                colour,
+                receivedAt: c.at,
+                counted: true,
+                reason: 'level_rise',
+                createdAt: now,
+              })
+              .onConflictDoNothing()
+              .returning({ id: siteStockEvents.id });
+            if (inserted.length > 0) {
+              await tx
+                .update(siteStockShelves)
+                .set({ [USED_KEY[colour]]: sql`${USED_COLUMN[colour]} + 1` })
+                .where(eq(siteStockShelves.id, shelf.id));
+              stats.counted++;
+            }
+          });
+        }
+      }
     }
   }
 
@@ -279,10 +372,12 @@ export async function evaluateSiteStock(
       .select({
         drmsId: siteStockEvents.drmsEquipmentId,
         alarmId: siteStockEvents.alarmId,
+        source: siteStockEvents.source,
+        colour: siteStockEvents.colour,
         description: deviceAlarms.description,
       })
       .from(siteStockEvents)
-      .leftJoin(deviceAlarms, eq(deviceAlarms.alarmId, siteStockEvents.alarmId))
+      .leftJoin(deviceAlarms, and(eq(siteStockEvents.source, 'empty_alarm'), eq(deviceAlarms.alarmId, siteStockEvents.alarmId)))
       .where(and(eq(siteStockEvents.shelfId, shelf.id), eq(siteStockEvents.counted, true), inArray(siteStockEvents.colour, triggered)))
       .orderBy(desc(siteStockEvents.receivedAt), desc(siteStockEvents.id));
     // The triggering device must still be on the shelf (linked); counts set by hand (CSV import)
@@ -302,7 +397,7 @@ export async function evaluateSiteStock(
           trigger: 'site_stock' as const,
           quantity: l.quantity,
           alarmId: trigger?.alarmId ?? null,
-          alarmDescription: trigger?.description ?? null,
+          alarmDescription: trigger?.source === 'level' ? `Toner level rise (${LEVEL_LABEL[trigger.colour ?? 'black']})` : (trigger?.description ?? null),
           shelfId: shelf.id,
           status: 'pending' as const,
           createdAt: now,

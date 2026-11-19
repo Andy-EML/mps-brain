@@ -19,7 +19,7 @@ export class SettingsError extends Error {
 }
 
 const THRESHOLD_KEYS = ['thresholdBlack', 'thresholdCyan', 'thresholdMagenta', 'thresholdYellow'] as const;
-const FLAG_KEYS = ['autoReplenish', 'alertsEnabled'] as const;
+const FLAG_KEYS = ['autoReplenish', 'alertsEnabled', 'spareBlack'] as const;
 const SETTING_KEYS = [...THRESHOLD_KEYS, ...FLAG_KEYS] as const;
 type SettingKey = (typeof SETTING_KEYS)[number];
 
@@ -31,6 +31,7 @@ export type SettingsPatch = {
   thresholdYellow?: number | null;
   autoReplenish?: boolean | null;
   alertsEnabled?: boolean | null;
+  spareBlack?: boolean | null;
 };
 
 const dev = alias(replenishmentSettings, 'rs_device');
@@ -67,6 +68,8 @@ export function effectiveSettingsSubquery(db: Db) {
       autoReplenishSource: source('autoReplenish').as('eff_auto_replenish_source'),
       alertsEnabled: resolved<boolean>('alertsEnabled').as('eff_alerts_enabled'),
       alertsEnabledSource: source('alertsEnabled').as('eff_alerts_enabled_source'),
+      spareBlack: resolved<boolean>('spareBlack').as('eff_spare_black'),
+      spareBlackSource: source('spareBlack').as('eff_spare_black_source'),
     })
     .from(drmsEquipment)
     .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))
@@ -187,6 +190,7 @@ export interface EffectiveSettings {
   thresholds: Record<'black' | 'cyan' | 'magenta' | 'yellow', { value: number; source: SettingSource }>;
   autoReplenish: { value: boolean; source: SettingSource };
   alertsEnabled: { value: boolean; source: SettingSource };
+  spareBlack: { value: boolean; source: SettingSource };
   vantageCustomerId: number | null;
   deviceRow: SettingsRowMeta | null;
   customerRow: SettingsRowMeta | null;
@@ -220,6 +224,7 @@ export async function getDeviceSettings(db: Db, drmsId: string): Promise<Effecti
     },
     autoReplenish: { value: Boolean(r.autoReplenish), source: r.autoReplenishSource },
     alertsEnabled: { value: Boolean(r.alertsEnabled), source: r.alertsEnabledSource },
+    spareBlack: { value: Boolean(r.spareBlack), source: r.spareBlackSource },
     vantageCustomerId: r.vantageCustomerId,
     deviceRow,
     customerRow,
@@ -233,6 +238,7 @@ export interface DefaultSettings {
   thresholdYellow: number;
   autoReplenish: boolean;
   alertsEnabled: boolean;
+  spareBlack: boolean;
   /** The newest `entity = 'default'` audit row; null while the seeded values are untouched. */
   lastChange: { at: Date; by: string | null } | null;
 }
@@ -248,6 +254,7 @@ export async function getDefaultSettings(db: Db): Promise<DefaultSettings> {
         thresholdYellow: replenishmentSettings.thresholdYellow,
         autoReplenish: replenishmentSettings.autoReplenish,
         alertsEnabled: replenishmentSettings.alertsEnabled,
+        spareBlack: replenishmentSettings.spareBlack,
       })
       .from(replenishmentSettings)
       .where(eq(replenishmentSettings.scope, 'default')),
@@ -267,6 +274,7 @@ export async function getDefaultSettings(db: Db): Promise<DefaultSettings> {
     thresholdYellow: row.thresholdYellow!,
     autoReplenish: row.autoReplenish!,
     alertsEnabled: row.alertsEnabled!,
+    spareBlack: row.spareBlack!,
     lastChange: change ?? null,
   };
 }
@@ -282,6 +290,7 @@ export interface CustomerSettingsRow {
   thresholdYellow: number | null;
   autoReplenish: boolean | null;
   alertsEnabled: boolean | null;
+  spareBlack: boolean | null;
   updatedAt: Date;
   updatedBy: string | null;
 }
@@ -308,6 +317,7 @@ export async function listCustomerSettings(db: Db): Promise<CustomerSettingsRow[
       thresholdYellow: replenishmentSettings.thresholdYellow,
       autoReplenish: replenishmentSettings.autoReplenish,
       alertsEnabled: replenishmentSettings.alertsEnabled,
+      spareBlack: replenishmentSettings.spareBlack,
       updatedAt: replenishmentSettings.updatedAt,
       updatedBy: users.username,
     })

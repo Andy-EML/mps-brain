@@ -10,7 +10,7 @@ import {
   type ReplenishColour,
   type TonerColour,
 } from '@mps/core';
-import { deviceAlarms, drmsEquipment, replenishmentProposals, type Db } from '@mps/db';
+import { cartridgeChanges, deviceAlarms, drmsEquipment, replenishmentProposals, type Db } from '@mps/db';
 import {
   counterPivotSubquery,
   effectiveSettingsSubquery,
@@ -20,9 +20,10 @@ import {
   supersedeHiddenProposals,
   type ColourOrderState,
 } from '@mps/db/queries';
-import { and, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { JobResult } from '../sync-runs';
 import { evaluateSiteStock } from './site-stock-evaluate';
+import { evaluateSpareBlack } from './spare-black';
 
 /**
  * The Vantage order that makes a pending proposal redundant, as its reference (`'SO…'`), or null.
@@ -125,6 +126,11 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       sql`${replenishmentProposals.status} in ('pending', 'approved') or (${replenishmentProposals.shelfId} is null and ${replenishmentProposals.status} = 'rejected' and ${replenishmentProposals.decidedAt} >= ${rejectedSince})`,
     );
 
+  // A proposal a recorded cartridge change relies on (as its cover) is never auto-cleared here, or the
+  // spare it stands for would never be ordered.
+  const coverRows = await db.select({ id: cartridgeChanges.proposalId }).from(cartridgeChanges).where(isNotNull(cartridgeChanges.proposalId));
+  const coversChange = new Set(coverRows.map((r) => r.id!));
+
   const linkedIds = [...new Set(devices.map((d) => d.vantageEquipmentId).filter((id): id is number => id !== null))];
   const orderStates = await getOrderStates(db, linkedIds, now);
 
@@ -147,7 +153,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
     // otherwise a same-run alarm proposal for the recovered colour would be silently dropped.
     const toSupersede: { id: number; note: string }[] = [];
     for (const p of mine) {
-      if (p.status !== 'pending' || p.shelfId !== null) continue;
+      if (p.status !== 'pending' || p.shelfId !== null || coversChange.has(p.id)) continue;
       const ordered = states ? orderedInVantage(states[p.colour], p.createdAt) : null;
       if (ordered !== null) toSupersede.push({ id: p.id, note: `ordered in Vantage (${ordered})` });
       else if (coveredColours.has(p.colour)) toSupersede.push({ id: p.id, note: 'covered by site stock' });
@@ -221,6 +227,10 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       stats.proposed += inserted.length;
     }
   }
+
+  // After the device loop, so a threshold proposal raised just now already counts as covering the spare.
+  const spare = await evaluateSpareBlack(db, now, siteStock.covered);
+  Object.assign(stats, { spareChanges: spare.changes, spareProposed: spare.proposed, spareCovered: spare.covered, spareIneligible: spare.ineligible });
 
   return { status: 'success', stats };
 }
