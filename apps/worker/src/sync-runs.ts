@@ -50,6 +50,17 @@ export async function lastSuccessfulStart(db: Db, job: string): Promise<Date | n
   return row?.startedAt ?? null;
 }
 
+/** Start time and stats of the newest successful run, or null when there is none. */
+export async function lastSuccessfulRun(db: Db, job: string): Promise<{ startedAt: Date; stats: Record<string, unknown> } | null> {
+  const [row] = await db
+    .select({ startedAt: syncRuns.startedAt, stats: syncRuns.stats })
+    .from(syncRuns)
+    .where(and(eq(syncRuns.job, job), eq(syncRuns.status, 'success')))
+    .orderBy(desc(syncRuns.startedAt))
+    .limit(1);
+  return row ? { startedAt: row.startedAt, stats: (row.stats ?? {}) as Record<string, unknown> } : null;
+}
+
 export async function failStaleRuns(db: Db): Promise<number> {
   const rows = await db
     .update(syncRuns)

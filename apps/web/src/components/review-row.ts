@@ -124,11 +124,14 @@ export function approveAllFields(drmsId: string, proposals: readonly QueuePropos
   return fields;
 }
 
-/** `12,345 pages since 1 Aug 2026`, or why there is no count. */
+/**
+ * `12,345 pages since 1 Aug 2026`, or why there is no count. `~` marks a count from an interpolated
+ * meter at the order date (`~8,220 pages since 2 Apr 2026`).
+ */
 export function pagesSinceText(p: PagesSince): string {
   switch (p.kind) {
     case 'pages':
-      return `${formatNumber(p.pages)} ${p.pages === 1 ? 'page' : 'pages'} since ${formatDate(p.orderDate)}`;
+      return `${p.estimated ? '~' : ''}${formatNumber(p.pages)} ${p.pages === 1 ? 'page' : 'pages'} since ${formatDate(p.orderDate)}`;
     case 'no-reading':
       return `no reading at order time (${formatDate(p.orderDate)})`;
     case 'meter-reset':

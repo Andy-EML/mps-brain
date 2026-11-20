@@ -158,6 +158,7 @@ describe('decisionBackPath', () => {
   it('sends an error back to the page the decision was made on', () => {
     expect(decisionBackPath(null, 'd1')).toBe('/orders');
     expect(decisionBackPath('in-progress', 'd1')).toBe('/orders?tab=in-progress');
+    expect(decisionBackPath('on-site', 'd1')).toBe('/orders?tab=on-site');
     expect(decisionBackPath('device', 'abc/1')).toBe('/devices/abc%2F1');
   });
 
@@ -192,6 +193,14 @@ describe('proposalStatusLink', () => {
       href: '/orders?tab=rejected',
     });
     expect(proposalStatusLink({ status: 'ordered', note: null })).toEqual({ text: 'Ordered', href: '/orders?tab=ordered' });
+  });
+
+  it('sends a held pending proposal to the Probably on site tab', () => {
+    expect(proposalStatusLink({ status: 'pending', note: null, holdReason: 'not_fitted' })).toEqual({
+      text: 'Probably on site',
+      href: '/orders?tab=on-site',
+    });
+    expect(proposalStatusLink({ status: 'pending', note: null, holdReason: null })).toEqual({ text: 'Awaiting review', href: '/orders' });
   });
 });
 

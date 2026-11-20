@@ -3,6 +3,7 @@ import {
   READY_FOR_ERP,
   REJECTED_SUPPRESS_DAYS,
   TONER_COLOURS,
+  errorMessage,
   evaluateDevice,
   isRecovered,
   type ColourHistory,
@@ -12,6 +13,7 @@ import {
 } from '@mps/core';
 import { cartridgeChanges, deviceAlarms, drmsEquipment, replenishmentProposals, type Db } from '@mps/db';
 import {
+  computeHolds,
   counterPivotSubquery,
   effectiveSettingsSubquery,
   getOrderStates,
@@ -19,8 +21,9 @@ import {
   notHiddenDevice,
   supersedeHiddenProposals,
   type ColourOrderState,
+  type HoldCandidate,
 } from '@mps/db/queries';
-import { and, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { JobResult } from '../sync-runs';
 import { evaluateSiteStock } from './site-stock-evaluate';
 import { evaluateSpareBlack } from './spare-black';
@@ -232,5 +235,86 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   const spare = await evaluateSpareBlack(db, now, siteStock.covered);
   Object.assign(stats, { spareChanges: spare.changes, spareProposed: spare.proposed, spareCovered: spare.covered, spareIneligible: spare.ineligible });
 
+  // Holds are advisory: a failure here must not fail the run, or no proposals would be raised at all.
+  try {
+    Object.assign(stats, await applyHolds(db, now));
+  } catch (err) {
+    Object.assign(stats, { holdError: errorMessage(err) });
+    console.error('[replenish-evaluate] holds failed; clearing holds so pending proposals fall back to Review', err);
+    // Stale holds would keep rows hidden from Review indefinitely, so fail open. Its own try/catch: the run still succeeds.
+    try {
+      await db
+        .update(replenishmentProposals)
+        .set({ holdReason: null, holdDetail: null })
+        .where(and(eq(replenishmentProposals.status, 'pending'), or(isNotNull(replenishmentProposals.holdReason), isNotNull(replenishmentProposals.holdDetail))));
+    } catch (clearErr) {
+      console.error('[replenish-evaluate] clearing holds failed', clearErr);
+    }
+  }
+
   return { status: 'success', stats };
+}
+
+/**
+ * Writes (or clears) the hold on pending toner proposals whose last cartridge was probably never
+ * fitted. Runs last, so a threshold proposal that has just become a spare-black cover counts as a
+ * cover. The candidate set is pending, non-shelf, threshold/alarm, non-waste and not a cover; a pending
+ * proposal outside it that still carries a hold gets both columns cleared. Only changed rows are written,
+ * each guarded by `status = 'pending'` so an approval or supersede racing this run is never overwritten.
+ */
+async function applyHolds(db: Db, now: Date): Promise<{ held: number; holdSet: number; holdCleared: number }> {
+  const rows = await db
+    .select({
+      id: replenishmentProposals.id,
+      drmsId: replenishmentProposals.drmsEquipmentId,
+      colour: replenishmentProposals.colour,
+      trigger: replenishmentProposals.trigger,
+      shelfId: replenishmentProposals.shelfId,
+      holdReason: replenishmentProposals.holdReason,
+      holdDetail: replenishmentProposals.holdDetail,
+    })
+    .from(replenishmentProposals)
+    .where(eq(replenishmentProposals.status, 'pending'));
+  const coverRows = await db.select({ id: cartridgeChanges.proposalId }).from(cartridgeChanges).where(isNotNull(cartridgeChanges.proposalId));
+  const covers = new Set(coverRows.map((r) => r.id!));
+
+  const candidates: HoldCandidate[] = [];
+  const stale: number[] = [];
+  for (const r of rows) {
+    const inSet = r.shelfId === null && (r.trigger === 'threshold' || r.trigger === 'alarm') && r.colour !== 'waste' && !covers.has(r.id);
+    if (inSet) candidates.push({ id: r.id, drmsEquipmentId: r.drmsId, colour: r.colour as HoldCandidate['colour'] });
+    else if (r.holdReason !== null || r.holdDetail !== null) stale.push(r.id);
+  }
+
+  let held = 0;
+  let holdSet = 0;
+  let holdCleared = 0;
+  const write = async (id: number, reason: 'not_fitted' | 'low_yield' | null, detail: string | null) => {
+    const updated = await db
+      .update(replenishmentProposals)
+      .set({ holdReason: reason, holdDetail: detail })
+      .where(and(eq(replenishmentProposals.id, id), eq(replenishmentProposals.status, 'pending')))
+      .returning({ id: replenishmentProposals.id });
+    return updated.length > 0;
+  };
+
+  for (const id of stale) if (await write(id, null, null)) holdCleared++;
+
+  const decisions = await computeHolds(db, candidates, now);
+  const stored = new Map(rows.map((r) => [r.id, r]));
+  for (const c of candidates) {
+    const d = decisions.get(c.id) ?? null;
+    const cur = stored.get(c.id)!;
+    if (d) held++;
+    const reason = d?.reason ?? null;
+    const detail = d?.detail ?? null;
+    if (cur.holdReason === reason && cur.holdDetail === detail) continue;
+    if (!(await write(c.id, reason, detail))) {
+      if (d) held--;
+      continue;
+    }
+    if (d) holdSet++;
+    else holdCleared++;
+  }
+  return { held, holdSet, holdCleared };
 }

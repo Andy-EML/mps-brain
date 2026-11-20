@@ -25,7 +25,8 @@ import {
   isStale,
   isUnderYielding,
   listUnderYielding,
-  meterPointAt,
+  INTERPOLATE_MAX_DAYS,
+  meterAt,
   meterPointsFor,
   mergeSnapshots,
   pageMeterValue,
@@ -66,17 +67,44 @@ describe('pageMeterValue / meterPointsFor', () => {
   });
 });
 
-describe('meterPointAt', () => {
+describe('meterAt', () => {
   const points = [pt('2026-02-01', 100), pt('2026-03-01', 200)];
-  it('takes the newest at or before the date', () => {
-    expect(meterPointAt(points, d('2026-02-15'))?.value).toBe(100);
-    expect(meterPointAt(points, d('2026-03-01'))?.value).toBe(200);
-    expect(meterPointAt(points, d('2026-06-01'))?.value).toBe(200);
+  it('is the exact reading on a hit', () => {
+    expect(meterAt(points, d('2026-03-01'))).toMatchObject({ value: 200, estimated: false });
+    expect(meterAt(points, d('2026-03-01'))!.before).toBe(points[1]);
+    expect(meterAt(points, d('2026-03-01'))!.after).toBeNull();
   });
-  it('falls forward up to 14 days when nothing is earlier, else unknown', () => {
-    expect(meterPointAt(points, d('2026-01-20'))?.value).toBe(100);
-    expect(meterPointAt(points, d('2026-01-10'))).toBeNull();
-    expect(meterPointAt([], d('2026-01-10'))).toBeNull();
+  it('interpolates linearly between bracketing readings up to 45 days apart', () => {
+    const p = [pt('2026-03-27', 33_710), pt('2026-04-26', 35_356)];
+    const r = meterAt(p, d('2026-04-02'))!;
+    expect(r.estimated).toBe(true);
+    expect(Math.abs(r.value - (33_710 + (1646 * 6) / 30))).toBeLessThanOrEqual(1);
+    expect(r.value).toBe(34_039);
+    expect(r.before).toBe(p[0]);
+    expect(r.after).toBe(p[1]);
+    expect(INTERPOLATE_MAX_DAYS).toBe(45);
+  });
+  it('falls back to the newest before when the bracket is wider than 45 days', () => {
+    const p = [pt('2026-01-01', 1_000), pt('2026-02-16', 2_000)]; // 46 days
+    const r = meterAt(p, d('2026-01-20'))!;
+    expect(r).toMatchObject({ value: 1_000, estimated: false, after: null });
+    expect(r.before).toBe(p[0]);
+    const exact45 = [pt('2026-01-01', 1_000), pt('2026-02-15', 2_000)];
+    expect(meterAt(exact45, d('2026-01-20'))!.estimated).toBe(true);
+  });
+  it('does not interpolate across a meter reset inside the bracket', () => {
+    const p = [pt('2026-03-01', 50_000), pt('2026-03-21', 100)];
+    expect(meterAt(p, d('2026-03-11'))).toMatchObject({ value: 50_000, estimated: false, after: null });
+  });
+  it('uses the newest before when nothing is after', () => {
+    expect(meterAt(points, d('2026-06-01'))).toMatchObject({ value: 200, estimated: false, after: null });
+  });
+  it('with nothing before, takes a reading up to 14 days after, else unknown', () => {
+    const r = meterAt(points, d('2026-01-22'))!; // 10 days
+    expect(r).toMatchObject({ value: 100, estimated: false, before: null });
+    expect(r.after).toBe(points[0]);
+    expect(meterAt(points, d('2026-01-17'))).toBeNull(); // 15 days
+    expect(meterAt([], d('2026-01-10'))).toBeNull();
   });
 });
 
@@ -113,6 +141,18 @@ describe('buildCartridges', () => {
     expect(buildCartridges([ev(1, '2026-02-05'), ev(2, '2026-02-20')], points)[0]!.pagesDone).toBeNull(); // same snapshot
     const reset = [pt('2026-01-01', 50_000), pt('2026-02-01', 100)];
     expect(buildCartridges([ev(1, '2026-01-01'), ev(2, '2026-02-01')], reset)[0]!.pagesDone).toBeNull();
+  });
+});
+
+describe('buildCartridges with interpolation', () => {
+  const points = [pt('2026-03-01', 1_000), pt('2026-04-01', 4_100), pt('2026-04-30', 7_000)];
+  it('is not measurable when both deliveries sit in one interpolation gap', () => {
+    expect(buildCartridges([ev(1, '2026-03-10'), ev(2, '2026-03-20')], points)[0]!.pagesDone).toBeNull();
+  });
+  it('measures from interpolated ends when a reading lies between the deliveries', () => {
+    const [a] = buildCartridges([ev(1, '2026-03-16'), ev(2, '2026-04-15')], points);
+    // 03-16: 1,000 + 3,100*15/31 = 2,500; 04-15: 4,100 + 2,900*14/29 = 5,500.
+    expect(a!.pagesDone).toBe(3_000);
   });
 });
 
@@ -155,6 +195,25 @@ describe('flags', () => {
     expect(isStale(null, now)).toBe(true);
     expect(isStale(d('2026-03-01'), now)).toBe(false);
     expect(isStale(d('2026-02-28'), now)).toBe(true);
+  });
+});
+
+describe('computeColourYield with interpolation', () => {
+  const pts = [pt('2026-03-27', 33_710), pt('2026-04-26', 35_356), pt('2026-05-30', 42_251)];
+  const args = { colour: 'black' as const, stale: false, ratedYield: 28_000, events: [ev(1, '2026-04-02')] };
+  it('bases pages since the order on the interpolated meter and flags it', () => {
+    const r = computeColourYield({ ...args, points: pts });
+    expect(r.pagesSinceLastOrder).toBe(8_212); // 42,251 - 34,039
+    expect(r.pagesSinceEstimated).toBe(true);
+  });
+  it('is not estimated on an exact reading', () => {
+    const r = computeColourYield({ ...args, events: [ev(1, '2026-04-26')], points: pts });
+    expect(r).toMatchObject({ pagesSinceLastOrder: 42_251 - 35_356, pagesSinceEstimated: false });
+  });
+  it('is unknown after a meter reset', () => {
+    const reset = [pt('2026-03-27', 33_710), pt('2026-04-26', 35_356), pt('2026-05-30', 500)];
+    const r = computeColourYield({ ...args, points: reset });
+    expect(r).toMatchObject({ pagesSinceLastOrder: null, pagesSinceEstimated: false });
   });
 });
 
@@ -418,7 +477,7 @@ describe('toner yield queries', () => {
     await snap('col', '2026-02-01', 5_000, 4_000);
     await snap('col', '2026-03-10', 30_000, 10_000);
     await order(1, '2026-01-01', 100, [{ colour: 'cyan' }]); // 10000 pages since: 50% -> not early
-    await order(2, '2026-03-05', 100, [{ colour: 'black' }]); // 40000-5000... see below
+    await order(2, '2026-03-05', 100, [{ colour: 'black' }]); // black pages since: see below
     const mk = (colour: 'black' | 'cyan' | 'magenta', drms = 'col') =>
       ({ drmsEquipmentId: drms, vantageEquipmentId: 100, colour, trigger: 'threshold' as const, status: 'pending' as const }) as const;
     const ps = await t.db.insert(replenishmentProposals).values([mk('cyan'), mk('black'), mk('magenta')]).returning();
@@ -427,8 +486,8 @@ describe('toner yield queries', () => {
     expect(map.size).toBe(3);
     expect(map.get(cy)).toMatchObject({ colour: 'cyan', pagesSinceLastOrder: 10_000, pctOfRated: 0.5, early: false, stale: false, status: 'ok' });
     expect(map.get(cy)!.lastOrderDate).toEqual(d('2026-01-01'));
-    // Black meter at 2026-03-05 is the 02-01 snapshot (9000); now 40000.
-    expect(map.get(bl)).toMatchObject({ pagesSinceLastOrder: 31_000, early: false });
+    // Black meter at 2026-03-05 is interpolated between 02-01 (9000) and 03-10 (40000): 9000 + 31000 * 32/37 = 35811; now 40000.
+    expect(map.get(bl)).toMatchObject({ pagesSinceLastOrder: 4_189, early: true });
     expect(map.get(mg)).toMatchObject({ lastOrderDate: null, early: false, status: 'no_rated_yield' });
 
     // A proposal already closed by its own line does not treat that line as the last order.

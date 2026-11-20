@@ -4,7 +4,7 @@ import type { VantageClient, VantageRecord } from '@mps/vantage';
 import type { JobResult } from '../sync-runs';
 
 const CHUNK = 500;
-/** How far back visits are fetched: the PM clock can start long before the 12 months of meter readings held. */
+/** How far back visits are fetched: the PM clock can start long before the 24 months of meter readings held. */
 export const VISIT_WINDOW_MONTHS = 36;
 
 export function visitWindowStart(now: Date): Date {

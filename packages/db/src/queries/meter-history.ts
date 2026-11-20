@@ -12,7 +12,7 @@ import {
 
 const BLACK_METER = 'Black:Total';
 const COLOUR_METER = 'Full Color:Total';
-/** DRMS snapshots older than this are not loaded (Vantage readings only cover 12 months anyway). */
+/** DRMS snapshots older than this are not loaded (Vantage readings go back 24 months; DRMS history is short so this is not the limiting window). */
 const DRMS_HISTORY_MONTHS = 13;
 
 /** Combined page meter of one snapshot: black + colour where a colour meter exists, else black. */

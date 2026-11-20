@@ -24,6 +24,7 @@ export * from './replenishment';
 export * from './replenishment-actions';
 export * from './review-detail';
 export * from './settings';
+export * from './not-fitted';
 export * from './site-stock';
 export * from './site-stock-actions';
 export * from './toner-yield';

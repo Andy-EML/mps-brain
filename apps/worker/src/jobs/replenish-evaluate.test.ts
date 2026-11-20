@@ -1,9 +1,16 @@
 import { users, cartridgeChanges, cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, replenishmentSettings, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
-import { hideDevices, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
+import { computeHolds, hideDevices, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
 import { and, eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveSnapshot } from './drms-snapshot';
+
+// computeHolds passes through to the real one unless a test makes it throw.
+vi.mock('@mps/db/queries', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mps/db/queries')>();
+  return { ...actual, computeHolds: vi.fn(actual.computeHolds) };
+});
+
 import { orderedInVantage, runReplenishEvaluate } from './replenish-evaluate';
 import { evaluateSiteStock } from './site-stock-evaluate';
 
@@ -159,6 +166,120 @@ describe('runReplenishEvaluate', () => {
     expect(r2.stats).toMatchObject({ superseded: 0 });
     const [after] = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.id, tp!.id));
     expect(after).toMatchObject({ status: 'pending', note: null });
+  });
+
+  describe('not-fitted holds', () => {
+    // Cyan sent 1 Sep, level 10 before it and 4 now: no fit seen, so the cyan threshold proposal is held.
+    const cyanAt = (counterId: string, received: string, cyan: number, magenta = 50) =>
+      saveSnapshot(t.db, 'colour', {
+        CounterId: counterId,
+        ReceivedTime: received,
+        Counters: [
+          { Name: 'BlackTonerLevel', Value: 50 },
+          { Name: 'CyanTonerLevel', Value: cyan },
+          { Name: 'MagentaTonerLevel', Value: magenta },
+          { Name: 'YellowTonerLevel', Value: 50 },
+        ],
+        ModeSizeCounters: [],
+      } as never, NOW);
+    const sendCyan = async () => {
+      await t.db.insert(vantageSalesOrders).values({ vantageId: 900, reference: 'SO-900', orderDate: new Date('2026-09-01T00:00:00Z'), completedDate: new Date('2026-09-01T00:00:00Z'), vantageEquipmentId: 1, raw: {} });
+      await t.db.insert(vantageSalesOrderLines).values({ vantageId: 9001, salesOrderId: 900, colour: 'cyan', quantity: '1', raw: {} });
+    };
+    const cyanProposal = async () => {
+      const [p] = await t.db.select().from(replenishmentProposals).where(and(eq(replenishmentProposals.drmsEquipmentId, 'colour'), eq(replenishmentProposals.colour, 'cyan')));
+      return p!;
+    };
+
+    it('writes the hold reason onto a pending proposal, and counts it', async () => {
+      await sendCyan();
+      await cyanAt('h1', '2026-08-20 09:00:00', 10);
+      await cyanAt('h2', '2026-09-21 09:00:00', 4);
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ held: 1, holdSet: 1, holdCleared: 0 });
+      expect(await cyanProposal()).toMatchObject({ status: 'pending', holdReason: 'not_fitted' });
+      expect((await cyanProposal()).holdDetail).toContain('Cyan sent 1 Sep 2026');
+      // Unchanged on a second run: nothing is rewritten.
+      const r2 = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r2.stats).toMatchObject({ held: 1, holdSet: 0, holdCleared: 0 });
+    });
+
+    it('clears the hold on a later run once a rise is seen after the order', async () => {
+      await sendCyan();
+      await cyanAt('h1', '2026-08-20 09:00:00', 10);
+      await cyanAt('h2', '2026-09-21 09:00:00', 4);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      // After the anchor (1 Sep): low, then a rise to 90. The newest reading is low again, so the proposal stays pending.
+      await cyanAt('h3', '2026-09-05 09:00:00', 8);
+      await cyanAt('h4', '2026-09-10 09:00:00', 90);
+      await cyanAt('h5', '2026-09-21 12:00:00', 4);
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ held: 0, holdSet: 0, holdCleared: 1 });
+      expect(await cyanProposal()).toMatchObject({ status: 'pending', holdReason: null, holdDetail: null });
+    });
+
+    it('clears the hold on a held proposal that has become a cartridge-change cover', async () => {
+      await sendCyan();
+      await cyanAt('h1', '2026-08-20 09:00:00', 10);
+      await cyanAt('h2', '2026-09-21 09:00:00', 4);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      const held = await cyanProposal();
+      expect(held.holdReason).toBe('not_fitted');
+      await t.db.insert(cartridgeChanges).values({
+        drmsEquipmentId: 'colour', colour: 'cyan', changedAt: NOW, source: 'level', outcome: 'covered', proposalId: held.id,
+      });
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ held: 0, holdSet: 0, holdCleared: 1 });
+      expect(await cyanProposal()).toMatchObject({ status: 'pending', holdReason: null, holdDetail: null });
+    });
+
+    it('never holds a spare_used proposal, on data that does hold a threshold proposal', async () => {
+      await sendCyan();
+      await t.db.insert(vantageSalesOrderLines).values({ vantageId: 9002, salesOrderId: 900, colour: 'magenta', quantity: '1', raw: {} });
+      // Cyan (below threshold) and magenta (above it, so no threshold proposal) both show the not-fitted pattern.
+      await cyanAt('h1', '2026-08-20 09:00:00', 10, 10);
+      await cyanAt('h2', '2026-09-21 09:00:00', 4, 12);
+      await t.db.insert(replenishmentProposals).values({
+        drmsEquipmentId: 'colour', vantageEquipmentId: 1, colour: 'magenta', trigger: 'spare_used', status: 'pending', createdAt: NOW,
+      });
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ held: 1, holdSet: 1 });
+      expect(await cyanProposal()).toMatchObject({ trigger: 'threshold', holdReason: 'not_fitted' });
+      const [spare] = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.trigger, 'spare_used'));
+      expect(spare).toMatchObject({ colour: 'magenta', holdReason: null, holdDetail: null });
+    });
+
+    it('clears a stale hold left on an out-of-set pending proposal that is not a cover', async () => {
+      await t.db.insert(replenishmentProposals).values({
+        drmsEquipmentId: 'colour', vantageEquipmentId: 1, colour: 'waste', trigger: 'alarm', status: 'pending', createdAt: NOW,
+        holdReason: 'not_fitted', holdDetail: 'left over',
+      });
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ held: 0, holdSet: 0, holdCleared: 1 });
+      const [w] = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.colour, 'waste'));
+      expect(w).toMatchObject({ status: 'pending', holdReason: null, holdDetail: null });
+    });
+
+    it('does not fail the job when computing holds throws', async () => {
+      await sendCyan();
+      await cyanAt('h1', '2026-08-20 09:00:00', 10);
+      await cyanAt('h2', '2026-09-21 09:00:00', 4);
+      // A hold left from an earlier run: a failure falls back to Review, not "hidden as of last run".
+      await t.db.insert(replenishmentProposals).values({
+        drmsEquipmentId: 'colour', vantageEquipmentId: 1, colour: 'magenta', trigger: 'spare_used', status: 'pending', createdAt: NOW,
+        holdReason: 'not_fitted', holdDetail: 'left over',
+      });
+      vi.mocked(computeHolds).mockRejectedValueOnce(new Error('boom'));
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.status).toBe('success');
+      expect(r.stats).toMatchObject({ proposed: 1, holdError: 'Error: boom' });
+      expect(errSpy).toHaveBeenCalled();
+      errSpy.mockRestore();
+      const [m] = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.colour, 'magenta'));
+      expect(m).toMatchObject({ status: 'pending', holdReason: null, holdDetail: null });
+      expect(await cyanProposal()).toMatchObject({ status: 'pending', holdReason: null });
+    });
   });
 
   describe('an order appearing in Vantage', () => {

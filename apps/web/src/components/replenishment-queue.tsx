@@ -62,6 +62,7 @@ export interface ReplenishmentQueueProps {
 
 const EMPTY: Record<QueueTab, string> = {
   review: 'Nothing to review — every device is above its threshold or already on order.',
+  'on-site': 'Nothing held — every pending order shows a fitted cartridge or enough pages since the last one.',
   'in-progress': 'No orders in progress. Approved orders wait here until you raise them in Vantage and the sales order turns up.',
   ordered: 'No orders have reached Vantage in the last 90 days.',
   rejected: 'Nothing has been rejected in the last 30 days.',
@@ -76,11 +77,12 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
   if (devices.length === 0) {
     return <p className="px-5 py-12 text-center text-sm text-muted-foreground">{EMPTY[tab]}</p>;
   }
-  if (tab === 'review') {
+  // Probably on site holds pending proposals back from Review; they are decided the same way.
+  if (tab === 'review' || tab === 'on-site') {
     return (
       <ul className="divide-y divide-line">
         {devices.map((device) => (
-          <ReviewRow key={device.drmsId} device={device} />
+          <ReviewRow key={device.drmsId} device={device} back={tab === 'on-site' ? 'on-site' : undefined} />
         ))}
       </ul>
     );
@@ -172,7 +174,7 @@ function orderContext(p: QueueProposal): { text: string; open: boolean } | null 
  * lines and the device detail. The detail is fetched on first open and kept; the proposal form stays mounted once opened, so
  * collapsing a row does not lose an edited quantity.
  */
-function ReviewRow({ device }: { device: QueueDevice }) {
+function ReviewRow({ device, back }: { device: QueueDevice; back?: 'on-site' }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const panelId = `review-panel-${device.drmsId}`;
@@ -261,6 +263,7 @@ function ReviewRow({ device }: { device: QueueDevice }) {
         </button>
         {device.serial ? <CopyText text={device.serial} className="text-xs text-muted-foreground" /> : null}
         <form action={approveAction}>
+          {back ? <input type="hidden" name="back" value={back} /> : null}
           {approveAllFields(device.drmsId, device.proposals).map(([name, value], i) => (
             <input key={i} type="hidden" name={name} value={value} />
           ))}
@@ -274,6 +277,7 @@ function ReviewRow({ device }: { device: QueueDevice }) {
               drmsId={device.drmsId}
               proposals={device.proposals}
               unlinked={unlinked}
+              back={back}
               deviceName={device.displayName}
               shelf={site}
             />
@@ -317,8 +321,11 @@ export interface ReviewFormProps {
   proposals: QueueProposal[];
   /** No current Vantage link: nothing can be approved, only rejected. */
   unlinked: boolean;
-  /** Set on the device page, so a refused decision comes back there (see `decisionBackPath`). */
-  back?: 'device';
+  /**
+   * Set on the device page and the Probably on site tab, so a refused decision comes back there
+   * (see `decisionBackPath`).
+   */
+  back?: 'device' | 'on-site';
   /** The machine the proposals are on, named in a top-up's reason; left out on the device page. */
   deviceName?: string;
   /**
@@ -430,6 +437,7 @@ function ProposalRow({ proposal: p, deviceName }: { proposal: QueueProposal; dev
           </span>
         ) : null}
         <ProposalYieldNote proposalId={p.id} className="mt-0.5" />
+        {p.holdDetail ? <span className="mt-0.5 block text-[12px] text-muted-foreground">{p.holdDetail}</span> : null}
       </label>
       <Stepper id={p.id} value={quantity} onChange={setQuantity} label={colourLabel(p.colour)} />
     </div>
@@ -473,6 +481,9 @@ function CompactProposalRow({ proposal: p, deviceName }: { proposal: QueuePropos
             </span>
           ) : null}
           <ProposalYieldNote proposalId={p.id} className="mt-0.5" />
+          {p.holdDetail ? (
+            <span className="mt-0.5 block text-[12px] break-words text-muted-foreground">{p.holdDetail}</span>
+          ) : null}
         </label>
       </div>
       <div className="mt-1.5 flex justify-end">

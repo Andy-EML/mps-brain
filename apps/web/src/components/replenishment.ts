@@ -209,11 +209,12 @@ export function replenishmentErrorMessage(code: string): string {
 
 /**
  * Where an approve/reject action sends a refused decision (`?error=` is appended): the form's
- * hidden `back` says which page it sat on — the queue's review tab, its In progress tab, or the
- * device page's Replenishment card.
+ * hidden `back` says which page it sat on — the queue's review tab, its Probably on site or In
+ * progress tab, or the device page's Replenishment card.
  */
 export function decisionBackPath(back: unknown, drmsId: unknown): string {
   if (back === 'in-progress') return '/orders?tab=in-progress';
+  if (back === 'on-site') return '/orders?tab=on-site';
   if (back === 'device' && typeof drmsId === 'string' && drmsId !== '') return `/devices/${encodeURIComponent(drmsId)}`;
   return '/orders';
 }
@@ -234,8 +235,14 @@ const PROPOSAL_STATUS: Record<ProposalStatus, { text: string; href: string }> = 
 /**
  * A proposal's status on the device page's Replenishment card, and the `/orders` tab that lists
  * it. A superseded one says why, as the Rejected tab does ("Superseded: ordered in Vantage (SO…)").
+ * A held pending one (its last cartridge probably never fitted) sits on *Probably on site*.
  */
-export function proposalStatusLink(p: { status: ProposalStatus; note: string | null }): { text: string; href: string } {
+export function proposalStatusLink(p: {
+  status: ProposalStatus;
+  note: string | null;
+  holdReason?: string | null;
+}): { text: string; href: string } {
+  if (p.status === 'pending' && p.holdReason) return { text: 'Probably on site', href: '/orders?tab=on-site' };
   const entry = PROPOSAL_STATUS[p.status];
   return p.status === 'superseded' ? { ...entry, text: supersededText(p.note) } : entry;
 }

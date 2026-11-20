@@ -185,21 +185,48 @@ export function meterPointsFor(colour: YieldColour, isColour: boolean, snaps: Me
   return out.sort((a, b) => a.at.getTime() - b.at.getTime());
 }
 
+/** Longest gap between the two readings either side of a date that may still be interpolated across. */
+export const INTERPOLATE_MAX_DAYS = 45;
+
+export interface MeterAt {
+  value: number;
+  /** True when interpolated between two readings; false for an exact or fallback reading. */
+  estimated: boolean;
+  before: YieldMeterPoint | null;
+  after: YieldMeterPoint | null;
+}
+
 /**
- * The meter at `t`: the newest point at or before it; else the earliest point after it, if within
- * {@link METER_LOOKAHEAD_DAYS}; else null. `points` must be oldest first.
+ * The meter at `t`: an exact reading; else a linear interpolation between the newest reading before and
+ * the oldest after when they are at most {@link INTERPOLATE_MAX_DAYS} apart (value rounded, `estimated`);
+ * else the newest before; else the oldest after if within {@link METER_LOOKAHEAD_DAYS}; else null.
+ * `before`/`after` are the readings used. `points` must be oldest first.
  */
-export function meterPointAt(points: YieldMeterPoint[], t: Date): YieldMeterPoint | null {
+export function meterAt(points: YieldMeterPoint[], t: Date): MeterAt | null {
   const ms = t.getTime();
   let before: YieldMeterPoint | null = null;
+  let after: YieldMeterPoint | null = null;
   for (const p of points) {
     if (p.at.getTime() <= ms) before = p;
     else {
-      if (before) break;
-      return p.at.getTime() - ms <= METER_LOOKAHEAD_DAYS * DAY_MS ? p : null;
+      after = p;
+      break;
     }
   }
-  return before;
+  if (before && before.at.getTime() === ms) return { value: before.value, estimated: false, before, after: null };
+  // A reading that goes down across the bracket is a reset or device swap: nothing to interpolate.
+  if (before && after && after.value >= before.value) {
+    const span = after.at.getTime() - before.at.getTime();
+    if (span <= INTERPOLATE_MAX_DAYS * DAY_MS) {
+      const value = Math.round(before.value + ((after.value - before.value) * (ms - before.at.getTime())) / span);
+      return { value, estimated: true, before, after };
+    }
+  }
+  if (before) return { value: before.value, estimated: false, before, after: null };
+  if (after && after.at.getTime() - ms <= METER_LOOKAHEAD_DAYS * DAY_MS) {
+    return { value: after.value, estimated: false, before: null, after };
+  }
+  return null;
 }
 
 const qty = (q: number | null): number => (q !== null && Number.isFinite(q) && q >= 1 ? Math.round(q) : 1);
@@ -208,7 +235,7 @@ const qty = (q: number | null): number => (q !== null && Number.isFinite(q) && q
  * Cartridge deliveries oldest first with the pages each one did. Lines on the same order date are one
  * delivery (several lines the same day cannot be told apart in the meter, and a cancelled-and-reissued
  * order would otherwise count as a cartridge that did 0 pages). Pages are not measurable (null) when
- * either end has no meter, when both ends fall on the same snapshot (no data between the deliveries),
+ * either end has no meter, when both ends rest on the same readings (no data between the deliveries),
  * or when the meter went down (reset or device swap).
  */
 export function buildCartridges(events: DeliveryEvent[], points: YieldMeterPoint[]): CartridgeInterval[] {
@@ -227,9 +254,10 @@ export function buildCartridges(events: DeliveryEvent[], points: YieldMeterPoint
     const next = groups[i + 1];
     let pagesDone: number | null = null;
     if (next) {
-      const a = meterPointAt(points, g.orderDate);
-      const b = meterPointAt(points, next.orderDate);
-      if (a && b && a !== b && b.value >= a.value) pagesDone = b.value - a.value;
+      const a = meterAt(points, g.orderDate);
+      const b = meterAt(points, next.orderDate);
+      // Same bracketing readings at both ends = no reading between the deliveries.
+      if (a && b && !(a.before === b.before && a.after === b.after) && b.value >= a.value) pagesDone = b.value - a.value;
     }
     return { ...g, pagesDone, pagesPerCartridge: pagesDone === null ? null : pagesDone / g.quantity };
   });
@@ -286,6 +314,8 @@ export interface ColourYield {
   underYielding: boolean | null;
   lastOrderDate: Date | null;
   pagesSinceLastOrder: number | null;
+  /** `pagesSinceLastOrder` starts from an interpolated meter (show "~"). */
+  pagesSinceEstimated: boolean;
   pctOfRatedSinceLastOrder: number | null;
   early: boolean | null;
   stale: boolean;
@@ -306,12 +336,14 @@ export function computeColourYield(args: {
 
   const last = cartridges[cartridges.length - 1] ?? null;
   let pagesSince: number | null = null;
+  let pagesSinceEstimated = false;
   if (last) {
-    const base = meterPointAt(points, last.orderDate);
+    const base = meterAt(points, last.orderDate);
     const current = points[points.length - 1];
     // No reading after the order date means we can't tell how much it has printed: unknown, not 0.
     if (base && current && current.at.getTime() > last.orderDate.getTime() && current.value >= base.value) {
       pagesSince = current.value - base.value;
+      pagesSinceEstimated = base.estimated;
     }
   }
   const pctSince = pctOf(pagesSince, ratedYield);
@@ -326,6 +358,7 @@ export function computeColourYield(args: {
     underYielding: isUnderYielding(avgPct, counted),
     lastOrderDate: last?.orderDate ?? null,
     pagesSinceLastOrder: pagesSince,
+    pagesSinceEstimated,
     pctOfRatedSinceLastOrder: pctSince,
     early: isEarly(last !== null, pctSince),
     stale,
@@ -339,7 +372,7 @@ export const yieldColoursFor = (isColour: boolean): YieldColour[] => (isColour ?
 // Loading
 // ---------------------------------------------------------------------------------------------
 
-interface DeviceInput {
+export interface DeviceInput {
   drmsEquipmentId: string;
   vantageEquipmentId: number | null;
   isColour: boolean;
@@ -359,7 +392,7 @@ interface DeviceInput {
 const isYieldColour = (c: string | null): c is YieldColour => c !== null && (REPLENISH_COLOURS as readonly string[]).includes(c);
 
 /** Devices (with their active Vantage link and cartridge family), delivery events and meter snapshots. */
-async function loadInputs(db: Db, drmsIds: string[] | null, opts: { requireLink?: boolean; vantageMeters?: boolean } = {}): Promise<Map<string, DeviceInput>> {
+export async function loadYieldInputs(db: Db, drmsIds: string[] | null, opts: { requireLink?: boolean; vantageMeters?: boolean } = {}): Promise<Map<string, DeviceInput>> {
   const out = new Map<string, DeviceInput>();
   if (drmsIds !== null && drmsIds.length === 0) return out;
 
@@ -477,7 +510,7 @@ async function loadInputs(db: Db, drmsIds: string[] | null, opts: { requireLink?
   }
   for (const s of snaps.values()) out.get(s.drmsId)?.snapshots.push({ at: s.at, black: s.black, colour: s.colour });
 
-  // Vantage meter readings (last 12 months, `vantage-meters` job), by the linked Vantage equipment.
+  // Vantage meter readings (last 24 months, `vantage-meters` job), by the linked Vantage equipment.
   if (opts.vantageMeters !== false && byVantage.size > 0) {
     const readings = await db
       .select({
@@ -549,13 +582,13 @@ function computeDevice(d: DeviceInput, now: Date): DeviceYield {
 
 /** Every linked device's yield; `vantageMeters: false` gives the DRMS-snapshots-only figures for comparison. */
 export async function getFleetYields(db: Db, now: Date = new Date(), opts: { vantageMeters?: boolean } = {}): Promise<DeviceYield[]> {
-  const inputs = await loadInputs(db, null, { requireLink: true, vantageMeters: opts.vantageMeters });
+  const inputs = await loadYieldInputs(db, null, { requireLink: true, vantageMeters: opts.vantageMeters });
   return [...inputs.values()].map((i) => computeDevice(i, now));
 }
 
 /** Per-colour yield for one DRMS device; null when the device does not exist. */
 export async function getDeviceYield(db: Db, drmsEquipmentId: string, now: Date = new Date()): Promise<DeviceYield | null> {
-  const dev = (await loadInputs(db, [drmsEquipmentId])).get(drmsEquipmentId);
+  const dev = (await loadYieldInputs(db, [drmsEquipmentId])).get(drmsEquipmentId);
   return dev ? computeDevice(dev, now) : null;
 }
 
@@ -563,6 +596,8 @@ export interface YieldCheck {
   colour: YieldColour;
   lastOrderDate: Date | null;
   pagesSinceLastOrder: number | null;
+  /** `pagesSinceLastOrder` starts from an interpolated meter (show "~"). */
+  pagesSinceEstimated: boolean;
   /** Pages since the last order as a share of the rated yield (1 = a full cartridge). */
   pctOfRated: number | null;
   ratedYield: number | null;
@@ -585,7 +620,7 @@ export async function getYieldCheckForProposals(db: Db, proposalIds: number[], n
     .select({ id: p.id, drmsEquipmentId: p.drmsEquipmentId, colour: p.colour, lineId: p.vantageSalesOrderLineId })
     .from(p)
     .where(inArray(p.id, proposalIds));
-  const devices = await loadInputs(db, [...new Set(props.map((r) => r.drmsEquipmentId))]);
+  const devices = await loadYieldInputs(db, [...new Set(props.map((r) => r.drmsEquipmentId))]);
   for (const r of props) {
     const input = devices.get(r.drmsEquipmentId);
     if (!input || !yieldColoursFor(input.isColour).includes(r.colour)) continue;
@@ -601,6 +636,7 @@ export async function getYieldCheckForProposals(db: Db, proposalIds: number[], n
       colour: c.colour,
       lastOrderDate: c.lastOrderDate,
       pagesSinceLastOrder: c.pagesSinceLastOrder,
+      pagesSinceEstimated: c.pagesSinceEstimated,
       pctOfRated: c.pctOfRatedSinceLastOrder,
       ratedYield: c.ratedYield,
       early: c.early,
@@ -628,7 +664,7 @@ export interface UnderYieldingRow {
 
 /** Fleet list of device/colours flagged under-yielding, worst first. */
 export async function listUnderYielding(db: Db, now: Date = new Date()): Promise<UnderYieldingRow[]> {
-  const inputs = await loadInputs(db, null, { requireLink: true });
+  const inputs = await loadYieldInputs(db, null, { requireLink: true });
   const rows: UnderYieldingRow[] = [];
   for (const input of inputs.values()) {
     if (input.events.size === 0) continue;

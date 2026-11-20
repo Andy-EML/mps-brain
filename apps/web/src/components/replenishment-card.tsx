@@ -68,8 +68,10 @@ export function ReplenishmentCard({
   shelfError,
   origin,
 }: ReplenishmentCardProps) {
-  const pending = proposals.filter((p) => p.status === 'pending');
-  const decided = proposals.filter((p) => p.status !== 'pending');
+  // A held proposal (its last cartridge probably never fitted) is decided on *Probably on site*,
+  // so it is listed with the decided ones, linking there, rather than in the form.
+  const pending = proposals.filter((p) => p.status === 'pending' && p.holdReason === null);
+  const decided = proposals.filter((p) => p.status !== 'pending' || p.holdReason !== null);
   const colours = isColour ? COLOURS : (['black'] as const);
   // A value that comes from the customer links to that customer's row on the settings page.
   const customerHref =
@@ -196,6 +198,9 @@ export function ReplenishmentCard({
                       <span className="text-muted-foreground"> · {triggerLabel(p)} · </span>
                       <span className="text-brand">{status.text}</span>
                     </Link>
+                    {p.status === 'pending' && p.holdDetail ? (
+                      <p className="mt-0.5 text-[12px] text-muted-foreground">{p.holdDetail}</p>
+                    ) : null}
                   </li>
                 );
               })}

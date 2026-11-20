@@ -321,7 +321,7 @@ export async function markOrderOrdered(
 
 /**
  * Undoes an approval: the `queued` order is `cancelled` and its proposals go back to `pending` as
- * if never decided, keeping the quantity the operator chose. They stay live throughout (pending and
+ * if never decided (any hold is cleared so they land in Review; the next evaluate run re-decides), keeping the quantity the operator chose. They stay live throughout (pending and
  * approved share the live-proposal indexes), so the engine cannot have raised a duplicate. A top-up's
  * quantity goes back on the shelf. Only proposals still `approved` move: on an order the watcher has
  * partly matched, the colours already in Vantage stay `ordered` and the order ends `submitted`.
@@ -332,7 +332,7 @@ export async function returnOrderToReview(db: Db, args: { orderId: number; userI
     await leaveQueue(tx, args.orderId, { status: 'cancelled', resolvedBy: args.userId, resolvedAt: now });
     const moved = await tx
       .update(replenishmentProposals)
-      .set({ status: 'pending', orderId: null, decidedBy: null, decidedAt: null })
+      .set({ status: 'pending', orderId: null, decidedBy: null, decidedAt: null, holdReason: null, holdDetail: null })
       .where(approvedOn(args.orderId))
       .returning(MOVED_PROPOSAL);
     const shelfAdjust = shelfAdjustOf(moved);

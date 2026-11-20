@@ -3,10 +3,10 @@ import { excluded, vantageMeterReadings, type Db } from '@mps/db';
 import { QUEUES } from '@mps/queue';
 import type { VantageClient, VantageRecord } from '@mps/vantage';
 import { lt } from 'drizzle-orm';
-import { lastSuccessfulStart, type JobResult } from '../sync-runs';
+import { lastSuccessfulRun, type JobResult } from '../sync-runs';
 
-/** User rule: meter readings are only ever kept for the last 12 months. */
-export const METER_WINDOW_MONTHS = 12;
+/** User rule (2026-11-19): meter readings are kept for the last 24 months. */
+export const METER_WINDOW_MONTHS = 24;
 /** Covers a reading edited while the previous run was in flight. */
 const OVERLAP_MS = 2 * 60 * 60_000;
 /** Readings dated after this far past now are typos (one real example sits in December of next year). */
@@ -17,6 +17,11 @@ export function meterWindowStart(now: Date): Date {
   const out = new Date(now.getTime());
   out.setUTCMonth(out.getUTCMonth() - METER_WINDOW_MONTHS);
   return out;
+}
+
+/** Full when there is no previous success, or that run covered a smaller window than today's (the window grew, so older months are missing). */
+export function needsFullRun(lastStart: Date | null, lastWindowMonths: number | null): boolean {
+  return lastStart === null || lastWindowMonths === null || lastWindowMonths < METER_WINDOW_MONTHS;
 }
 
 export interface MeterTypeInfo {
@@ -69,14 +74,17 @@ export interface VantageMetersDeps {
 
 /**
  * Pulls Vantage meter readings for the last {@link METER_WINDOW_MONTHS} months, read-only. The first
- * run backfills the whole window; later runs ask only for readings created or modified since the
- * last success. Anything older than the window is pruned on every run.
+ * run backfills the whole window, and so does any later run whose predecessor covered a smaller
+ * window (the window grew); other runs ask only for readings created or modified since the last
+ * success. Anything older than the window is pruned on every run.
  */
 export async function runVantageMeters(deps: VantageMetersDeps): Promise<JobResult> {
   const { db, vantage } = deps;
   const startedAt = (deps.now ?? (() => new Date()))();
-  const lastStart = await lastSuccessfulStart(db, QUEUES.vantageMeters);
-  const full = lastStart === null;
+  const last = await lastSuccessfulRun(db, QUEUES.vantageMeters);
+  const lastStart = last?.startedAt ?? null;
+  const lastWindow = last?.stats.windowMonths;
+  const full = needsFullRun(lastStart, typeof lastWindow === 'number' ? lastWindow : null);
   const windowStart = meterWindowStart(startedAt);
 
   let fetched: VantageRecord[];
@@ -86,7 +94,7 @@ export async function runVantageMeters(deps: VantageMetersDeps): Promise<JobResu
     fetched = await vantage.listMeterReadings({
       readingFrom: windowStart,
       readingTo: new Date(startedAt.getTime() + FUTURE_SLACK_MS),
-      since: full ? undefined : new Date(lastStart.getTime() - OVERLAP_MS),
+      since: full || lastStart === null ? undefined : new Date(lastStart.getTime() - OVERLAP_MS),
     });
   } catch (err) {
     // Neither is worth retrying: a 429 only extends the block, and a bad token will not heal.
@@ -116,5 +124,5 @@ export async function runVantageMeters(deps: VantageMetersDeps): Promise<JobResu
     .where(lt(vantageMeterReadings.readingAt, windowStart))
     .returning({ id: vantageMeterReadings.vantageId });
 
-  return { status: 'success', stats: { readings: rows.length, skipped, pruned: pruned.length, full: full ? 1 : 0 } };
+  return { status: 'success', stats: { readings: rows.length, skipped, pruned: pruned.length, full: full ? 1 : 0, windowMonths: METER_WINDOW_MONTHS } };
 }

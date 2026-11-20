@@ -134,6 +134,13 @@
       "when": 1795022760217,
       "tag": "0018_cartridge_covered_line",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795166651275,
+      "tag": "0019_proposal_hold",
+      "breakpoints": true
     }
   ]
 }

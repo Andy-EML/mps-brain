@@ -6,6 +6,7 @@ const check = (over: Partial<YieldCheck> = {}): YieldCheck => ({
   colour: 'black',
   lastOrderDate: new Date('2026-10-22T09:00:00Z'),
   pagesSinceLastOrder: 3950,
+  pagesSinceEstimated: false,
   pctOfRated: 3950 / 28000,
   ratedYield: 28000,
   early: true,
@@ -45,6 +46,15 @@ describe('yieldNote', () => {
     );
   });
 
+  it('marks an estimated count with "~"', () => {
+    expect(yieldNote(check({ pagesSinceEstimated: true })).text).toBe(
+      'Last ordered 22 Oct 2026 · ~3,950 pages since (14% of 28,000)',
+    );
+    expect(
+      yieldNote(check({ pagesSinceEstimated: true, ratedYield: null, pctOfRated: null, early: null, status: 'no_rated_yield' })).text,
+    ).toBe('Last ordered 22 Oct 2026 · ~3,950 pages since · no rated yield');
+  });
+
   it('says there is no earlier order', () => {
     expect(yieldNote(check({ lastOrderDate: null, pagesSinceLastOrder: null, pctOfRated: null, early: false })).text).toBe(
       'No earlier order on record',
@@ -67,11 +77,12 @@ describe('avgAchievedText / pagesSinceCell', () => {
   });
 
   it('shows pages since, or why not', () => {
-    expect(pagesSinceCell({ lastOrderDate: null, pagesSinceLastOrder: null, pctOfRatedSinceLastOrder: null })).toBe('—');
-    expect(pagesSinceCell({ lastOrderDate: new Date(), pagesSinceLastOrder: null, pctOfRatedSinceLastOrder: null })).toBe(
+    expect(pagesSinceCell({ lastOrderDate: null, pagesSinceLastOrder: null, pagesSinceEstimated: false, pctOfRatedSinceLastOrder: null })).toBe('—');
+    expect(pagesSinceCell({ lastOrderDate: new Date(), pagesSinceLastOrder: null, pagesSinceEstimated: false, pctOfRatedSinceLastOrder: null })).toBe(
       'Not enough meter history',
     );
-    expect(pagesSinceCell({ lastOrderDate: new Date(), pagesSinceLastOrder: 3950, pctOfRatedSinceLastOrder: 0.141 })).toBe('3,950 (14%)');
+    expect(pagesSinceCell({ lastOrderDate: new Date(), pagesSinceLastOrder: 3950, pagesSinceEstimated: false, pctOfRatedSinceLastOrder: 0.141 })).toBe('3,950 (14%)');
+    expect(pagesSinceCell({ lastOrderDate: new Date(), pagesSinceLastOrder: 3950, pagesSinceEstimated: true, pctOfRatedSinceLastOrder: 0.141 })).toBe('~3,950 (14%)');
   });
 });
 
@@ -80,6 +91,7 @@ describe('cartridgeRows', () => {
     const rows = cartridgeRows({
       cartridges: [cart('2026-08-01', null), cart('2026-09-01', 9000, 2), cart('2026-10-01', null)],
       pagesSinceLastOrder: 1200,
+      pagesSinceEstimated: false,
     });
     expect(rows.map((r) => [r.pagesText, r.perCartridgeText, r.inUse])).toEqual([
       ['In use · 1,200 so far', '—', true],
@@ -88,8 +100,13 @@ describe('cartridgeRows', () => {
     ]);
   });
 
+  it('marks an estimated in-use count with "~"', () => {
+    const [row] = cartridgeRows({ cartridges: [cart('2026-10-01', null)], pagesSinceLastOrder: 1200, pagesSinceEstimated: true });
+    expect(row?.pagesText).toBe('In use · ~1,200 so far');
+  });
+
   it('stops at the limit', () => {
     const many = Array.from({ length: 12 }, (_, i) => cart(`2026-0${(i % 9) + 1}-${String(i + 10)}`, 1000));
-    expect(cartridgeRows({ cartridges: many, pagesSinceLastOrder: null }, 8)).toHaveLength(8);
+    expect(cartridgeRows({ cartridges: many, pagesSinceLastOrder: null, pagesSinceEstimated: false }, 8)).toHaveLength(8);
   });
 });

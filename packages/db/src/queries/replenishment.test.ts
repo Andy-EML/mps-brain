@@ -229,6 +229,44 @@ describe('replenishment queue', () => {
     expect(await countAwaitingReview(t.db)).toBe(2);
   });
 
+  describe('held proposals (probably on site)', () => {
+    beforeEach(async () => {
+      await t.db
+        .update(replenishmentProposals)
+        .set({ holdReason: 'not_fitted', holdDetail: 'Spare used 2 days ago, not fitted yet' })
+        .where(eq(replenishmentProposals.id, cyan));
+    });
+
+    it('lists a held proposal only on on-site, with its hold, and keeps it out of review', async () => {
+      const review = await listReplenishmentQueue(t.db, { tab: 'review' });
+      expect(review.flatMap((d) => d.proposals.map((p) => p.id)).sort()).toEqual([black, waste].sort());
+      expect(review.flatMap((d) => d.proposals).every((p) => p.holdReason === null && p.holdDetail === null)).toBe(true);
+      const onSite = await listReplenishmentQueue(t.db, { tab: 'on-site' });
+      expect(onSite.map((d) => d.drmsId)).toEqual(['d1']);
+      expect(onSite[0]!.proposals).toEqual([
+        expect.objectContaining({ id: cyan, status: 'pending', holdReason: 'not_fitted', holdDetail: 'Spare used 2 days ago, not fitted yet' }),
+      ]);
+    });
+
+    it('excludes held proposals from the awaiting-review stats and counts their devices separately', async () => {
+      expect(await getReplenishmentStats(t.db)).toMatchObject({ awaitingReviewDevices: 2, awaitingReviewProposals: 2, onSiteDevices: 1 });
+    });
+
+    it('leaves held proposals out of the sidebar badge count', async () => {
+      expect(await countAwaitingReview(t.db)).toBe(2);
+      await t.db.update(replenishmentProposals).set({ holdReason: 'low_yield' }).where(eq(replenishmentProposals.id, black));
+      expect(await countAwaitingReview(t.db)).toBe(1);
+    });
+
+    it('approving a held proposal from on-site queues it and drops it off the tab', async () => {
+      const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: cyan, quantity: 1 }], userId, now: NOW });
+      expect(await listReplenishmentQueue(t.db, { tab: 'on-site' })).toEqual([]);
+      const ip = await listReplenishmentQueue(t.db, { tab: 'in-progress' });
+      expect(ip[0]!.proposals).toEqual([expect.objectContaining({ id: cyan, status: 'approved', orderId })]);
+      expect(await getReplenishmentStats(t.db)).toMatchObject({ onSiteDevices: 0 });
+    });
+  });
+
   it('lists the ordered and rejected tabs within their windows', async () => {
     const { orderId } = await approveProposals(t.db, { drmsId: 'd1', items: [{ proposalId: black, quantity: 3 }], userId, now: NOW });
     await t.db.update(replenishmentOrders).set({ status: 'submitted', submittedAt: NOW, vantageReference: 'SO77' }).where(eq(replenishmentOrders.id, orderId));
@@ -304,6 +342,15 @@ describe('replenishment queue', () => {
       expect((await order(orderId)).status).toBe('queued');
       expect((await proposal(black)).status).toBe('approved');
       expect((await t.db.select().from(auditLog)).map((a) => a.action)).toEqual(['proposal.approve']);
+    });
+
+    it('back to review clears any hold, so the proposal lands in Review', async () => {
+      const { orderId } = await approveBoth();
+      await t.db.update(replenishmentProposals).set({ holdReason: 'not_fitted', holdDetail: 'left over' }).where(eq(replenishmentProposals.id, black));
+      await returnOrderToReview(t.db, { orderId, userId, now: LATER });
+      expect(await proposal(black)).toMatchObject({ status: 'pending', holdReason: null, holdDetail: null });
+      const review = await listReplenishmentQueue(t.db, { tab: 'review', now: LATER });
+      expect(review.flatMap((d) => d.proposals).map((p) => p.id)).toContain(black);
     });
 
     it('back to review: cancels the order and returns its proposals to pending, undecided', async () => {

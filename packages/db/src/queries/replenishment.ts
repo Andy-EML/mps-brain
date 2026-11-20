@@ -1,5 +1,5 @@
 import { REPLENISH_COLOURS, deviceDisplayName, type ReplenishColour } from '@mps/core';
-import { and, count, countDistinct, desc, eq, gte, inArray, lt, sql, type SQL } from 'drizzle-orm';
+import { and, count, countDistinct, desc, eq, gte, inArray, isNotNull, isNull, lt, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import {
@@ -24,7 +24,7 @@ import { counterPivotSubquery, drmsEquipmentName, toNumberOrNull } from './share
  * card. Read-only; the decisions that change these rows live in `./replenishment-actions`.
  */
 
-export type QueueTab = 'review' | 'in-progress' | 'ordered' | 'rejected';
+export type QueueTab = 'review' | 'on-site' | 'in-progress' | 'ordered' | 'rejected';
 
 /** How far back the *Ordered* and *Rejected* tabs look. */
 export const ORDERED_TAB_DAYS = 90;
@@ -50,6 +50,9 @@ export interface QueueProposal {
   decidedAt: Date | null;
   decidedBy: string | null;
   note: string | null;
+  /** Why a pending proposal is held back from *review* (it shows on *on-site*); null when it is not held. */
+  holdReason: 'not_fitted' | 'low_yield' | null;
+  holdDetail: string | null;
   /** The site-stock shelf a top-up proposal belongs to; null for ordinary proposals. */
   shelfId: number | null;
   /** The MPS order this proposal went into (approved, ordered, or rejected from one); null before a decision. */
@@ -131,6 +134,8 @@ function selectProposals(db: Db, where: SQL | undefined) {
       decidedAt: p.decidedAt,
       decidedBy: decider.username,
       note: p.note,
+      holdReason: p.holdReason,
+      holdDetail: p.holdDetail,
       shelfId: p.shelfId,
       orderId: p.orderId,
       salesOrderReference: vantageSalesOrders.reference,
@@ -287,6 +292,8 @@ async function assemble(db: Db, proposals: ProposalRow[], orders: OrderRow[], no
       decidedAt: p.decidedAt,
       decidedBy: p.decidedBy,
       note: p.note,
+      holdReason: p.holdReason,
+      holdDetail: p.holdDetail,
       shelfId: p.shelfId,
       orderId: p.orderId,
       salesOrderReference: p.salesOrderReference,
@@ -332,7 +339,8 @@ const daysBefore = (now: Date, days: number) => new Date(now.getTime() - days * 
 /**
  * One tab of the toner-order queue, grouped by device.
  *
- * - *review*: devices with a `pending` proposal (only the pending ones shown);
+ * - *review*: devices with a `pending` proposal that is not held (only those shown);
+ * - *on-site*: devices with a `pending` proposal carrying a hold (`hold_reason`), probably already on site;
  * - *in-progress*: orders `queued`, and their proposals. A `cancelled` order is on no tab; its proposals went to *review* or *rejected*;
  * - *ordered*: orders `submitted` in the last {@link ORDERED_TAB_DAYS} days;
  * - *rejected*: proposals `rejected|superseded` in the last {@link REJECTED_TAB_DAYS} days.
@@ -348,11 +356,13 @@ export async function listReplenishmentQueue(
   const o = replenishmentOrders;
   let devices: QueueDevice[];
 
-  if (args.tab === 'review' || args.tab === 'rejected') {
+  if (args.tab === 'review' || args.tab === 'on-site' || args.tab === 'rejected') {
     const where =
       args.tab === 'review'
-        ? eq(p.status, 'pending')
-        : and(inArray(p.status, ['rejected', 'superseded']), gte(p.decidedAt, daysBefore(now, REJECTED_TAB_DAYS)));
+        ? and(eq(p.status, 'pending'), isNull(p.holdReason))
+        : args.tab === 'on-site'
+          ? and(eq(p.status, 'pending'), isNotNull(p.holdReason))
+          : and(inArray(p.status, ['rejected', 'superseded']), gte(p.decidedAt, daysBefore(now, REJECTED_TAB_DAYS)));
     devices = await assemble(db, await selectProposals(db, where), [], now);
   } else {
     const where =
@@ -364,13 +374,15 @@ export async function listReplenishmentQueue(
     devices = await assemble(db, proposals, orders, now);
   }
 
-  devices.sort(args.tab === 'review' ? byUrgency : byRecency);
+  devices.sort(args.tab === 'review' || args.tab === 'on-site' ? byUrgency : byRecency);
   return devices.slice(0, args.limit ?? DEFAULT_QUEUE_LIMIT);
 }
 
 export interface ReplenishmentStats {
   awaitingReviewDevices: number;
   awaitingReviewProposals: number;
+  /** Distinct devices with a held pending proposal (the *on-site* tab). */
+  onSiteDevices: number;
   /** Distinct devices with an MPS order still open (see `openMpsOrders`). */
   onOrderDevices: number;
   /** Our orders in flight: `queued`, or `submitted` and not yet completed in Vantage. Never `cancelled`. */
@@ -379,7 +391,7 @@ export interface ReplenishmentStats {
   cartridgesThisQuarter: number;
 }
 
-/** The queue's header stats, in three queries. */
+/** The queue's header stats, in four queries. */
 export async function getReplenishmentStats(db: Db, now: Date = new Date()): Promise<ReplenishmentStats> {
   const p = replenishmentProposals;
   const o = replenishmentOrders;
@@ -387,7 +399,11 @@ export async function getReplenishmentStats(db: Db, now: Date = new Date()): Pro
   const [pending] = await db
     .select({ devices: countDistinct(p.drmsEquipmentId), proposals: count() })
     .from(p)
-    .where(eq(p.status, 'pending'));
+    .where(and(eq(p.status, 'pending'), isNull(p.holdReason)));
+  const [held] = await db
+    .select({ devices: countDistinct(p.drmsEquipmentId) })
+    .from(p)
+    .where(and(eq(p.status, 'pending'), isNotNull(p.holdReason)));
 
   // A submitted order is open until the pulled Vantage order says it completed; one not pulled yet
   // (no row) is still open.
@@ -412,18 +428,19 @@ export async function getReplenishmentStats(db: Db, now: Date = new Date()): Pro
   return {
     awaitingReviewDevices: Number(pending?.devices ?? 0),
     awaitingReviewProposals: Number(pending?.proposals ?? 0),
+    onSiteDevices: Number(held?.devices ?? 0),
     onOrderDevices: Number(orders?.onOrderDevices ?? 0),
     openMpsOrders: Number(orders?.openMpsOrders ?? 0),
     cartridgesThisQuarter: Number(cartridges?.n ?? 0),
   };
 }
 
-/** Devices with a pending proposal — the sidebar badge. */
+/** Devices with a pending proposal that is not held — the sidebar badge (the *review* count). */
 export async function countAwaitingReview(db: Db): Promise<number> {
   const [r] = await db
     .select({ n: countDistinct(replenishmentProposals.drmsEquipmentId) })
     .from(replenishmentProposals)
-    .where(eq(replenishmentProposals.status, 'pending'));
+    .where(and(eq(replenishmentProposals.status, 'pending'), isNull(replenishmentProposals.holdReason)));
   return Number(r?.n ?? 0);
 }
 

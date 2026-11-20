@@ -1,4 +1,4 @@
-import { meterPointAt, type YieldMeterPoint } from './toner-yield';
+import { meterAt, type YieldMeterPoint } from './toner-yield';
 
 /**
  * Pure rules for the read-only, meter-driven "PM due" list. No DB access: callers pass work units and
@@ -219,7 +219,7 @@ export function computePm(args: {
   const nowMs = now.getTime();
 
   const allVisits = groupVisits(units, s, now);
-  const meters = allVisits.map((visit) => meterPointAt(meter, visit.at)?.value ?? null);
+  const meters = allVisits.map((visit) => meterAt(meter, visit.at)?.value ?? null);
   const visits: PmVisit[] = allVisits.map((visit, i) => {
     const m = meters[i] ?? null;
     const older = meters[i + 1] ?? null;
@@ -271,18 +271,22 @@ export function computePm(args: {
   let unusableReason: 'meter_reset' | 'no_meter' | null = null;
   if (!latest || stale) unusableReason = 'no_meter';
   else if (clockStart) {
-    let base = meterPointAt(meter, clockStart);
+    const at = meterAt(meter, clockStart);
+    // `basePoint` is the reading the base rests on (null when interpolated), to spot "base is the latest reading".
+    let baseValue: number | null = at?.value ?? null;
+    let basePoint: YieldMeterPoint | null = at && !at.estimated ? (at.before ?? at.after) : null;
     let lowerBound = false;
-    if (!base) {
-      // The clock started before the meter history (installs, and visits older than the 12 months of
+    if (!at) {
+      // The clock started before the meter history (installs, and visits older than the 24 months of
       // readings held): use the first reading after it; pages before it are unseen when the gap exceeds 30 days.
-      base = meter.find((p) => p.at.getTime() > clockStart!.getTime()) ?? null;
-      lowerBound = base !== null && base.at.getTime() - clockStart.getTime() > STALE_METER_DAYS * DAY_MS;
+      basePoint = meter.find((p) => p.at.getTime() > clockStart!.getTime()) ?? null;
+      baseValue = basePoint?.value ?? null;
+      lowerBound = basePoint !== null && basePoint.at.getTime() - clockStart.getTime() > STALE_METER_DAYS * DAY_MS;
     }
-    if (!base || base === latest || latest.at.getTime() <= clockStart.getTime()) unusableReason = 'no_meter';
-    else if (latest.value < base.value) unusableReason = 'meter_reset';
+    if (baseValue === null || basePoint === latest || latest.at.getTime() <= clockStart.getTime()) unusableReason = 'no_meter';
+    else if (latest.value < baseValue) unusableReason = 'meter_reset';
     else {
-      pagesSince = latest.value - base.value;
+      pagesSince = latest.value - baseValue;
       pagesSinceIsLowerBound = lowerBound;
     }
   } else {

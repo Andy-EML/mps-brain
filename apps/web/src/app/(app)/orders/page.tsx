@@ -13,7 +13,7 @@ import { formatNumber } from '@/lib/format';
 
 export const metadata = { title: 'Toner orders · MPS Dashboard' };
 
-const TABS: readonly QueueTab[] = ['review', 'in-progress', 'ordered', 'rejected'];
+const TABS: readonly QueueTab[] = ['review', 'on-site', 'in-progress', 'ordered', 'rejected'];
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -46,6 +46,7 @@ export default async function OrdersPage({ searchParams }: PageProps<'/orders'>)
 
   const tabs: FilterTab[] = [
     { value: 'review', label: <TabLabel label="Review" count={stats.awaitingReviewDevices} /> },
+    { value: 'on-site', label: <TabLabel label="Probably on site" count={stats.onSiteDevices} /> },
     { value: 'in-progress', label: <TabLabel label="In progress" count={inProgressOrders} /> },
     { value: 'ordered', label: 'Ordered' },
     { value: 'rejected', label: 'Rejected' },

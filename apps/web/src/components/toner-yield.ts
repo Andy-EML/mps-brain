@@ -16,8 +16,12 @@ export const NOT_ENOUGH_HISTORY = 'not enough meter history';
 /** A share (0.14) as a whole percent (`14%`). */
 export const sharePercent = (share: number | null): string => (share === null ? '—' : formatPercent(share * 100));
 
-/** `3,950 pages`, `1 page`. */
-const pages = (n: number): string => `${formatNumber(Math.round(n))} ${Math.round(n) === 1 ? 'page' : 'pages'}`;
+/** `3,950 pages`, `1 page`; `~3,950 pages` when the count starts from an interpolated meter. */
+const pages = (n: number, estimated = false): string =>
+  `${estimated ? '~' : ''}${formatNumber(Math.round(n))} ${Math.round(n) === 1 ? 'page' : 'pages'}`;
+
+/** `3,950`, or `~3,950` when estimated. */
+const count = (n: number, estimated: boolean): string => `${estimated ? '~' : ''}${formatNumber(Math.round(n))}`;
 
 export interface YieldNote {
   text: string;
@@ -39,8 +43,10 @@ export function yieldNote(check: YieldCheck): YieldNote {
     parts.push(`Last ordered ${formatDate(check.lastOrderDate)}`);
     if (check.pagesSinceLastOrder === null) parts.push(NOT_ENOUGH_HISTORY);
     else if (check.ratedYield !== null && check.pctOfRated !== null)
-      parts.push(`${pages(check.pagesSinceLastOrder)} since (${sharePercent(check.pctOfRated)} of ${formatNumber(check.ratedYield)})`);
-    else parts.push(`${pages(check.pagesSinceLastOrder)} since · no rated yield`);
+      parts.push(
+        `${pages(check.pagesSinceLastOrder, check.pagesSinceEstimated)} since (${sharePercent(check.pctOfRated)} of ${formatNumber(check.ratedYield)})`,
+      );
+    else parts.push(`${pages(check.pagesSinceLastOrder, check.pagesSinceEstimated)} since · no rated yield`);
   }
   if (check.stale) parts.push('stale meters');
   return { text: parts.join(' · '), early: check.early === true, stale: check.stale };
@@ -58,11 +64,13 @@ export function avgAchievedText(c: Pick<ColourYield, 'avgAchieved' | 'avgPctOfRa
   return 'Not enough meter history';
 }
 
-/** The "Pages since" cell: `3,950 (14%)`, or why there is no figure. */
-export function pagesSinceCell(c: Pick<ColourYield, 'lastOrderDate' | 'pagesSinceLastOrder' | 'pctOfRatedSinceLastOrder'>): string {
+/** The "Pages since" cell: `3,950 (14%)` (`~3,950` when estimated), or why there is no figure. */
+export function pagesSinceCell(
+  c: Pick<ColourYield, 'lastOrderDate' | 'pagesSinceLastOrder' | 'pagesSinceEstimated' | 'pctOfRatedSinceLastOrder'>,
+): string {
   if (c.lastOrderDate === null) return '—';
   if (c.pagesSinceLastOrder === null) return 'Not enough meter history';
-  const n = formatNumber(Math.round(c.pagesSinceLastOrder));
+  const n = count(c.pagesSinceLastOrder, c.pagesSinceEstimated);
   return c.pctOfRatedSinceLastOrder === null ? n : `${n} (${sharePercent(c.pctOfRatedSinceLastOrder)})`;
 }
 
@@ -83,7 +91,7 @@ export interface CartridgeRow {
  * pages since it went out rather than a finished count.
  */
 export function cartridgeRows(
-  c: Pick<ColourYield, 'cartridges' | 'pagesSinceLastOrder'>,
+  c: Pick<ColourYield, 'cartridges' | 'pagesSinceLastOrder' | 'pagesSinceEstimated'>,
   limit = 8,
 ): CartridgeRow[] {
   const list: CartridgeInterval[] = c.cartridges;
@@ -94,7 +102,7 @@ export function cartridgeRows(
     let pagesText: string;
     let perCartridgeText: string;
     if (inUse) {
-      pagesText = c.pagesSinceLastOrder === null ? `In use · ${NOT_ENOUGH_HISTORY}` : `In use · ${formatNumber(Math.round(c.pagesSinceLastOrder))} so far`;
+      pagesText = c.pagesSinceLastOrder === null ? `In use · ${NOT_ENOUGH_HISTORY}` : `In use · ${count(c.pagesSinceLastOrder, c.pagesSinceEstimated)} so far`;
       perCartridgeText = '—';
     } else if (k.pagesDone === null) {
       pagesText = 'Not enough meter history';

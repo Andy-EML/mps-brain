@@ -77,7 +77,7 @@ describe('pm action writes', () => {
   let t: TestDb;
   beforeEach(async () => {
     t = await createTestDb();
-    await t.db.insert(vantageEquipment).values({ vantageId: 1, customerName: 'Cust', serial: 'S1', raw: {} });
+    await t.db.insert(vantageEquipment).values({ vantageId: 1, customerName: 'Cust', serial: 'S1', raw: { Item: { IsMetered: true, NominalCode: '4000' } } });
     await t.db.insert(vantageEquipmentContracts).values({ vantageEquipmentId: 1, contractId: 10, contractReference: 'C1', isActive: true });
   });
   afterEach(() => t.close());

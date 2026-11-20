@@ -6,35 +6,36 @@ import {
   deviceLinks,
   drmsEquipment,
   vantageEquipment,
+  vantageMeterReadings,
   vantageSalesOrderLines,
   vantageSalesOrders,
 } from '../schema';
 import { createTestDb, type TestDb } from '../testing';
-import { getReviewDeviceDetail, meterPoints, pagesSinceOrder, type MeterPoint } from './review-detail';
+import { getReviewDeviceDetail, meterPoints, pagesSinceOrder } from './review-detail';
+import { getDeviceYield, type YieldMeterPoint } from './toner-yield';
 
 const DAY = 86_400_000;
 const d = (iso: string) => new Date(iso);
-const pt = (iso: string, value: number): MeterPoint => ({ at: d(iso), value });
+const pt = (iso: string, value: number): YieldMeterPoint => ({ at: d(iso), value });
 
 describe('pagesSinceOrder', () => {
   const order = d('2026-08-01T10:00:00Z');
 
-  it('counts pages from the nearest reading on or before the order date to the newest reading', () => {
-    const points = [pt('2026-07-01T00:00:00Z', 900), pt('2026-07-25T00:00:00Z', 1000), pt('2026-08-01T09:00:00Z', 1010), pt('2026-09-20T00:00:00Z', 1500)];
+  it('counts pages from the meter at the order date to the newest reading', () => {
+    const points = [pt('2026-07-01T00:00:00Z', 900), pt('2026-07-25T00:00:00Z', 1000), pt('2026-08-01T10:00:00Z', 1010), pt('2026-09-20T00:00:00Z', 1500)];
     expect(pagesSinceOrder(points, order)).toEqual({
       kind: 'pages',
       pages: 490,
+      estimated: false,
       orderDate: order,
-      baselineAt: d('2026-08-01T09:00:00Z'),
+      baselineAt: d('2026-08-01T10:00:00Z'),
       currentAt: d('2026-09-20T00:00:00Z'),
     });
   });
 
-  it('accepts a reading up to 45 days before the order, and says so when the nearest is older', () => {
-    const within = [pt('2026-06-18T00:00:00Z', 100), pt('2026-09-01T00:00:00Z', 400)];
-    expect(pagesSinceOrder(within, order)).toMatchObject({ kind: 'pages', pages: 300 });
-    const older = [pt('2026-06-01T00:00:00Z', 100), pt('2026-09-01T00:00:00Z', 400)];
-    expect(pagesSinceOrder(older, order)).toEqual({ kind: 'no-reading', orderDate: order });
+  it('interpolates the meter at the order date between the readings either side, and says so', () => {
+    const points = [pt('2026-07-22T10:00:00Z', 1000), pt('2026-08-11T10:00:00Z', 1200), pt('2026-09-20T00:00:00Z', 1500)];
+    expect(pagesSinceOrder(points, order)).toMatchObject({ kind: 'pages', estimated: true, pages: 400 });
   });
 
   it('says no reading when there are none at all, and no order when the colour never went out', () => {
@@ -42,42 +43,45 @@ describe('pagesSinceOrder', () => {
     expect(pagesSinceOrder([pt('2026-09-01T00:00:00Z', 5)], null)).toEqual({ kind: 'no-order' });
   });
 
+  it('says no reading when nothing was read after the order: unknown, not zero', () => {
+    expect(pagesSinceOrder([pt('2026-07-30T00:00:00Z', 50)], order)).toEqual({ kind: 'no-reading', orderDate: order });
+  });
+
   it('never shows a negative count: a lower meter now means the meter was reset', () => {
     const points = [pt('2026-07-30T00:00:00Z', 50_000), pt('2026-09-01T00:00:00Z', 120)];
     expect(pagesSinceOrder(points, order)).toEqual({ kind: 'meter-reset', orderDate: order });
   });
 
-  it('ignores readings after the order when picking the baseline, whatever their input order', () => {
-    const points = [pt('2026-09-01T00:00:00Z', 700), pt('2026-08-02T00:00:00Z', 650), pt('2026-07-31T00:00:00Z', 600)];
-    expect(pagesSinceOrder(points, order)).toMatchObject({ kind: 'pages', pages: 100, baselineAt: d('2026-07-31T00:00:00Z') });
+  it('takes the baseline from the readings around the order', () => {
+    // 600 the day before and 650 the day after: 635 at the order (34 of 48 hours).
+    const points = [pt('2026-07-31T00:00:00Z', 600), pt('2026-08-02T00:00:00Z', 650), pt('2026-09-01T00:00:00Z', 700)];
+    expect(pagesSinceOrder(points, order)).toMatchObject({ kind: 'pages', estimated: true, pages: 65, baselineAt: d('2026-07-31T00:00:00Z') });
   });
 });
 
 describe('meterPoints', () => {
-  const counters = { black: [pt('2026-07-01T00:00:00Z', 1000)], colour: [pt('2026-07-01T00:00:00Z', 300)] };
+  const snapshots = [{ at: d('2026-07-01T00:00:00Z'), black: 1000, colour: 300 }];
   const alarms = [{ receivedTime: d('2026-08-01T00:00:00Z'), totalCount: 1500, totalColorCount: 400 }];
 
-  it('reads black from the black meter and colour from the full-colour meter, oldest first', () => {
-    expect(meterPoints({ counters, alarms: [], isColour: true, meter: 'black' })).toEqual([pt('2026-07-01T00:00:00Z', 1000)]);
-    expect(meterPoints({ counters, alarms: [], isColour: true, meter: 'colour' })).toEqual([pt('2026-07-01T00:00:00Z', 300)]);
+  it('reads each colour from the same series as the yield line, oldest first', () => {
+    expect(meterPoints({ snapshots, alarms: [], isColour: true, colour: 'magenta' })).toEqual([pt('2026-07-01T00:00:00Z', 300)]);
+    expect(meterPoints({ snapshots, alarms: [], isColour: true, colour: 'black' })).toEqual([pt('2026-07-01T00:00:00Z', 1300)]);
   });
 
-  it('uses DRMS alarm page counts as extra readings: total minus colour for black on a colour device', () => {
-    expect(meterPoints({ counters, alarms, isColour: true, meter: 'black' })).toEqual([
-      pt('2026-07-01T00:00:00Z', 1000),
-      pt('2026-08-01T00:00:00Z', 1100),
-    ]);
-    expect(meterPoints({ counters, alarms, isColour: true, meter: 'colour' })).toEqual([
-      pt('2026-07-01T00:00:00Z', 300),
-      pt('2026-08-01T00:00:00Z', 400),
-    ]);
+  it('adds DRMS alarm page counts: colour count for C/M/Y, the total count for black', () => {
+    expect(meterPoints({ snapshots, alarms, isColour: true, colour: 'yellow' })).toEqual([pt('2026-07-01T00:00:00Z', 300), pt('2026-08-01T00:00:00Z', 400)]);
+    expect(meterPoints({ snapshots, alarms, isColour: true, colour: 'black' })).toEqual([pt('2026-07-01T00:00:00Z', 1300), pt('2026-08-01T00:00:00Z', 1500)]);
   });
 
-  it('takes the alarm total as the black count on a mono device and skips alarms without counts', () => {
-    const mono = [...alarms, { receivedTime: d('2026-08-05T00:00:00Z'), totalCount: null, totalColorCount: null }];
-    expect(meterPoints({ counters, alarms: mono, isColour: false, meter: 'black' })).toEqual([
+  it('skips alarms without the count a colour needs', () => {
+    const none = [
+      { receivedTime: d('2026-08-05T00:00:00Z'), totalCount: null, totalColorCount: null },
+      { receivedTime: d('2026-08-06T00:00:00Z'), totalCount: 1600, totalColorCount: null },
+    ];
+    expect(meterPoints({ snapshots, alarms: none, isColour: true, colour: 'cyan' })).toEqual([pt('2026-07-01T00:00:00Z', 300)]);
+    expect(meterPoints({ snapshots: [{ at: d('2026-07-01T00:00:00Z'), black: 1000, colour: null }], alarms: none, isColour: false, colour: 'black' })).toEqual([
       pt('2026-07-01T00:00:00Z', 1000),
-      pt('2026-08-01T00:00:00Z', 1500),
+      pt('2026-08-06T00:00:00Z', 1600),
     ]);
   });
 });
@@ -244,13 +248,41 @@ describe('getReviewDeviceDetail', () => {
     expect(detail.alarms[0]).toMatchObject({ totalCount: 17_900, totalColorCount: 5_900 });
   });
 
-  it('counts pages since each colour last went out, from counters and alarm readings', async () => {
+  it('counts pages since each colour last went out, on the same meter series as the yield line plus alarm readings', async () => {
     const detail = (await getReviewDeviceDetail(t.db, 'col', NOW))!;
-    // Black last ordered 30 days ago (the deleted SO-DEL does not count); baseline is the 40-day
-    // reading (10,000); newest is the alarm two days ago: 17,900 - 5,900 = 12,000.
-    expect(detail.pagesSince.black).toMatchObject({ kind: 'pages', pages: 2_000, baselineAt: ago(40), currentAt: ago(2) });
-    // Cyan last ordered 20 days ago; colour meter 5,000 then the alarm's 5,900.
-    expect(detail.pagesSince.cyan).toMatchObject({ kind: 'pages', pages: 900 });
+    // Black last ordered 30 days ago (the deleted SO-DEL does not count). Black meter = black + colour:
+    // 15,000 at 40 days, 17,800 at 5 days, so 15,800 at 30 days (interpolated); newest is the alarm
+    // two days ago, whose total count is 17,900.
+    expect(detail.pagesSince.black).toMatchObject({ kind: 'pages', estimated: true, pages: 2_100, currentAt: ago(2) });
+    // Cyan last ordered 20 days ago; colour meter 5,000 then 5,800 gives 5,457 at 20 days; the alarm says 5,900 now.
+    expect(detail.pagesSince.cyan).toMatchObject({ kind: 'pages', estimated: true, pages: 443 });
     expect(detail.pagesSince.magenta).toEqual({ kind: 'no-order' });
+  });
+
+  it('agrees with the toner-yield line: Vantage readings either side of the order, DRMS latest', async () => {
+    await t.db.insert(drmsEquipment).values({ drmsId: 'nw', modelName: 'bizhub C300i', serial: 'S9', isColour: true, raw: {} });
+    await t.db.insert(vantageEquipment).values({ vantageId: 200, raw: {} });
+    await t.db.insert(deviceLinks).values({ drmsEquipmentId: 'nw', vantageEquipmentId: 200, method: 'serial' });
+    const reading = (id: number, at: Date, typeId: number, value: number) =>
+      t.db.insert(vantageMeterReadings).values({ vantageId: id, vantageEquipmentId: 200, meterTypeId: typeId, readingAt: at, reading: value, raw: {} });
+    // Vantage 27 Mar / 26 Apr analogues: 60 and 30 days ago; order on the 2 Apr analogue, 54 days ago.
+    await reading(1, ago(60), 1, 1_000);
+    await reading(2, ago(60), 2, 40_000);
+    await reading(3, ago(30), 1, 1_000);
+    await reading(4, ago(30), 2, 41_000);
+    const [s] = await t.db.insert(counterSnapshots).values({ drmsEquipmentId: 'nw', counterId: 'n1', receivedTime: ago(1), fetchedAt: ago(1), raw: {} }).returning();
+    await t.db.insert(counterValues).values([
+      { snapshotId: s!.id, name: 'Black:Total', value: 1_100 },
+      { snapshotId: s!.id, name: 'Full Color:Total', value: 42_251 },
+    ]);
+    await t.db.insert(vantageSalesOrders).values({ vantageId: 90, reference: 'SO-NW', orderDate: ago(54), vantageEquipmentId: 200, raw: {} });
+    await t.db.insert(vantageSalesOrderLines).values({ vantageId: 901, salesOrderId: 90, vantageEquipmentId: 200, quantity: '1', colour: 'magenta', raw: {} });
+
+    const detail = (await getReviewDeviceDetail(t.db, 'nw', NOW))!;
+    const yieldLine = (await getDeviceYield(t.db, 'nw', NOW))!.colours.find((c) => c.colour === 'magenta')!;
+    // 40,000 + 1,000 * 6/30 = 40,200 at the order; 42,251 - 40,200.
+    expect(detail.pagesSince.magenta).toMatchObject({ kind: 'pages', estimated: true, pages: 2_051 });
+    expect(yieldLine.pagesSinceLastOrder).toBe(2_051);
+    expect(yieldLine.pagesSinceEstimated).toBe(true);
   });
 });

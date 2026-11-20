@@ -152,7 +152,15 @@ interface MachineRow {
   installDate: Date | null;
 }
 
-/** Machines with an active contract that are not hidden; `ids` narrows to specific Vantage equipment. */
+/**
+ * Vantage item nominal code for software/licence/support items (e.g. "PaperCut MF Premium Support").
+ * Live check 2026-11-20 of vantage_equipment.raw Item: nominal 4000 metered 956 (machines), 4000 unmetered 6,
+ * 4007 unmetered 1, 4013 unmetered 5, 4013 metered 7 (PaperCut MF Premium Support). A real machine has
+ * Item.IsMetered = true and a NominalCode other than this, which drops 19 non-machines.
+ */
+export const SOFTWARE_NOMINAL_CODE = '4013';
+
+/** Machines with an active contract that are not hidden, and are real machines (metered, not software); `ids` narrows to specific Vantage equipment. */
 async function loadMachines(db: Db, ids: number[] | null): Promise<MachineRow[]> {
   const modelExpr = sql`coalesce(${drmsEquipment.modelName}, ${vantageEquipment.description})`;
   const rows = await db
@@ -178,6 +186,7 @@ async function loadMachines(db: Db, ids: number[] | null): Promise<MachineRow[]>
       and(
         ids === null ? undefined : inArray(vantageEquipment.vantageId, ids),
         isNull(vantageEquipment.deletedDate),
+        sql`(${vantageEquipment.raw}->'Item'->>'IsMetered') = 'true' and coalesce(${vantageEquipment.raw}->'Item'->>'NominalCode', '') <> ${SOFTWARE_NOMINAL_CODE}`,
         exists(
           db
             .select({ one: sql`1` })

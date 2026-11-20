@@ -700,6 +700,13 @@ export const replenishmentProposals = pgTable(
      */
     vantageSalesOrderId: integer('vantage_sales_order_id'),
     vantageSalesOrderLineId: integer('vantage_sales_order_line_id'),
+    /**
+     * Set while the proposal is held back because the last cartridge sent for this colour was
+     * probably never fitted (`computeHolds`). Null = not held; recomputed on every evaluate run.
+     */
+    holdReason: text('hold_reason', { enum: ['not_fitted', 'low_yield'] }),
+    /** The one-line explanation shown with the hold. */
+    holdDetail: text('hold_detail'),
   },
   (t) => [
     // A line closes at most one proposal, ever, including across pulls.

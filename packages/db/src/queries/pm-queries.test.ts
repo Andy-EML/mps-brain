@@ -79,7 +79,7 @@ describe('pm queries', () => {
   let rid = 0;
   let wid = 0;
 
-  const machine = (id: number, customer = `Cust ${id}`) => t.db.insert(vantageEquipment).values({ vantageId: id, customerName: customer, serial: `SER${id}`, raw: {} });
+  const machine = (id: number, customer = `Cust ${id}`) => t.db.insert(vantageEquipment).values({ vantageId: id, customerName: customer, serial: `SER${id}`, raw: { Item: { IsMetered: true, NominalCode: '4000' } } });
   const contract = (id: number, isActive = true) =>
     t.db.insert(vantageEquipmentContracts).values({ vantageEquipmentId: id, contractId: id * 10, contractReference: `C${id}`, isActive });
   const reading = (id: number, iso: string, value: number, typeId = 1) =>
@@ -107,6 +107,21 @@ describe('pm queries', () => {
     wid = 0;
   });
   afterEach(() => t.close());
+
+  it('lists only real machines: unmetered items and 4013 software/support contracts are excluded', async () => {
+    const item = (id: number, raw: unknown) =>
+      t.db.insert(vantageEquipment).values({ vantageId: id, customerName: `Cust ${id}`, serial: `SER${id}`, raw });
+    await item(1, { Item: { IsMetered: true, NominalCode: '4000' } });
+    await item(2, { Item: { IsMetered: true, NominalCode: '4013' } });
+    await item(3, { Item: { IsMetered: false, NominalCode: '4000' } });
+    await item(4, {});
+    for (const id of [1, 2, 3, 4]) await contract(id);
+    const rows = await listPmDue(t.db, NOW);
+    expect(rows.map((r) => r.vantageEquipmentId)).toEqual([1]);
+    expect(await getEquipmentPm(t.db, 2, NOW)).toBeNull();
+    expect(await getEquipmentPm(t.db, 3, NOW)).toBeNull();
+    expect(await getEquipmentPm(t.db, 1, NOW)).not.toBeNull();
+  });
 
   it('Vantage-only machine (no DRMS link) gets a series and a status', async () => {
     await machine(1);
@@ -180,7 +195,7 @@ describe('pm queries', () => {
   });
 
   it('listPmDue uses install_date', async () => {
-    await t.db.insert(vantageEquipment).values({ vantageId: 1, customerName: 'New', serial: 'S1', installDate: d('2026-08-18'), raw: {} });
+    await t.db.insert(vantageEquipment).values({ vantageId: 1, customerName: 'New', serial: 'S1', installDate: d('2026-08-18'), raw: { Item: { IsMetered: true, NominalCode: '4000' } } });
     await contract(1);
     const [row] = await listPmDue(t.db, NOW);
     expect(row!.result.clockSource).toBe('install');
@@ -205,9 +220,9 @@ describe('pm queries', () => {
       { vantageId: 8, name: 'Beta', raw: {} },
     ]);
     await t.db.insert(vantageEquipment).values([
-      { vantageId: 1, customerName: 'Acme', vantageCustomerId: 7, serial: 'S1', raw: {} },
-      { vantageId: 2, customerName: 'Beta', vantageCustomerId: 8, serial: 'S2', raw: {} },
-      { vantageId: 3, customerName: 'Gamma', serial: 'S3', raw: {} },
+      { vantageId: 1, customerName: 'Acme', vantageCustomerId: 7, serial: 'S1', raw: { Item: { IsMetered: true, NominalCode: '4000' } } },
+      { vantageId: 2, customerName: 'Beta', vantageCustomerId: 8, serial: 'S2', raw: { Item: { IsMetered: true, NominalCode: '4000' } } },
+      { vantageId: 3, customerName: 'Gamma', serial: 'S3', raw: { Item: { IsMetered: true, NominalCode: '4000' } } },
     ]);
     await contract(1);
     await contract(2);
@@ -476,7 +491,9 @@ describe('pm queries', () => {
       expect((await getEquipmentPm(t.db, 1, NOW))!.result.status).toBe('overdue');
       await dismissPm(t.db, { vantageEquipmentId: 1, reason: 'serviced_outside', note: null, servicedOn: day('2026-11-05'), userId: null, now: NOW });
       const row = (await getEquipmentPm(t.db, 1, NOW))!;
-      expect(row.result).toMatchObject({ status: 'ok', clockSource: 'manual', pagesSince: 1000 });
+      // Readings are 09:00Z, the reset is 5 Nov 00:00Z: 3.625 of 16 days between 90,000 and 91,000
+      // -> 90,000 + 1,000*3.625/16 = 90,227; 91,000 - 90,227 = 773.
+      expect(row.result).toMatchObject({ status: 'ok', clockSource: 'manual', pagesSince: 773 });
       expect(row.view).toBe('dismissed');
       expect(ids(await listPmDue(t.db, NOW, { view: 'dismissed' }))).toEqual([1]);
     });

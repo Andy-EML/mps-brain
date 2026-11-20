@@ -17,6 +17,8 @@ const proposal = (over: Partial<QueueProposal> = {}): QueueProposal => ({
   decidedAt: null,
   decidedBy: null,
   note: null,
+  holdReason: null,
+  holdDetail: null,
   shelfId: null,
   orderId: null,
   salesOrderReference: null,
@@ -139,8 +141,11 @@ describe('pagesSinceText', () => {
   const orderDate = new Date('2026-08-01T10:00:00Z');
   it('reads each outcome as a short phrase', () => {
     expect(
-      pagesSinceText({ kind: 'pages', pages: 12_345, orderDate, baselineAt: orderDate, currentAt: orderDate }),
+      pagesSinceText({ kind: 'pages', pages: 12_345, estimated: false, orderDate, baselineAt: orderDate, currentAt: orderDate }),
     ).toBe('12,345 pages since 1 Aug 2026');
+    expect(
+      pagesSinceText({ kind: 'pages', pages: 8_220, estimated: true, orderDate: new Date('2026-04-02T10:00:00Z'), baselineAt: orderDate, currentAt: orderDate }),
+    ).toBe('~8,220 pages since 2 Apr 2026');
     expect(pagesSinceText({ kind: 'no-reading', orderDate })).toBe('no reading at order time (1 Aug 2026)');
     expect(pagesSinceText({ kind: 'meter-reset', orderDate })).toBe('meter reset? (ordered 1 Aug 2026)');
     expect(pagesSinceText({ kind: 'no-order' })).toBe('no previous order');
