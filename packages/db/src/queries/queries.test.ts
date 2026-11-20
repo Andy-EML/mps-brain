@@ -6,6 +6,7 @@ import {
   counterNames,
   counterSnapshots,
   counterValues,
+  customerFlags,
   deviceAlarms,
   deviceAlerts,
   deviceLinks,
@@ -571,6 +572,32 @@ describe('queries', () => {
         const shelved = await listDevices(t.db, { replenish: 'site-stock' });
         expect(shelved.rows.map((r) => r.drmsId)).toEqual([f.drms.online]);
         expect(shelved.total).toBe(1);
+      });
+
+      it('self-managed finds the devices whose customer (or head office) manages its own stock; rows carry it', async () => {
+        expect((await listDevices(t.db, { replenish: 'self-managed' })).total).toBe(0);
+        const before = await listDevices(t.db);
+        expect(before.rows.every((r) => r.selfManaged === false && r.selfManagedSource === null)).toBe(true);
+        // The linked rows carry their Vantage customer id (for the badge's link); unlinked ones null.
+        expect(before.rows.find((r) => r.drmsId === f.drms.online)?.vantageCustomerId).toBe(1);
+        expect(before.rows.find((r) => r.drmsId === f.drms.unlinked)?.vantageCustomerId).toBeNull();
+
+        // Customer 1 (Acme) flagged: D1 only. A `false` row for customer 2 changes nothing.
+        await t.db.insert(customerFlags).values([
+          { vantageCustomerId: 1, selfManaged: true },
+          { vantageCustomerId: 2, selfManaged: false },
+        ]);
+        const sm = await listDevices(t.db, { replenish: 'self-managed' });
+        expect(sm.rows.map((r) => r.drmsId)).toEqual([f.drms.online]);
+        expect(sm.total).toBe(1);
+        expect(sm.rows[0]).toMatchObject({ selfManaged: true, selfManagedSource: 'site', vantageCustomerId: 1 });
+
+        const all = await listDevices(t.db);
+        expect(all.rows.filter((r) => r.selfManaged).map((r) => r.drmsId)).toEqual([f.drms.online]);
+
+        // The device page carries the same flag.
+        expect((await getDevice(t.db, f.drms.online))?.device).toMatchObject({ selfManaged: true, selfManagedSource: 'site', vantageCustomerId: 1 });
+        expect((await getDevice(t.db, f.drms.unlinked))?.device).toMatchObject({ selfManaged: false, selfManagedSource: null, vantageCustomerId: null });
       });
 
       it('combines with each other, the tabs and the search', async () => {

@@ -1,12 +1,14 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { TriangleAlert } from 'lucide-react';
-import { getShelf } from '@mps/db/queries';
+import { getSelfManaged, getShelf } from '@mps/db/queries';
 import { cn } from 'cn';
 import { resetAutoReplenishAction } from '@/app/(app)/site-stock/actions';
 import { Breadcrumb } from '@/components/breadcrumb';
+import { customerHref } from '@/components/customers';
 import { PageHeader } from '@/components/page-header';
 import { coveredColours, coveredColoursText, eventAlarmText, eventOutcome, shelfStatus } from '@/components/shelf';
+import { SelfManagedBadge } from '@/components/self-managed-badge';
 import { DeleteShelfDialog, HoldingsForm } from '@/components/shelf-forms';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
@@ -42,8 +44,11 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
   const query = await searchParams;
   if (!/^\d{1,9}$/.test(id)) notFound();
 
-  const shelf = await getShelf(getDb(), Number(id));
+  const db = getDb();
+  const shelf = await getShelf(db, Number(id));
   if (!shelf) notFound();
+  // The shelf's customer (or its head office) keeps its own toner: the shelf is kept, but no top-ups.
+  const selfManaged = await getSelfManaged(db, shelf.vantageCustomerId);
 
   const errorCode = first(query.error);
   const errorForRaw = first(query.errorFor);
@@ -64,9 +69,20 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
 
       <PageHeader
         title={title}
-        badge={<ToneBadge tone={status.tone}>{status.text}</ToneBadge>}
+        badge={
+          <>
+            <ToneBadge tone={status.tone}>{status.text}</ToneBadge>
+            <SelfManagedBadge source={selfManaged.source} vantageCustomerId={shelf.vantageCustomerId} />
+          </>
+        }
         subtitle={
-[shelf.isColour ? 'Colour family' : 'Mono family', subtitle].filter(Boolean).join(' · ')
+          <>
+            <Link href={customerHref(shelf.vantageCustomerId)} className="hover:text-brand hover:underline">
+              {shelf.siteName}
+            </Link>
+            {' · '}
+            {[shelf.isColour ? 'Colour family' : 'Mono family', subtitle].filter(Boolean).join(' · ')}
+          </>
         }
         actions={
           shelf.liveTopUp ? (
@@ -76,6 +92,26 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
           ) : null
         }
       />
+
+      {selfManaged.selfManaged ? (
+        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-warn/30 bg-warn/5 px-5 py-3.5 text-[13px]">
+          <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-warn" />
+          <div className="min-w-0">
+            <p className="font-medium">
+              Customer manages its own stock
+              {selfManaged.source === 'head_office'
+                ? ` (set on its head office${selfManaged.headOffice?.name ? `, ${selfManaged.headOffice.name}` : ''})`
+                : ''}
+            </p>
+            <p className="mt-0.5 text-muted-foreground">
+              No top-ups are proposed for this shelf while it is on. Holdings and uses are still recorded.{' '}
+              <Link href={customerHref(shelf.vantageCustomerId)} className="font-medium text-brand hover:underline">
+                Open customer
+              </Link>
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {reset !== null ? (
         <p role="status" className="mb-4 rounded-xl bg-ok/10 px-5 py-3 text-[13px] text-ok">

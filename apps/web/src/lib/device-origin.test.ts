@@ -103,3 +103,25 @@ describe('deviceHref', () => {
     );
   });
 });
+
+describe('customers origin', () => {
+  it('goes back to the Customers list, or to the customer page it came from', () => {
+    expect(resolveDeviceOrigin('customers', undefined)).toEqual({ key: 'customers', label: 'Customers', href: '/customers' });
+    expect(resolveDeviceOrigin('customers', '/customers?tab=all')).toEqual({
+      key: 'customers',
+      label: 'Customers',
+      href: '/customers?tab=all',
+    });
+    expect(resolveDeviceOrigin('customers', '/customers/42')).toEqual({ key: 'customers', label: 'Customer', href: '/customers/42' });
+  });
+
+  it('refuses any other customers sub-path, and customer pages for other sections', () => {
+    expect(resolveDeviceOrigin('customers', '/customers/42/x').href).toBe('/customers');
+    expect(resolveDeviceOrigin('customers', '/customers/abc').href).toBe('/customers');
+    expect(resolveDeviceOrigin('orders', '/customers/42').href).toBe('/orders');
+  });
+
+  it('deviceHref keeps a customer page as back', () => {
+    expect(deviceHref('D1', 'customers', '/customers/42')).toBe('/devices/D1?from=customers&back=%2Fcustomers%2F42');
+  });
+});

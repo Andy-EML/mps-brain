@@ -479,6 +479,19 @@ export const replenishmentSettings = pgTable(
 );
 
 /**
+ * Absolute per-customer flag: the customer manages its own stock, so the app stops proposing
+ * replenishment for its devices. Keyed by Vantage customer id (a site or a head office); a flagged
+ * head office covers its sites. A row with `self_managed = false` means "turned off", never an override.
+ */
+export const customerFlags = pgTable('customer_flags', {
+  vantageCustomerId: integer('vantage_customer_id').primaryKey(),
+  selfManaged: boolean('self_managed').notNull().default(false),
+  selfManagedNote: text('self_managed_note'),
+  updatedBy: integer('updated_by').references(() => users.id),
+  updatedAt: ts('updated_at').notNull().defaultNow(),
+});
+
+/**
  * A person's note on a PM-due machine: `booked` (a PM is arranged) or `dismissed` (snoozed, or serviced
  * outside). Recorded in the app only; nothing is written to Vantage. One open row per machine.
  */

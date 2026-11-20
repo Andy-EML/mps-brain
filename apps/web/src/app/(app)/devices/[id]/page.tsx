@@ -34,6 +34,7 @@ import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
 import { PmCard } from '@/components/pm-card';
 import { replenishmentErrorMessage } from '@/components/replenishment';
+import { SelfManagedBadge } from '@/components/self-managed-badge';
 import { ReplenishmentCard } from '@/components/replenishment-card';
 import { coveredColours } from '@/components/shelf';
 import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
@@ -328,6 +329,8 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
             <ToneBadge tone={status.tone}>{status.text}</ToneBadge>
             {/* Still monitored, but never counts towards "Needs toner" or raises a proposal. */}
             {hidden ? <ToneBadge tone="muted">Hidden</ToneBadge> : null}
+            {/* The customer keeps its own toner: no proposals of any kind. Opens the customer page. */}
+            <SelfManagedBadge source={device.selfManagedSource} vantageCustomerId={device.vantageCustomerId} />
             {settings && !settings.autoReplenish.value ? (
               <ToneBadge tone="muted">Manual replenishment</ToneBadge>
             ) : null}
@@ -508,6 +511,11 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
               shelfOffer={shelfOffer}
               shelfError={shelfError}
               origin={{ from: fromParam, back: backParam }}
+              selfManaged={
+                device.selfManaged
+                  ? { source: device.selfManagedSource, vantageCustomerId: device.vantageCustomerId }
+                  : null
+              }
             />
             </YieldChecksProvider>
           ) : null}

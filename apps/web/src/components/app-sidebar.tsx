@@ -1,6 +1,7 @@
 import {
   Bell,
   Boxes,
+  Building2,
   ClipboardCheck,
   LayoutGrid,
   Link2Off,
@@ -45,6 +46,7 @@ export function AppSidebar({
 
       <nav aria-label="Main" className="flex flex-col gap-0.5 px-3">
         <NavLink href="/" label="Fleet overview" icon={<LayoutGrid />} exact />
+        <NavLink href="/customers" label="Customers" icon={<Building2 />} />
         <NavLink href="/devices" label="Devices" icon={<Printer />} />
         <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
         <NavLink href="/site-stock" label="Site stock" icon={<Boxes />} />

@@ -1,7 +1,9 @@
 import { getDefaultSettings, listCustomerSettings, type CustomerSettingsRow, type DefaultSettings } from '@mps/db/queries';
+import Link from 'next/link';
 import { cn } from 'cn';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { AddCustomerOverrideDialog, ResetCustomerDialog } from '@/components/customer-override-dialogs';
+import { customerHref } from '@/components/customers';
 import { PageHeader } from '@/components/page-header';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
 import { SettingsTabs } from '@/components/settings-tabs';
@@ -187,7 +189,11 @@ export default async function ReplenishmentSettingsPage({ searchParams }: PagePr
                       id={dialog}
                       className="scroll-mt-6 border-b border-line last:border-b-0 target:bg-brand-soft/40"
                     >
-                      <td className={cn(CELL, 'font-medium')}>{name}</td>
+                      <td className={cn(CELL, 'font-medium')}>
+                        <Link href={customerHref(row.vantageCustomerId)} className="hover:text-brand hover:underline">
+                          {name}
+                        </Link>
+                      </td>
                       <td className={cn(CELL, 'font-mono text-[12px] text-muted-foreground')}>{row.reference ?? ''}</td>
                       <td className={cn(CELL, 'text-right tabular')}>{formatNumber(row.deviceCount)}</td>
                       {THRESHOLDS.map((t) => (

@@ -11,7 +11,7 @@ import {
   siteStockShelves,
   type Db,
 } from '@mps/db';
-import { TONER_NAMES, shelfDevicesSubquery } from '@mps/db/queries';
+import { SELF_MANAGED_NOTE, TONER_NAMES, selfManagedSourceSql, shelfDevicesSubquery } from '@mps/db/queries';
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 
 type ShelfRow = typeof siteStockShelves.$inferSelect;
@@ -310,11 +310,13 @@ export async function evaluateSiteStock(
 
   // Top-ups: one batch per shelf, never while that shelf already has one pending or approved.
   const freshRows = await db
-    .select({ shelf: siteStockShelves, isColour: cartridgeFamilies.isColour })
+    .select({ shelf: siteStockShelves, isColour: cartridgeFamilies.isColour, selfManaged: selfManagedSourceSql(siteStockShelves.vantageCustomerId) })
     .from(siteStockShelves)
     .innerJoin(cartridgeFamilies, eq(cartridgeFamilies.id, siteStockShelves.familyId));
   const trackedByShelf = new Map(freshRows.map((r) => [r.shelf.id, trackedColours(r.shelf, r.isColour)]));
   const memberByDevice = new Map(members.map((m) => [m.drmsId, m]));
+  // Self-managed customers' shelves still count uses (above) but never raise or keep a top-up.
+  const selfManagedShelves = new Set(freshRows.filter((r) => r.selfManaged !== null).map((r) => r.shelf.id));
 
   // A pending top-up whose colour the shelf no longer tracks, or whose device has left the shelf,
   // is superseded so the device's own proposals take the colour back (and no order goes to a
@@ -326,7 +328,9 @@ export async function evaluateSiteStock(
   for (const p of pendingTopUps) {
     const tracked = trackedByShelf.get(p.shelfId!);
     if (!tracked) continue;
-    const note = !tracked.has(p.colour) ? 'no longer held' : memberByDevice.get(p.drmsId)?.shelfId !== p.shelfId ? 'no longer on shelf' : null;
+    const note = selfManagedShelves.has(p.shelfId!)
+      ? SELF_MANAGED_NOTE
+      : !tracked.has(p.colour) ? 'no longer held' : memberByDevice.get(p.drmsId)?.shelfId !== p.shelfId ? 'no longer on shelf' : null;
     if (note === null) continue;
     await db
       .update(replenishmentProposals)
@@ -341,7 +345,7 @@ export async function evaluateSiteStock(
   const liveShelves = new Set(live.map((l) => l.shelfId));
 
   for (const { shelf } of freshRows) {
-    if (liveShelves.has(shelf.id)) continue;
+    if (liveShelves.has(shelf.id) || selfManagedShelves.has(shelf.id)) continue;
     // Only tracked colours: a mono family's stale cyan, magenta or yellow never triggers or joins.
     const tracked = trackedByShelf.get(shelf.id)!;
     const raw = countsOf('holding', shelf);

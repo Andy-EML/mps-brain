@@ -55,6 +55,7 @@ export async function evaluateSpareBlack(
       vantageEquipmentId: eff.vantageEquipmentId,
       spareBlack: eff.spareBlack,
       autoReplenish: eff.autoReplenish,
+      selfManaged: eff.selfManaged,
       linkedAt: deviceLinks.linkedAt,
       hidden: sql<boolean>`exists (select 1 from ${hiddenDevices} where ${hiddenDevices.drmsEquipmentId} = ${drmsEquipment.drmsId})`,
     })
@@ -101,7 +102,9 @@ export async function evaluateSpareBlack(
     const changes = detectChanges({ since, afterEmpty, readings, empties });
     if (changes.length === 0) continue;
 
-    const ineligible: string | null = !d.spareBlack
+    const ineligible: string | null = d.selfManaged
+      ? 'self_managed'
+      : !d.spareBlack
       ? 'spare_off'
       : !d.autoReplenish
         ? 'auto_off'

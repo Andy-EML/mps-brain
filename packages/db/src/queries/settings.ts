@@ -1,6 +1,7 @@
 import { and, count, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
+import { selfManagedSourceSql } from './customer-flags';
 import { auditLog, deviceLinks, drmsEquipment, replenishmentSettings, users, vantageCustomers, vantageEquipment } from '../schema';
 
 export type SettingSource = 'device' | 'customer' | 'default';
@@ -70,6 +71,9 @@ export function effectiveSettingsSubquery(db: Db) {
       alertsEnabledSource: source('alertsEnabled').as('eff_alerts_enabled_source'),
       spareBlack: resolved<boolean>('spareBlack').as('eff_spare_black'),
       spareBlackSource: source('spareBlack').as('eff_spare_black_source'),
+      // Absolute flag, not part of the cascade: the active link's customer or its head office.
+      selfManaged: sql<boolean>`${selfManagedSourceSql(vantageEquipment.vantageCustomerId)} is not null`.as('eff_self_managed'),
+      selfManagedSource: selfManagedSourceSql(vantageEquipment.vantageCustomerId).as('eff_self_managed_source'),
     })
     .from(drmsEquipment)
     .leftJoin(deviceLinks, and(eq(deviceLinks.drmsEquipmentId, drmsEquipment.drmsId), isNull(deviceLinks.unlinkedAt)))

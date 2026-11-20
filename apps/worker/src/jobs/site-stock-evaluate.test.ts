@@ -1,6 +1,7 @@
 import {
   cartridgeFamilies,
   cartridgeFamilyModels,
+  customerFlags,
   deviceAlarms,
   deviceLinks,
   drmsEquipment,
@@ -491,6 +492,29 @@ describe('evaluateSiteStock', () => {
       const rows = await t.db.select().from(replenishmentProposals);
       expect(rows.map((p) => [p.colour, p.quantity, p.drmsEquipmentId, p.alarmId])).toEqual([['black', 3, 'dA', null]]);
       expect(rows[0]!.alarmDescription).toMatch(/level/i);
+    });
+  });
+
+  describe('self-managed customer', () => {
+    it('still counts uses but raises no top-up', async () => {
+      await t.db.insert(customerFlags).values({ vantageCustomerId: 100, selfManaged: true });
+      for (const d of ['05', '08', '12']) await alarm(d === '08' ? 'dB' : 'dA', `2026-09-${d} 08:00:00`, 'Toner Empty(BK)');
+      await reading('dA', '2026-09-10 02:00:00', 95);
+      const { stats } = await evaluateSiteStock(t.db, NOW);
+      expect(stats).toMatchObject({ counted: 3, topUps: 0 });
+      expect(await shelf()).toMatchObject({ usedBlack: 3 });
+      expect(await t.db.select().from(replenishmentProposals)).toEqual([]);
+    });
+
+    it('supersedes a pending top-up with the self-managed note', async () => {
+      for (const d of ['05', '08', '12']) await alarm(d === '08' ? 'dB' : 'dA', `2026-09-${d} 08:00:00`, 'Toner Empty(BK)');
+      await reading('dA', '2026-09-10 02:00:00', 95);
+      expect((await evaluateSiteStock(t.db, NOW)).stats.topUps).toBe(1);
+      await t.db.insert(customerFlags).values({ vantageCustomerId: 100, selfManaged: true });
+      const again = await evaluateSiteStock(t.db, NOW);
+      expect(again.stats.topUps).toBe(0);
+      const rows = await t.db.select().from(replenishmentProposals);
+      expect(rows.map((p) => [p.status, p.note])).toEqual([['superseded', 'customer self-managed']]);
     });
   });
 

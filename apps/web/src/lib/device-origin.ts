@@ -16,6 +16,7 @@ export const DEVICE_ORIGINS = {
   registrations: { label: 'DRMS registrations', href: '/registrations' },
   alerts: { label: 'Alerts', href: '/alerts' },
   issues: { label: 'Link issues', href: '/issues' },
+  customers: { label: 'Customers', href: '/customers' },
 } as const satisfies Record<string, { label: string; href: string }>;
 
 export type DeviceOriginKey = keyof typeof DEVICE_ORIGINS;
@@ -29,6 +30,14 @@ export interface DeviceOrigin {
 
 const DEFAULT_ORIGIN: DeviceOriginKey = 'devices';
 
+/**
+ * Sub-pages a section's `back` may also name. A device opened from a customer page goes back to
+ * that customer page (`/customers/42`), not just the list.
+ */
+const SUB_PAGES: Partial<Record<string, RegExp>> = {
+  '/customers': /^\/customers\/\d{1,9}$/,
+};
+
 /** Far longer than any list URL we build; anything bigger is not one of ours. */
 const MAX_BACK_LENGTH = 1000;
 
@@ -41,7 +50,7 @@ function isOriginKey(value: unknown): value is DeviceOriginKey {
 
 /**
  * `back` as a same-site path + query, or null. It must be a relative path to exactly `basePath`
- * (the origin section itself, not a sub-page or another section), so the "Back" link can only
+ * (the origin section itself — or one of its `SUB_PAGES` — not another section), so the "Back" link can only
  * ever return to the list it names — no `//host`, no scheme, no backslashes, no control
  * characters. The hash is dropped.
  */
@@ -55,7 +64,8 @@ export function safeBackPath(back: unknown, basePath: string): string | null {
   } catch {
     return null;
   }
-  if (url.origin !== BASE || url.pathname !== basePath) return null;
+  if (url.origin !== BASE) return null;
+  if (url.pathname !== basePath && !SUB_PAGES[basePath]?.test(url.pathname)) return null;
   return `${url.pathname}${url.search}`;
 }
 
@@ -63,7 +73,10 @@ export function safeBackPath(back: unknown, basePath: string): string | null {
 export function resolveDeviceOrigin(from: unknown, back: unknown): DeviceOrigin {
   const key = isOriginKey(from) ? from : DEFAULT_ORIGIN;
   const origin = DEVICE_ORIGINS[key];
-  return { key, label: origin.label, href: safeBackPath(back, origin.href) ?? origin.href };
+  const href = safeBackPath(back, origin.href) ?? origin.href;
+  // Back to one customer's page rather than the Customers list.
+  const label = key === 'customers' && href.startsWith('/customers/') ? 'Customer' : origin.label;
+  return { key, label, href };
 }
 
 /**

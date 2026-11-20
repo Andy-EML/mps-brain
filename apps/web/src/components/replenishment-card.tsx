@@ -1,6 +1,13 @@
 import Link from 'next/link';
 import type { ReplenishColour } from '@mps/core';
-import type { DeviceShelfOffer, EffectiveSettings, QueueOrder, QueueProposal, SettingSource } from '@mps/db/queries';
+import type {
+  DeviceShelfOffer,
+  EffectiveSettings,
+  QueueOrder,
+  QueueProposal,
+  SelfManagedSource,
+  SettingSource,
+} from '@mps/db/queries';
 import { cn } from 'cn';
 import { updateDeviceSettingsAction } from '@/app/(app)/devices/[id]/actions';
 import type { Origin } from '@/components/hide-device';
@@ -17,6 +24,7 @@ import { ReviewForm } from '@/components/replenishment-queue';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
 import { coveredColoursText } from '@/components/shelf';
 import { CreateDeviceShelfDialog } from '@/components/shelf-forms';
+import { customerHref as customerPageHref } from '@/components/customers';
 import { ToneBadge } from '@/components/tone-badge';
 import { formatDate } from '@/lib/format';
 
@@ -42,6 +50,11 @@ export interface ReplenishmentCardProps {
   shelfError?: string | null;
   /** Where the page was opened from, kept across a refused *Create toner shelf*. */
   origin?: Origin;
+  /**
+   * The device's customer (or its head office) manages its own stock: no toner proposals of any
+   * kind, so the card says so, links to the customer, and offers no approve/reject or shelf controls.
+   */
+  selfManaged?: { source: SelfManagedSource | null; vantageCustomerId: number | null } | null;
 }
 
 const COLOURS = ['black', 'cyan', 'magenta', 'yellow'] as const;
@@ -67,11 +80,14 @@ export function ReplenishmentCard({
   shelfOffer,
   shelfError,
   origin,
+  selfManaged,
 }: ReplenishmentCardProps) {
   // A held proposal (its last cartridge probably never fitted) is decided on *Probably on site*,
-  // so it is listed with the decided ones, linking there, rather than in the form.
-  const pending = proposals.filter((p) => p.status === 'pending' && p.holdReason === null);
-  const decided = proposals.filter((p) => p.status !== 'pending' || p.holdReason !== null);
+  // so it is listed with the decided ones, linking there, rather than in the form. Self-managed:
+  // no form at all (a stray pending one is listed, linking to the queue, like the rest).
+  const inForm = (p: QueueProposal) => !selfManaged && p.status === 'pending' && p.holdReason === null;
+  const pending = proposals.filter(inForm);
+  const decided = proposals.filter((p) => !inForm(p));
   const colours = isColour ? COLOURS : (['black'] as const);
   // A value that comes from the customer links to that customer's row on the settings page.
   const customerHref =
@@ -109,7 +125,23 @@ export function ReplenishmentCard({
         </p>
       ) : null}
 
-      {siteStock && siteStock.covered.length > 0 ? (
+      {selfManaged ? (
+        <p className="mt-3 rounded-lg bg-warn/10 px-3 py-2 text-[13px]">
+          <span className="font-medium">Customer manages its own stock</span>
+          {selfManaged.source === 'head_office' ? ' (set on its head office)' : ''} — no toner proposals for this
+          device.
+          {selfManaged.vantageCustomerId !== null ? (
+            <>
+              {' '}
+              <Link href={customerPageHref(selfManaged.vantageCustomerId)} className="font-medium text-brand hover:underline">
+                Open customer
+              </Link>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
+      {!selfManaged && siteStock && siteStock.covered.length > 0 ? (
         <p className="mt-3 rounded-lg bg-brand-soft/60 px-3 py-2 text-[13px]">
           Normal proposals off for {coveredColoursText(siteStock.covered)} —{' '}
           <Link href={`/site-stock/${siteStock.shelfId}`} className="font-medium text-brand hover:underline">
@@ -125,7 +157,7 @@ export function ReplenishmentCard({
         </p>
       ) : null}
 
-      {shelfOffer?.kind === 'create' ? (
+      {!selfManaged && shelfOffer?.kind === 'create' ? (
         <CreateDeviceShelfDialog
           drmsId={drmsId}
           siteName={shelfOffer.siteName}
@@ -134,7 +166,7 @@ export function ReplenishmentCard({
         />
       ) : null}
 
-      {shelfOffer?.kind === 'no_family' ? (
+      {!selfManaged && shelfOffer?.kind === 'no_family' ? (
         <p className="mt-3 text-[13px] text-muted-foreground">
           This model isn’t in a cartridge family yet, so it can’t share a toner shelf.{' '}
           <Link href="/settings/cartridge-families" className="text-brand hover:underline">

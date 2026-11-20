@@ -13,6 +13,7 @@ import {
   type VantageCustomerMatch,
 } from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
+import { customerReturn } from '@/lib/customer-return';
 import { getDb } from '@/lib/db';
 import { parseSettingsForm } from '@/lib/settings-form';
 
@@ -24,7 +25,8 @@ import { parseSettingsForm } from '@/lib/settings-form';
  *
  * A `SettingsError` comes back as `?settingsError=<code>&settingsFor=<dialog>`: the page turns the
  * code into a sentence and shows it inside the dialog it came from (`default`, `add`, or
- * `customer-<id>`), which stays open.
+ * `customer-<id>`), which stays open. A dialog on a customer page posts `returnTo=/customers/<id>`,
+ * and its error goes back there instead (as `?settingsError=<code>`).
  */
 
 const PAGE = '/settings/replenishment';
@@ -43,16 +45,21 @@ const RESET_ALL: SettingsPatch = {
   spareBlack: null,
 };
 
-function fail(code: string, dialog: string): never {
+function fail(code: string, dialog: string, returnTo: string | null = null): never {
+  if (returnTo) redirect(`${returnTo}?settingsError=${encodeURIComponent(code)}`);
   redirect(`${PAGE}?settingsError=${encodeURIComponent(code)}&settingsFor=${encodeURIComponent(dialog)}`);
 }
 
-/** The settings page itself, and everything that counts "Needs toner" / "Manual replenishment". */
+/**
+ * The settings page itself, everything that counts "Needs toner" / "Manual replenishment", and the
+ * customer pages, whose Settings card shows the customer's override.
+ */
 function revalidate() {
   revalidatePath(PAGE);
   revalidatePath('/');
   revalidatePath('/orders');
   revalidatePath('/devices');
+  revalidatePath('/customers', 'layout');
 }
 
 /**
@@ -99,15 +106,16 @@ export async function updateDefaultsAction(formData: FormData): Promise<void> {
 export async function updateCustomerAction(formData: FormData): Promise<void> {
   const user = await requireUser();
   const dialog = String(formData.get('settingsFor') ?? '') === 'add' ? 'add' : null;
+  const returnTo = customerReturn(formData);
   const id = await customerId(formData);
-  if (id === null) fail('unknown_customer', dialog ?? 'customer');
+  if (id === null) fail('unknown_customer', dialog ?? 'customer', returnTo);
 
   try {
     // Customer settings reach colour and mono devices alike; mono devices ignore CMY.
     const patch = parseSettingsForm(formData, { allowInherit: true, isColour: true });
     await updateCustomerSettings(getDb(), { vantageCustomerId: id, patch, userId: user.userId });
   } catch (err) {
-    if (err instanceof SettingsError) fail(err.code, dialog ?? `customer-${id}`);
+    if (err instanceof SettingsError) fail(err.code, dialog ?? `customer-${id}`, returnTo);
     throw err;
   }
   revalidate();
@@ -117,7 +125,7 @@ export async function updateCustomerAction(formData: FormData): Promise<void> {
 export async function resetCustomerAction(formData: FormData): Promise<void> {
   const user = await requireUser();
   const id = await customerId(formData);
-  if (id === null) fail('unknown_customer', 'reset');
+  if (id === null) fail('unknown_customer', 'reset', customerReturn(formData));
   await updateCustomerSettings(getDb(), { vantageCustomerId: id, patch: RESET_ALL, userId: user.userId });
   revalidate();
 }

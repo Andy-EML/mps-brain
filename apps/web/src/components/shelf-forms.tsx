@@ -40,9 +40,10 @@ const SELECT =
 /** After a successful save: drop a stale `?error=` from an earlier attempt so the page stops showing it. */
 function clearError(router: ReturnType<typeof useRouter>) {
   const url = new URL(window.location.href);
-  if (url.searchParams.has('error') || url.searchParams.has('errorFor') || url.searchParams.has('reset')) {
+  if (['error', 'errorFor', 'shelf', 'reset'].some((k) => url.searchParams.has(k))) {
     url.searchParams.delete('error');
     url.searchParams.delete('errorFor');
+    url.searchParams.delete('shelf');
     url.searchParams.delete('reset');
     router.replace(`${url.pathname}${url.search}`, { scroll: false });
   }
@@ -80,6 +81,11 @@ function SubmitButton({
   );
 }
 
+/** A customer page posting one of these forms, so the action brings the user back to it. */
+function ReturnField({ returnTo }: { returnTo?: string }) {
+  return returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null;
+}
+
 function deviceCount(n: number): string {
   return `${n} linked ${n === 1 ? 'device' : 'devices'}`;
 }
@@ -90,6 +96,10 @@ export interface NewShelfDialogProps {
   families: { id: number; name: string; isColour: boolean; models: string[] }[];
   /** A sentence for `?error=` when `errorFor=add`. */
   error?: string | null;
+  /** The site to start on (the customer page's own customer); "Change" still searches for another. */
+  customer?: VantageCustomerMatch;
+  /** The customer page posting this, so creating lands back on it (see `customerReturn`). */
+  returnTo?: string;
 }
 
 /**
@@ -97,11 +107,11 @@ export interface NewShelfDialogProps {
  * customer override), pick the cartridge family, create. The shelf opens next, to set what it
  * holds; its machines are everything at that site whose model is in the family.
  */
-export function NewShelfDialog({ families, error }: NewShelfDialogProps) {
+export function NewShelfDialog({ families, error, customer, returnTo }: NewShelfDialogProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<VantageCustomerMatch[] | null>(null);
-  const [picked, setPicked] = useState<VantageCustomerMatch | null>(null);
+  const [picked, setPicked] = useState<VantageCustomerMatch | null>(customer ?? null);
   const [familyId, setFamilyId] = useState('');
   const [searching, startSearch] = useTransition();
   const familyField = useId();
@@ -112,7 +122,7 @@ export function NewShelfDialog({ families, error }: NewShelfDialogProps) {
     if (!next) {
       setQuery('');
       setResults(null);
-      setPicked(null);
+      setPicked(customer ?? null);
       setFamilyId('');
     }
   }
@@ -142,6 +152,7 @@ export function NewShelfDialog({ families, error }: NewShelfDialogProps) {
           // dialog open, with the picked site and family, and the error inside it.
           <form action={createShelfAction} className="flex flex-col gap-4">
             <input type="hidden" name="vantageCustomerId" value={picked.vantageId} />
+            <ReturnField returnTo={returnTo} />
 
             <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/60 px-3 py-2">
               <span className="min-w-0">
@@ -320,6 +331,8 @@ export interface HoldingsFormProps {
   error?: string | null;
   /** A sentence for `?error=` when `errorFor=correct`. */
   correctError?: string | null;
+  /** The customer page posting this, so saving lands back on it (see `customerReturn`). */
+  returnTo?: string;
 }
 
 const clamp = (n: number) => Math.min(MAX_HOLDING, Math.max(0, Math.trunc(n)));
@@ -330,7 +343,7 @@ const clamp = (n: number) => Math.min(MAX_HOLDING, Math.max(0, Math.trunc(n)));
  * page keys this on the saved values, so it starts again from them after a save; a refused save
  * keeps what the operator entered.
  */
-export function HoldingsForm({ shelfId, isColour, holding, used, error, correctError }: HoldingsFormProps) {
+export function HoldingsForm({ shelfId, isColour, holding, used, error, correctError, returnTo }: HoldingsFormProps) {
   const colours = shelfColours(isColour);
   const [values, setValues] = useState<Record<ReplenishColour, number>>(() => ({ ...holding }));
   const router = useRouter();
@@ -347,11 +360,12 @@ export function HoldingsForm({ shelfId, isColour, holding, used, error, correctE
     <section className="rounded-xl border border-line bg-card px-5 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-[15px] font-medium">Holdings</h2>
-        <CorrectCountsDialog shelfId={shelfId} isColour={isColour} used={used} error={correctError} />
+        <CorrectCountsDialog shelfId={shelfId} isColour={isColour} used={used} error={correctError} returnTo={returnTo} />
       </div>
       <p className="mt-0.5 text-[13px] text-muted-foreground">Spares kept on the shelf, and how many have gone in since the last top-up.</p>
       <form action={save} className="mt-2">
         <input type="hidden" name="shelfId" value={shelfId} />
+        <ReturnField returnTo={returnTo} />
         <table className="w-full border-collapse text-left text-[13px]">
           <thead>
             <tr className="border-b border-line">
@@ -445,6 +459,7 @@ interface CorrectCountsDialogProps {
   isColour: boolean;
   used: ShelfConsumableCounts;
   error?: string | null;
+  returnTo?: string;
 }
 
 /**
@@ -452,7 +467,7 @@ interface CorrectCountsDialogProps {
  * Opens with the error inside it after a refused save. Sits in the box header, outside the
  * holdings form, so the two never submit together.
  */
-function CorrectCountsDialog({ shelfId, isColour, used, error }: CorrectCountsDialogProps) {
+function CorrectCountsDialog({ shelfId, isColour, used, error, returnTo }: CorrectCountsDialogProps) {
   const colours = shelfColours(isColour);
   const [open, setOpen] = useState(error != null);
   const [values, setValues] = useState<Record<ReplenishColour, string>>(() => strings(used));
@@ -486,6 +501,7 @@ function CorrectCountsDialog({ shelfId, isColour, used, error }: CorrectCountsDi
         </DialogHeader>
         <form action={save} className="flex flex-col gap-4">
           <input type="hidden" name="shelfId" value={shelfId} />
+          <ReturnField returnTo={returnTo} />
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
             {colours.map((c) => (
               <label key={c} className="flex flex-col gap-1 text-[12px] text-muted-foreground">
@@ -525,13 +541,15 @@ export interface DeleteShelfDialogProps {
   name: string;
   liveTopUp: boolean;
   error?: string | null;
+  /** The customer page posting this, so deleting lands back on it rather than on Site stock. */
+  returnTo?: string;
 }
 
 /**
  * *Delete shelf*, confirmed first. A pending top-up is withdrawn with it; an approved one blocks
  * the delete (`in_use`), and the error shows in here.
  */
-export function DeleteShelfDialog({ shelfId, name, liveTopUp, error }: DeleteShelfDialogProps) {
+export function DeleteShelfDialog({ shelfId, name, liveTopUp, error, returnTo }: DeleteShelfDialogProps) {
   const [open, setOpen] = useState(error != null);
 
   return (
@@ -550,6 +568,7 @@ export function DeleteShelfDialog({ shelfId, name, liveTopUp, error }: DeleteShe
         </DialogHeader>
         <form action={deleteShelfAction} className="flex flex-col gap-4">
           <input type="hidden" name="shelfId" value={shelfId} />
+          <ReturnField returnTo={returnTo} />
           <FormError error={error} />
           <DialogFooter>
             <SubmitButton label="Delete shelf" pendingLabel="Deleting…" destructive />

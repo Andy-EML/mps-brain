@@ -3,6 +3,7 @@ import { and, count, eq, ilike, inArray, isNotNull, isNull, lt, or, sql, type SQ
 import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
+import type { SelfManagedSource } from './customer-flags';
 import { effectiveSettingsSubquery } from './settings';
 import { shelfDevicesSubquery } from './site-stock';
 import {
@@ -35,7 +36,15 @@ export interface DeviceRow {
   customerName: string | null;
   vantageCustomerName: string | null;
   vantageEquipmentId: number | null;
+  /** The active link's Vantage customer (what the Self-managed badge links to); null when unlinked. */
+  vantageCustomerId: number | null;
   linkMethod: string | null;
+  /**
+   * The customer manages its own stock (its own flag, or its head office's): no toner proposals of
+   * any kind. Never true for an unlinked device. `selfManagedSource` says which flag set it.
+   */
+  selfManaged: boolean;
+  selfManagedSource: SelfManagedSource | null;
   /** When DRMS last collected a meter counter set for this device. */
   lastCounterAt: Date | null;
   /**
@@ -71,9 +80,10 @@ export interface DeviceListOptions {
   /**
    * `auto-off`: the effective setting has auto-replenishment switched off, whatever the toner
    * levels (the `manual` tab is the subset of these below threshold). `site-stock`: the device is on
-   * a site stock shelf now, by `shelfDevicesSubquery`.
+   * a site stock shelf now, by `shelfDevicesSubquery`. `self-managed`: the device's customer (or its
+   * head office) manages its own stock, by the effective settings' `selfManaged`.
    */
-  replenish?: 'auto-off' | 'site-stock';
+  replenish?: 'auto-off' | 'site-stock' | 'self-managed';
   limit?: number;
   offset?: number;
 }
@@ -89,9 +99,11 @@ export function deviceCustomerName() {
   return sql<string | null>`coalesce(${vantageEquipment.customerName}, ${drmsEquipment.customerName})`;
 }
 
-function deviceRowFields(
+/** The row fields; needs the joins from `joinDeviceList` (whose `eff` is passed here) plus `alarms`. */
+export function deviceRowFields(
   pivot: ReturnType<typeof counterPivotSubquery>,
   alarms: ReturnType<typeof lastAlarmSubquery>,
+  eff: ReturnType<typeof effectiveSettingsSubquery>,
 ) {
   return {
     lastAlarmAt: alarms.lastAlarmAt,
@@ -105,7 +117,10 @@ function deviceRowFields(
     customerName: drmsEquipment.customerName,
     vantageCustomerName: vantageEquipment.customerName,
     vantageEquipmentId: deviceLinks.vantageEquipmentId,
+    vantageCustomerId: vantageEquipment.vantageCustomerId,
     linkMethod: deviceLinks.method,
+    selfManaged: eff.selfManaged,
+    selfManagedSource: eff.selfManagedSource,
     lastCounterAt: drmsEquipment.lastCounterReceivedTime,
     black: pivot.black,
     cyan: pivot.cyan,
@@ -117,7 +132,7 @@ function deviceRowFields(
   };
 }
 
-interface RawDeviceRow {
+export interface RawDeviceRow {
   drmsId: string;
   serial: string | null;
   name: string | null;
@@ -128,7 +143,11 @@ interface RawDeviceRow {
   customerName: string | null;
   vantageCustomerName: string | null;
   vantageEquipmentId: number | null;
+  vantageCustomerId: number | null;
   linkMethod: string | null;
+  /** Null when the effective-settings row is missing (left join): read as false. */
+  selfManaged: boolean | null;
+  selfManagedSource: SelfManagedSource | null;
   lastCounterAt: Date | null;
   lastAlarmAt: Date | null;
   black: number | null;
@@ -161,7 +180,7 @@ export function deviceRowNames(r: {
   };
 }
 
-function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
+export function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
   const lastCounterAt = r.lastCounterAt ?? null;
   return {
     drmsId: r.drmsId,
@@ -174,7 +193,10 @@ function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
     customerName: r.customerName,
     vantageCustomerName: r.vantageCustomerName,
     vantageEquipmentId: r.vantageEquipmentId,
+    vantageCustomerId: r.vantageCustomerId ?? null,
     linkMethod: r.linkMethod,
+    selfManaged: r.selfManaged === true,
+    selfManagedSource: r.selfManagedSource ?? null,
     lastCounterAt,
     offline: lastCounterAt !== null && lastCounterAt < cutoff,
     lastAlarmAt: r.lastAlarmAt ?? null,
@@ -235,6 +257,8 @@ export function deviceListConditions(db: Db, o: DeviceListFilters = {}) {
   } else if (o.replenish === 'site-stock') {
     const shelved = shelfDevicesSubquery(db);
     conds.push(inArray(drmsEquipment.drmsId, db.select({ drmsId: shelved.drmsId }).from(shelved)));
+  } else if (o.replenish === 'self-managed') {
+    conds.push(eq(eff.selfManaged, true));
   }
   const where = and(...conds);
   return { cutoff, pivot, eff, where };
@@ -277,10 +301,10 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
   const limit = o.limit ?? 50;
   const offset = o.offset ?? 0;
   const conds = deviceListConditions(db, o);
-  const { cutoff, pivot, where } = conds;
+  const { cutoff, pivot, eff, where } = conds;
   const alarms = lastAlarmSubquery(db);
 
-  const rowsQuery = joinDeviceList(db.select(deviceRowFields(pivot, alarms)).from(drmsEquipment).$dynamic(), conds)
+  const rowsQuery = joinDeviceList(db.select(deviceRowFields(pivot, alarms, eff)).from(drmsEquipment).$dynamic(), conds)
     // Already grouped to one row per device, so this cannot multiply rows (or the count below).
     .leftJoin(alarms, eq(alarms.drmsId, drmsEquipment.drmsId))
     .where(where)

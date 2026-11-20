@@ -204,13 +204,20 @@ export interface ResetCustomerDialogProps {
   vantageCustomerId: number;
   customerName: string;
   deviceCount: number;
+  /** The customer page posting this, so a refused reset lands back on it (see `customerReturn`). */
+  returnTo?: string;
 }
 
 /**
  * A customer override's *Reset*: every field back to Inherit, which deletes the row. Confirmed
  * first — it changes what a whole site's machines do. Device-level settings are untouched.
  */
-export function ResetCustomerDialog({ vantageCustomerId, customerName, deviceCount: devices }: ResetCustomerDialogProps) {
+export function ResetCustomerDialog({
+  vantageCustomerId,
+  customerName,
+  deviceCount: devices,
+  returnTo,
+}: ResetCustomerDialogProps) {
   const [open, setOpen] = useState(false);
 
   async function reset(formData: FormData) {
@@ -235,6 +242,7 @@ export function ResetCustomerDialog({ vantageCustomerId, customerName, deviceCou
         </DialogHeader>
         <form action={reset}>
           <input type="hidden" name="vantageCustomerId" value={vantageCustomerId} />
+          {returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null}
           <DialogFooter>
             <ResetButton />
           </DialogFooter>

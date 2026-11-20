@@ -141,6 +141,13 @@
       "when": 1795166651275,
       "tag": "0019_proposal_hold",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795177916278,
+      "tag": "0020_customer_flags",
+      "breakpoints": true
     }
   ]
 }

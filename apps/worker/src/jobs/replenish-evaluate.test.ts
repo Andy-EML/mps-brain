@@ -1,4 +1,4 @@
-import { users, cartridgeChanges, cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, replenishmentSettings, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
+import { users, customerFlags, cartridgeChanges, cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, replenishmentSettings, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
 import { computeHolds, hideDevices, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
 import { and, eq } from 'drizzle-orm';
@@ -413,6 +413,59 @@ describe('runReplenishEvaluate', () => {
       await t.db.update(siteStockShelves).set({ holdingBlack: 0 }).where(eq(siteStockShelves.id, shelfId));
       await runReplenishEvaluate({ db: t.db, now: () => NOW });
       expect(await states()).toEqual([['black', 'site_stock', 'approved', null]]);
+    });
+  });
+
+  describe('self-managed customers', () => {
+    const selfManage = async (on = true) => {
+      await t.db.update(vantageEquipment).set({ vantageCustomerId: 100 }).where(eq(vantageEquipment.vantageId, 1));
+      await t.db.insert(customerFlags).values({ vantageCustomerId: 100, selfManaged: on }).onConflictDoUpdate({ target: customerFlags.vantageCustomerId, set: { selfManaged: on } });
+    };
+    const readyNearEmpty = () =>
+      t.db.insert(deviceAlarms).values({
+        alarmId: 'sm1', drmsEquipmentId: 'colour', receivedTime: new Date('2026-09-20T08:00:00Z'), category: 'toner',
+        status: 'ReadyForErpDelivery', description: 'Toner Near Empty(K)', raw: {},
+      });
+    const colourProposals = () => t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.drmsEquipmentId, 'colour'));
+
+    it('proposes nothing for a self-managed device below threshold with a Ready alarm, and counts it', async () => {
+      await selfManage();
+      await levels('colour', 'c1', 12, 4);
+      await readyNearEmpty();
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ selfManaged: 1, proposed: 0 });
+      expect(await colourProposals()).toEqual([]);
+    });
+
+    it('a device-level autoReplenish = true override does not beat the customer flag', async () => {
+      await selfManage();
+      await updateDeviceSettings(t.db, { drmsIds: ['colour'], patch: { autoReplenish: true }, userId: await userId() });
+      await levels('colour', 'c1', 12, 4);
+      await readyNearEmpty();
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ selfManaged: 1, proposed: 0 });
+      expect(await colourProposals()).toEqual([]);
+    });
+
+    it('supersedes a pending proposal on a self-managed device and reports it', async () => {
+      await levels('colour', 'c1', 12, 4);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect((await colourProposals()).map((p) => p.status)).toEqual(['pending', 'pending']);
+      await selfManage();
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ selfManaged: 1, selfManagedSuperseded: 2, proposed: 0 });
+      expect((await colourProposals()).map((p) => [p.status, p.note])).toEqual([['superseded', 'customer self-managed'], ['superseded', 'customer self-managed']]);
+    });
+
+    it('Review Focus 4: turning the flag off does not back-fill, the next run proposes from current levels', async () => {
+      await selfManage();
+      await levels('colour', 'c1', 12, 4);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await colourProposals()).toEqual([]);
+      await selfManage(false);
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ selfManaged: 0, proposed: 2 });
+      expect((await colourProposals()).map((p) => [p.colour, p.status])).toEqual([['black', 'pending'], ['cyan', 'pending']]);
     });
   });
 

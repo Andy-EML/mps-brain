@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { ORDER_COLOURS } from '@mps/core';
 import type { DeviceOrderRow, DeviceOrders } from '@mps/db/queries';
 import { cn } from 'cn';
@@ -60,11 +61,31 @@ function ColourSummaryRow({
   );
 }
 
-function OrderRow({ order }: { order: DeviceOrderRow }) {
+/** The machine an order is for, on a list that spans several (the customer page). */
+export interface OrderMachine {
+  name: string;
+  /** The device page; null when the order's equipment has no DRMS device. */
+  href: string | null;
+}
+
+function OrderRow({ order, machine }: { order: DeviceOrderRow; machine?: OrderMachine | null }) {
   const status = orderStatus(order);
   return (
     <tr className="border-t border-line/70 align-top">
       <td className="px-5 py-3 text-[13px] whitespace-nowrap tabular">{formatDate(order.orderDate)}</td>
+      {machine !== undefined ? (
+        <td className="max-w-[240px] px-5 py-3 text-[13px]">
+          {machine === null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : machine.href ? (
+            <Link href={machine.href} className="block truncate font-medium hover:text-brand hover:underline">
+              {machine.name}
+            </Link>
+          ) : (
+            <span className="block truncate">{machine.name}</span>
+          )}
+        </td>
+      ) : null}
       <td className="px-5 py-3">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-mono text-[13px]">{order.reference ?? `#${order.vantageId}`}</span>
@@ -116,11 +137,26 @@ export interface OrderHistoryProps {
   /** Shown instead of the table when there is nothing to list. */
   emptyMessage?: string;
   className?: string;
+  /**
+   * The machine per order (keyed by the order's Vantage id), for a list covering several machines:
+   * adds a Machine column. Omit on a single device's page.
+   */
+  machines?: Record<number, OrderMachine | null>;
+  /** The per-colour "last went out" headline; true unless the list covers several machines. */
+  showHeadline?: boolean;
 }
 
 const CMY = new Set<string>(['cyan', 'magenta', 'yellow']);
 
-export function OrderHistory({ orders, lastByColour, isColour, emptyMessage, className }: OrderHistoryProps) {
+export function OrderHistory({
+  orders,
+  lastByColour,
+  isColour,
+  emptyMessage,
+  className,
+  machines,
+  showHeadline = true,
+}: OrderHistoryProps) {
   if (orders.length === 0) {
     return (
       <p className={cn('px-5 py-10 text-center text-sm text-muted-foreground', className)}>
@@ -131,19 +167,26 @@ export function OrderHistory({ orders, lastByColour, isColour, emptyMessage, cla
 
   return (
     <div className={className}>
-      <div className="grid gap-2 px-5 py-4 sm:grid-cols-2 xl:grid-cols-3">
-        {ORDER_COLOURS.filter((colour) => isColour || !CMY.has(colour) || lastByColour[colour]).map((colour) => (
-          <ColourSummaryRow key={colour} colour={colour} entry={lastByColour[colour]} />
-        ))}
-      </div>
+      {showHeadline ? (
+        <div className="grid gap-2 px-5 py-4 sm:grid-cols-2 xl:grid-cols-3">
+          {ORDER_COLOURS.filter((colour) => isColour || !CMY.has(colour) || lastByColour[colour]).map((colour) => (
+            <ColourSummaryRow key={colour} colour={colour} entry={lastByColour[colour]} />
+          ))}
+        </div>
+      ) : null}
 
-      <div className="w-full overflow-x-auto border-t border-line">
+      <div className={cn('w-full overflow-x-auto', showHeadline && 'border-t border-line')}>
         <table className="w-full min-w-[620px] border-collapse text-left">
           <thead>
             <tr>
               <th scope="col" className={HEAD}>
                 Date
               </th>
+              {machines ? (
+                <th scope="col" className={HEAD}>
+                  Machine
+                </th>
+              ) : null}
               <th scope="col" className={HEAD}>
                 Order
               </th>
@@ -157,7 +200,11 @@ export function OrderHistory({ orders, lastByColour, isColour, emptyMessage, cla
           </thead>
           <tbody>
             {orders.map((order) => (
-              <OrderRow key={order.vantageId} order={order} />
+              <OrderRow
+                key={order.vantageId}
+                order={order}
+                machine={machines ? (machines[order.vantageId] ?? null) : undefined}
+              />
             ))}
           </tbody>
         </table>

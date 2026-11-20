@@ -1,5 +1,6 @@
 import {
   cartridgeChanges,
+  customerFlags,
   deviceAlarms,
   deviceLinks,
   drmsEquipment,
@@ -296,6 +297,16 @@ describe('evaluateSpareBlack', () => {
     await level('2026-11-11 02:00:00', 8);
     await level('2026-11-12 02:00:00', 95);
     expect(await evaluateSpareBlack(t.db, NOW)).toMatchObject({ changes: 1, proposed: 1 });
+  });
+
+  it('self-managed customer -> ineligible self_managed (before spare_off), no proposal', async () => {
+    await t.db.insert(customerFlags).values({ vantageCustomerId: 100, selfManaged: true });
+    await t.db.update(replenishmentSettings).set({ spareBlack: false }).where(eq(replenishmentSettings.scope, 'default'));
+    await level('2026-11-05 02:00:00', 10);
+    await level('2026-11-06 02:00:00', 90);
+    expect(await evaluateSpareBlack(t.db, NOW)).toEqual({ changes: 1, proposed: 0, covered: 0, ineligible: 1 });
+    expect(await proposals()).toHaveLength(0);
+    expect((await changes())[0]).toMatchObject({ outcome: 'ineligible', reason: 'self_managed', proposalId: null });
   });
 
   it('ignores Near Empty alarms', async () => {

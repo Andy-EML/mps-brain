@@ -72,7 +72,7 @@ function monoViolation(holding: Partials): boolean {
   return (['cyan', 'magenta', 'yellow'] as const).some((c) => (holding[c] ?? 0) > 0);
 }
 
-async function audit(tx: Db, a: { userId: number | null; action: string; entity: string; ids: number[]; details: object; now: Date }) {
+export async function audit(tx: Db, a: { userId: number | null; action: string; entity: string; ids: number[]; details: object; now: Date }) {
   await tx.insert(auditLog).values({ at: a.now, userId: a.userId, action: a.action, entity: a.entity, entityIds: a.ids, details: a.details });
 }
 

@@ -12,6 +12,7 @@ import {
   vantageSalesOrderLines,
   vantageSalesOrders,
 } from '../schema';
+import { selfManagedSourceSql } from './customer-flags';
 import { deviceRowNames, type DeviceRow } from './devices';
 import { counterPivotSubquery, drmsEquipmentName, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
@@ -61,7 +62,10 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
       customerName: drmsEquipment.customerName,
       vantageCustomerName: vantageEquipment.customerName,
       vantageEquipmentId: deviceLinks.vantageEquipmentId,
+      vantageCustomerId: vantageEquipment.vantageCustomerId,
       linkMethod: deviceLinks.method,
+      // Same expression as effectiveSettingsSubquery's: the active link's customer or its head office.
+      selfManagedSource: selfManagedSourceSql(vantageEquipment.vantageCustomerId),
       lastCounterAt: drmsEquipment.lastCounterReceivedTime,
       erpId: drmsEquipment.erpId,
       customerErpId: drmsEquipment.customerErpId,
@@ -114,7 +118,10 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
     customerName: row.customerName,
     vantageCustomerName: row.vantageCustomerName,
     vantageEquipmentId: row.vantageEquipmentId,
+    vantageCustomerId: row.vantageCustomerId ?? null,
     linkMethod: row.linkMethod,
+    selfManaged: row.selfManagedSource != null,
+    selfManagedSource: row.selfManagedSource ?? null,
     lastCounterAt,
     offline: lastCounterAt !== null && lastCounterAt < cutoff,
     lastAlarmAt: row.lastAlarmAt ?? null,

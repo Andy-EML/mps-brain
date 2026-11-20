@@ -16,6 +16,7 @@ export const COLOUR_FILTERS = [
 export const REPLENISH_FILTERS = [
   { value: 'auto-off', label: 'Auto-replenish off' },
   { value: 'site-stock', label: 'On a site stock shelf' },
+  { value: 'self-managed', label: 'Self-managed' },
 ] as const satisfies readonly { value: NonNullable<DeviceFilters['replenish']>; label: string }[];
 
 /** Longer than any customer or model name; anything bigger is not one of ours. */

@@ -20,6 +20,7 @@ import {
   londonDayAsUtc,
   notHiddenDevice,
   supersedeHiddenProposals,
+  supersedeSelfManagedProposals,
   type ColourOrderState,
   type HoldCandidate,
 } from '@mps/db/queries';
@@ -62,6 +63,9 @@ export interface ReplenishEvaluateDeps {
 export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise<JobResult> {
   const { db } = deps;
   const now = (deps.now ?? (() => new Date()))();
+  // Self-managed customers: clear their pending proposals (devices and shelves) before site stock decides
+  // whether a shelf already has a live top-up, so a stale one never blocks or survives.
+  const selfManagedSuperseded = (await supersedeSelfManagedProposals(db, now)).length;
   // Site stock first: it raises shelf top-ups and says which colours a shelf now covers.
   const siteStock = await evaluateSiteStock(db, now);
   const hiddenSuperseded = await supersedeHiddenProposals(db, now);
@@ -74,6 +78,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       isColour: drmsEquipment.isColour,
       vantageEquipmentId: eff.vantageEquipmentId,
       autoReplenish: eff.autoReplenish,
+      selfManaged: eff.selfManaged,
       tBlack: eff.thresholdBlack,
       tCyan: eff.thresholdCyan,
       tMagenta: eff.thresholdMagenta,
@@ -137,9 +142,14 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   const linkedIds = [...new Set(devices.map((d) => d.vantageEquipmentId).filter((id): id is number => id !== null))];
   const orderStates = await getOrderStates(db, linkedIds, now);
 
-  const stats = { devices: devices.length, proposed: 0, superseded: hiddenSuperseded, suppressed: 0, autoOff: 0, unlinked: 0, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps };
+  const stats = { devices: devices.length, proposed: 0, superseded: hiddenSuperseded, suppressed: 0, autoOff: 0, unlinked: 0, selfManaged: 0, selfManagedSuperseded, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps };
 
   for (const d of devices) {
+    // Self-managed customers get no proposals at all (the flag beats a device-level auto-replenish override).
+    if (d.selfManaged) {
+      stats.selfManaged++;
+      continue;
+    }
     const thresholds: Record<TonerColour, number> = { black: Number(d.tBlack), cyan: Number(d.tCyan), magenta: Number(d.tMagenta), yellow: Number(d.tYellow) };
     const levels: Record<TonerColour, number | null> = {
       black: d.black === null ? null : Number(d.black),

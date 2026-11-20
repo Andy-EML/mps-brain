@@ -10,6 +10,10 @@ describe('parseDeviceFilters', () => {
     ).toEqual({ customer: 'Acme Ltd', colour: 'mono', model: 'bizhub 4050i', replenish: 'site-stock' });
   });
 
+  it('reads the self-managed replenishment filter', () => {
+    expect(parseDeviceFilters(from({ replenish: 'self-managed' })).replenish).toBe('self-managed');
+  });
+
   it('drops unknown choices, blanks and over-long names', () => {
     expect(
       parseDeviceFilters(from({ customer: '   ', colour: 'purple', model: 'x'.repeat(201), replenish: 'urgent' })),

@@ -10,6 +10,7 @@ import { loadReviewDetail } from '@/app/(app)/orders/actions';
 import { CopyText } from '@/components/copy-text';
 import { SelectRowCheckbox } from '@/components/device-selection';
 import { ReviewDetailPanel, type DetailState } from '@/components/review-detail-panel';
+import { SelfManagedBadge } from '@/components/self-managed-badge';
 import { StatusDot, TONE_TEXT } from '@/components/status-dot';
 import { deviceStatusLabel } from '@/components/toner';
 import { TonerBars } from '@/components/toner-bar';
@@ -98,7 +99,15 @@ export function DeviceTableRow({ row, now, href, selectable, columns }: DeviceTa
           <div className="flex gap-2.5">
             <StatusDot tone={status.tone} className="mt-[7px]" />
             <div className="min-w-0">
-              <div className="truncate text-[15px] font-semibold">{customerName(row)}</div>
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate text-[15px] font-semibold">{customerName(row)}</div>
+                <SelfManagedBadge
+                  source={row.selfManagedSource}
+                  vantageCustomerId={row.vantageCustomerId}
+                  size="sm"
+                  className="shrink-0"
+                />
+              </div>
               <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                 <Link href={href} className="truncate font-mono hover:text-brand hover:underline">
                   {deviceSerial(row)}
