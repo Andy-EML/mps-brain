@@ -1,6 +1,7 @@
 import { REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../client';
+import { compareBy, type SortSpec, type SortValue } from './shared';
 import {
   cartridgeFamilies,
   cartridgeFamilyModels,
@@ -662,8 +663,31 @@ export interface UnderYieldingRow {
   stale: boolean;
 }
 
+export const YIELD_SORT_KEYS = ['customer', 'serial', 'model', 'family', 'colour', 'achieved', 'cartridges', 'lastOrder'] as const;
+export type YieldSortKey = (typeof YIELD_SORT_KEYS)[number];
+
+const YIELD_SORT: Record<YieldSortKey, (r: UnderYieldingRow) => SortValue> = {
+  customer: (r) => r.customerName,
+  serial: (r) => r.serial,
+  model: (r) => r.model,
+  family: (r) => r.family,
+  colour: (r) => r.colour,
+  achieved: (r) => r.avgPctOfRated,
+  cartridges: (r) => r.cartridgesCounted,
+  lastOrder: (r) => r.lastOrderDate,
+};
+
+/** The rows in the chosen order (device then colour as tiebreak, blanks last); no sort is worst first, same tiebreak. */
+export function sortUnderYielding(rows: UnderYieldingRow[], sort?: SortSpec<YieldSortKey>): UnderYieldingRow[] {
+  const id = (r: UnderYieldingRow) => `${r.drmsEquipmentId}:${r.colour}`;
+  // The default (worst first) breaks ties on the same id as a chosen sort, so pages never overlap.
+  const worstFirst = (a: UnderYieldingRow, b: UnderYieldingRow) =>
+    a.avgPctOfRated - b.avgPctOfRated || (id(a) < id(b) ? -1 : id(a) > id(b) ? 1 : 0);
+  return [...rows].sort(compareBy(YIELD_SORT, sort, id, worstFirst));
+}
+
 /** Fleet list of device/colours flagged under-yielding, worst first. */
-export async function listUnderYielding(db: Db, now: Date = new Date()): Promise<UnderYieldingRow[]> {
+export async function listUnderYielding(db: Db, now: Date = new Date(), sort?: SortSpec<YieldSortKey>): Promise<UnderYieldingRow[]> {
   const inputs = await loadYieldInputs(db, null, { requireLink: true });
   const rows: UnderYieldingRow[] = [];
   for (const input of inputs.values()) {
@@ -687,5 +711,5 @@ export async function listUnderYielding(db: Db, now: Date = new Date()): Promise
       });
     }
   }
-  return rows.sort((a, b) => a.avgPctOfRated - b.avgPctOfRated);
+  return sortUnderYielding(rows, sort);
 }

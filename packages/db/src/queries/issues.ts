@@ -1,7 +1,7 @@
-import { and, asc, count, desc, eq, ilike, isNull, notInArray, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, isNull, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, linkIssues, vantageEquipment } from '../schema';
-import { notHiddenDevice } from './shared';
+import { notHiddenDevice, sortOrder, type SortSpec } from './shared';
 
 /**
  * Link issues about a hidden device are nobody's to fix, so every list and count here leaves them
@@ -37,7 +37,11 @@ export interface IssueRow {
   lastSeen: Date;
 }
 
+export const ISSUE_SORT_KEYS = ['issue', 'device', 'vantage', 'seen'] as const;
+export type IssueSortKey = (typeof ISSUE_SORT_KEYS)[number];
+
 export interface ListIssuesOptions {
+  sort?: SortSpec<IssueSortKey>;
   type?: string;
   /** Types to leave out — the queue's default view hides the ~1,000 expected `no_match_vantage`. */
   excludeTypes?: string[];
@@ -89,7 +93,20 @@ export async function listIssues(
     .leftJoin(vantageEquipment, eq(vantageEquipment.vantageId, linkIssues.vantageEquipmentId))
     .leftJoin(deviceLinks, activeLink)
     .where(rowsCond)
-    .orderBy(desc(linkIssues.lastSeen))
+    .orderBy(
+      ...sortOrder<IssueSortKey>(
+        {
+          issue: sql`lower(${linkIssues.type})`,
+          // The DRMS device the issue is about; an issue about Vantage equipment alone has none.
+          device: sql`lower(coalesce(${drmsEquipment.productName}, ${drmsEquipment.serial}, ${linkIssues.drmsEquipmentId}))`,
+          vantage: sql`lower(coalesce(${vantageEquipment.serial}, ${linkIssues.vantageEquipmentId}::text))`,
+          seen: sql`${linkIssues.lastSeen}`,
+        },
+        o.sort,
+        () => [desc(linkIssues.lastSeen)],
+        sql`${linkIssues.id} asc`,
+      ),
+    )
     .limit(limit)
     .offset(offset);
 

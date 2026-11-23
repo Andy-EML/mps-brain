@@ -171,6 +171,8 @@ export interface BulkSettingsBarProps {
   /** The customer, colour, model and replenishment filters. */
   filters: DeviceFilters;
   page: number;
+  /** The list's sort/dir/rows params (defaults left out), posted so the redirect keeps them. */
+  listParams?: Record<string, string | undefined>;
 }
 
 /**
@@ -189,7 +191,7 @@ export function BulkSettingsBar(props: BulkSettingsBarProps) {
   return count === 0 ? null : <ActiveBulkBar {...props} count={count} />;
 }
 
-function ActiveBulkBar({ search, filter, filters, page, count }: BulkSettingsBarProps & { count: number }) {
+function ActiveBulkBar({ search, filter, filters, page, listParams, count }: BulkSettingsBarProps & { count: number }) {
   const { total, selection, selectMatching, clear } = useSelection();
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [pending, setPending] = useState<{
@@ -205,6 +207,7 @@ function ActiveBulkBar({ search, filter, filters, page, count }: BulkSettingsBar
     filter,
     ...Object.fromEntries(Object.entries(deviceFilterParams(filters)).map(([k, v]) => [k, v ?? ''])),
     page: String(page),
+    ...Object.fromEntries(Object.entries(listParams ?? {}).filter((e): e is [string, string] => !!e[1])),
     ...(selection.mode === 'ids' ? { drmsId: [...selection.ids] } : {}),
   };
 

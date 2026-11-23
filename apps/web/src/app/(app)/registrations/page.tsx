@@ -1,21 +1,24 @@
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Download, Info } from 'lucide-react';
-import { getRegistrationCounts, listRegistrations, type RegistrationTab } from '@mps/db/queries';
+import { REGISTRATION_SORT_KEYS, getRegistrationCounts, listRegistrations, type RegistrationTab } from '@mps/db/queries';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
-import { Pagination } from '@/components/pagination';
+import { ListControls } from '@/components/list-controls';
 import { RegistrationQueue } from '@/components/registration-queue';
-import { awaitingTabCount, parseRegistrationTab } from '@/components/registrations';
+import { REGISTRATION_TAB_SORT_KEYS, awaitingTabCount, parseRegistrationTab } from '@/components/registrations';
 import { SearchInput } from '@/components/search-input';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber, pluralise } from '@/lib/format';
-import { hrefWith } from '@/lib/href';
+import { REGISTRATIONS_DEFAULT_ROWS } from '@/lib/list-keep';
+import { keepSort, lastPageOf, listHref, parseListState, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
 
 export const metadata = { title: 'DRMS registrations · MPS Dashboard' };
 
-const PAGE_SIZE = 100;
+const LIST_KEY = 'registrations';
+const DEFAULT_ROWS = REGISTRATIONS_DEFAULT_ROWS;
 
 /** `?error=` codes from the actions (`RegistrationErrorCode`), as sentences. */
 const ERRORS: Record<string, string> = {
@@ -37,21 +40,37 @@ export default async function RegistrationsPage({ searchParams }: PageProps<'/re
 
   const tab: RegistrationTab = parseRegistrationTab(first(params.tab));
   const search = first(params.search)?.trim() || undefined;
-  const page = Math.max(1, Number.parseInt(first(params.page) ?? '1', 10) || 1);
+  const cookieStore = await cookies();
+  // A sort on a column this tab does not show (carried over from another tab) is dropped here.
+  const state = keepSort(
+    parseListState((name) => first(params[name]), {
+      listKey: LIST_KEY,
+      defaultRows: DEFAULT_ROWS,
+      sortKeys: REGISTRATION_SORT_KEYS,
+      cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
+    }),
+    REGISTRATION_TAB_SORT_KEYS[tab],
+  );
+  const page = state.page;
   const errorCode = first(params.error);
   const error = errorCode ? (ERRORS[errorCode] ?? 'That did not work. Refresh the page and try again.') : null;
 
   const db = getDb();
   const [{ rows, total }, counts] = await Promise.all([
-    listRegistrations(db, { tab, search, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+    listRegistrations(db, { tab, search, limit: state.rows, offset: (page - 1) * state.rows, sort: sortSpec(state) }),
     getRegistrationCounts(db),
   ]);
 
   const tabParam = tab === 'awaiting' ? undefined : tab;
-  if (rows.length === 0 && total > 0 && page > 1) {
-    const lastPage = Math.ceil(total / PAGE_SIZE);
-    redirect(hrefWith('/registrations', { tab: tabParam, search, page: lastPage > 1 ? lastPage : undefined }));
-  }
+  const keep = { tab: tabParam, search };
+  const lastPage = lastPageOf(total, state.rows);
+  if (page > lastPage) redirect(listHref('/registrations', keep, state, { page: lastPage }, { defaultRows: DEFAULT_ROWS }));
+  // Sort and page size survive a change of tab or search; the page does not (nor a sort the new
+  // tab has no column for — see above).
+  const listParams = stateParams(state, { defaultRows: DEFAULT_ROWS });
+  const sorting = { basePath: '/registrations', keep, state, defaultRows: DEFAULT_ROWS };
+  const controls = { ...sorting, total, listKey: LIST_KEY, noun: 'machine' };
+  const back = listHref('/registrations', keep, state, {}, { defaultRows: DEFAULT_ROWS });
 
   const tabs: FilterTab[] = [
     { value: 'awaiting', label: <TabLabel label="Awaiting approval" count={awaitingTabCount(counts).text} /> },
@@ -74,7 +93,7 @@ export default async function RegistrationsPage({ searchParams }: PageProps<'/re
               action="/registrations"
               defaultValue={search}
               placeholder="Search serial, device or customer"
-              hiddenParams={{ tab: tabParam }}
+              hiddenParams={{ tab: tabParam, ...listParams }}
               className="w-[280px]"
             />
             {/* A plain link, not next/link: the response is a file download, not a page. */}
@@ -108,7 +127,7 @@ export default async function RegistrationsPage({ searchParams }: PageProps<'/re
             current={tab}
             tabs={tabs}
             defaultValue="awaiting"
-            params={{ search }}
+            params={{ search, ...listParams }}
             ariaLabel="DRMS registration queue"
           />
         </div>
@@ -130,24 +149,19 @@ export default async function RegistrationsPage({ searchParams }: PageProps<'/re
           </p>
         ) : null}
 
+        <ListControls {...controls} className="border-b border-line px-5 py-3.5" />
+
         <RegistrationQueue
-          key={`${tab}-${search ?? ''}-${page}`}
+          // A new page, sort or page size is a new set of rows: start the ticked boxes afresh.
+          key={back}
           tab={tab}
           rows={rows}
           search={search}
-          back={hrefWith('/registrations', { tab: tabParam, search, page: page > 1 ? page : undefined })}
+          back={back}
+          sorting={sorting}
         />
 
-        <div className="border-t border-line px-5 py-3.5">
-          <Pagination
-            basePath="/registrations"
-            params={{ tab: tabParam, search }}
-            page={page}
-            pageSize={PAGE_SIZE}
-            total={total}
-            noun="machine"
-          />
-        </div>
+        <ListControls {...controls} position="bottom" className="border-t border-line px-5 py-3.5" />
       </section>
     </>
   );

@@ -1,6 +1,44 @@
 import { RECOUNT_DAYS, REPLENISH_COLOURS, type ReplenishColour, type ShelfConsumableCounts } from '@mps/core';
 import type { Tone } from './toner';
 import { CONSUMABLE_LABELS, familyCarries } from '../lib/family-fields';
+import { safeReturnPath } from '../lib/device-origin';
+import { hrefWith } from '../lib/href';
+
+const SITE_STOCK = '/site-stock';
+const ORDERS = '/orders';
+/**
+ * What a shelf page's `back` may name: the Site stock list view, a customer page (or list), or a
+ * Toner orders view — plus a device page (`DEVICE_PAGE`), whose shelf badge and card link here.
+ */
+const SHELF_BACK_BASES = [SITE_STOCK, '/customers', ORDERS] as const;
+/** A device page path; its id is a DRMS id, percent-encoded as `deviceHref` builds it. */
+const DEVICE_PAGE = /^\/devices\/[A-Za-z0-9._~%-]{1,200}$/;
+
+/** `back` when it is somewhere a shelf page may return to, other than another shelf page. */
+function shelfBack(back: unknown): string | null {
+  const kept = safeReturnPath(back, SHELF_BACK_BASES, [DEVICE_PAGE]);
+  return kept !== null && !kept.startsWith(`${SITE_STOCK}/`) ? kept : null;
+}
+
+/**
+ * The shelf page. `back` is the page it was opened from — the Site stock list view (search, page,
+ * sort, rows), a customer page, a Toner orders view or a device page — kept when it adds something, for the shelf page's breadcrumb.
+ */
+export function shelfHref(shelfId: number, back?: string): string {
+  const kept = back != null && back !== SITE_STOCK ? shelfBack(back) : null;
+  return hrefWith(`${SITE_STOCK}/${shelfId}`, { back: kept });
+}
+
+/** The shelf page's breadcrumb root: where `back` says it was opened from, else Site stock. */
+export function shelfBackLink(back: unknown): { label: string; href: string } {
+  const kept = shelfBack(back);
+  if (kept === null) return { label: 'Site stock', href: SITE_STOCK };
+  if (kept.startsWith('/customers/')) return { label: 'Customer', href: kept };
+  if (kept.startsWith('/customers')) return { label: 'Customers', href: kept };
+  if (kept.startsWith('/devices/')) return { label: 'Device', href: kept };
+  if (kept === ORDERS || kept.startsWith(`${ORDERS}?`)) return { label: 'Toner orders', href: kept };
+  return { label: 'Site stock', href: kept };
+}
 
 /**
  * The pure helpers behind the site stock pages: the used / held pills, a shelf's status, which

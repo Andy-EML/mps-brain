@@ -2,6 +2,7 @@ import type { DeviceRow } from '@mps/db/queries';
 import { cn } from 'cn';
 import { SelectPageCheckbox } from '@/components/device-selection';
 import { DeviceTableRow } from '@/components/device-table-row';
+import { SortableTh, type SortContext } from '@/components/sort-header';
 import { deviceHref, type DeviceOriginKey } from '@/lib/device-origin';
 
 export interface DeviceTableProps {
@@ -19,6 +20,11 @@ export interface DeviceTableProps {
   from?: DeviceOriginKey;
   /** This list's own URL (path + query), so Back returns to the same filter, search and page. */
   back?: string;
+  /**
+   * Makes Device, Model and Toner sortable headers linking to this list's URL. Pages / mo stays
+   * plain: it is a placeholder until meter history lands, so there is nothing to sort by.
+   */
+  sorting?: SortContext;
 }
 
 const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
@@ -43,6 +49,7 @@ export function DeviceTable({
   selectable = false,
   from = 'devices',
   back,
+  sorting,
 }: DeviceTableProps) {
   if (rows.length === 0) {
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
@@ -59,15 +66,9 @@ export function DeviceTable({
                 <SelectPageCheckbox />
               </th>
             ) : null}
-            <th scope="col" className={cn(HEAD, 'w-[28%]')}>
-              Device
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[22%]')}>
-              Model
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[36%]')}>
-              Toner
-            </th>
+            <SortableTh label="Device" sortKey="device" sorting={sorting} className={cn(HEAD, 'w-[28%]')} />
+            <SortableTh label="Model" sortKey="model" sorting={sorting} className={cn(HEAD, 'w-[22%]')} />
+            <SortableTh label="Toner" sortKey="toner" sorting={sorting} className={cn(HEAD, 'w-[36%]')} />
             <th
               scope="col"
               className={cn(HEAD, 'w-[14%] text-right')}

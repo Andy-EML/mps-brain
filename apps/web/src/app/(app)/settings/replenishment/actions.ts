@@ -26,7 +26,7 @@ import { parseSettingsForm } from '@/lib/settings-form';
  * A `SettingsError` comes back as `?settingsError=<code>&settingsFor=<dialog>`: the page turns the
  * code into a sentence and shows it inside the dialog it came from (`default`, `add`, or
  * `customer-<id>`), which stays open. A dialog on a customer page posts `returnTo=/customers/<id>`,
- * and its error goes back there instead (as `?settingsError=<code>`).
+ * and its error goes back there instead (as `settingsError=<code>`, beside the page's own `back`).
  */
 
 const PAGE = '/settings/replenishment';
@@ -45,8 +45,15 @@ const RESET_ALL: SettingsPatch = {
   spareBlack: null,
 };
 
+/** `page` (a customer page, which may already carry `?back=`) with `settingsError` added. */
+function withSettingsError(page: string, code: string): string {
+  const url = new URL(page, 'http://settings.invalid');
+  url.searchParams.set('settingsError', code);
+  return `${url.pathname}${url.search}`;
+}
+
 function fail(code: string, dialog: string, returnTo: string | null = null): never {
-  if (returnTo) redirect(`${returnTo}?settingsError=${encodeURIComponent(code)}`);
+  if (returnTo) redirect(withSettingsError(returnTo, code));
   redirect(`${PAGE}?settingsError=${encodeURIComponent(code)}&settingsFor=${encodeURIComponent(dialog)}`);
 }
 

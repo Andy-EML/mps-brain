@@ -4,6 +4,8 @@ import type { CartridgeChangeRef, EffectiveSettings, SettingSource } from '@mps/
 import type { Tone } from '@/components/toner';
 // Relative, not `@/lib/format`: Vitest has no `@/` alias and this module is unit-tested.
 import { formatDate, formatDayMonth } from '../lib/format';
+import { deviceOriginParams, safeBackPath } from '../lib/device-origin';
+import { hrefWith } from '../lib/href';
 
 /**
  * Pure display helpers for the toner-order queue (`/orders`). Free of JSX so they can be
@@ -209,13 +211,25 @@ export function replenishmentErrorMessage(code: string): string {
 
 /**
  * Where an approve/reject action sends a refused decision (`?error=` is appended): the form's
- * hidden `back` says which page it sat on — the queue's review tab, its Probably on site or In
- * progress tab, or the device page's Replenishment card.
+ * hidden `back` says which page it sat on — the queue's own URL (tab, page, sort, rows; anything
+ * that is not a same-site `/orders` URL is ignored, and an old `error` is dropped), its Probably on
+ * site or In progress tab, or the device page's Replenishment card.
  */
-export function decisionBackPath(back: unknown, drmsId: unknown): string {
+export function decisionBackPath(back: unknown, drmsId: unknown, origin?: { from?: unknown; back?: unknown }): string {
+  if (typeof back === 'string' && back.startsWith('/')) {
+    const path = safeBackPath(back, '/orders');
+    if (path === null) return '/orders';
+    const url = new URL(path, 'http://orders.invalid');
+    url.searchParams.delete('error');
+    const query = url.searchParams.toString();
+    return query ? `/orders?${query}` : '/orders';
+  }
   if (back === 'in-progress') return '/orders?tab=in-progress';
   if (back === 'on-site') return '/orders?tab=on-site';
-  if (back === 'device' && typeof drmsId === 'string' && drmsId !== '') return `/devices/${encodeURIComponent(drmsId)}`;
+  // The device page keeps its own from/back, so its Back link still returns to the list it came from.
+  if (back === 'device' && typeof drmsId === 'string' && drmsId !== '') {
+    return hrefWith(`/devices/${encodeURIComponent(drmsId)}`, deviceOriginParams(origin?.from, origin?.back));
+  }
   return '/orders';
 }
 

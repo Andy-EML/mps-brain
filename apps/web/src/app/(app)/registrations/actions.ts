@@ -10,7 +10,7 @@ import {
   unrejectRegistration,
 } from '@mps/db/queries';
 import { QUEUES, sendJob } from '@mps/queue';
-import { parseRegistrationTab, selectedIds } from '@/components/registrations';
+import { registrationBackPath, selectedIds } from '@/components/registrations';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { requiredEnv } from '@/lib/env';
@@ -38,10 +38,9 @@ async function run(fn: (userId: number) => Promise<unknown>, back: string): Prom
   revalidatePath('/registrations');
 }
 
-/** Back to the tab the form was posted from. */
+/** Back to the list view the form was posted from (tab, search, page, sort, rows), else its tab. */
 function backTo(formData: FormData): string {
-  const tab = parseRegistrationTab(String(formData.get('tab') ?? ''));
-  return tab === 'awaiting' ? '/registrations' : `/registrations?tab=${tab}`;
+  return registrationBackPath(formData.get('back'), formData.get('tab'));
 }
 
 /** Thrown inside `run` so a bad id still goes through `requireUser()` and back as `?error=not_found`. */

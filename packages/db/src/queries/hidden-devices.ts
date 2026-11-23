@@ -1,4 +1,4 @@
-import { and, count, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import {
@@ -11,8 +11,8 @@ import {
   users,
   vantageEquipment,
 } from '../schema';
-import { deviceRowNames } from './devices';
-import { drmsEquipmentName } from './shared';
+import { deviceNameSort, deviceRowNames } from './devices';
+import { drmsEquipmentName, sortOrder, type SortSpec } from './shared';
 
 /**
  * Hiding a device: the operator's way of saying "this machine is no longer ours to look after"
@@ -200,10 +200,13 @@ export interface HiddenDeviceRow extends HiddenInfo {
   customerName: string | null;
 }
 
+export const HIDDEN_SORT_KEYS = ['device', 'hidden', 'reason'] as const;
+export type HiddenSortKey = (typeof HIDDEN_SORT_KEYS)[number];
+
 /** The devices list's *Hidden* tab: newest hide first, searchable like the other tabs. */
 export async function listHiddenDevices(
   db: Db,
-  o: { search?: string; limit?: number; offset?: number } = {},
+  o: { search?: string; limit?: number; offset?: number; sort?: SortSpec<HiddenSortKey> } = {},
 ): Promise<{ rows: HiddenDeviceRow[]; total: number }> {
   const limit = o.limit ?? 50;
   const offset = o.offset ?? 0;
@@ -243,7 +246,18 @@ export async function listHiddenDevices(
         .from(hiddenDevices)
         .$dynamic(),
     )
-      .orderBy(desc(hiddenDevices.hiddenAt), hiddenDevices.drmsEquipmentId)
+      .orderBy(
+        ...sortOrder<HiddenSortKey>(
+          {
+            device: deviceNameSort(),
+            hidden: sql`${hiddenDevices.hiddenAt}`,
+            reason: sql`lower(${hiddenDevices.reason})`,
+          },
+          o.sort,
+          () => [desc(hiddenDevices.hiddenAt), asc(hiddenDevices.drmsEquipmentId)],
+          sql`${hiddenDevices.drmsEquipmentId} asc`,
+        ),
+      )
       .limit(limit)
       .offset(offset),
     joined(db.select({ n: count() }).from(hiddenDevices).$dynamic()),

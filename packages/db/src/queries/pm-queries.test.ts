@@ -123,6 +123,20 @@ describe('pm queries', () => {
     expect(await getEquipmentPm(t.db, 1, NOW)).not.toBeNull();
   });
 
+  it('sorts the filtered rows by the chosen key, ties on the equipment id, and no sort keeps the default', async () => {
+    for (const id of [1, 2, 3]) {
+      await machine(id, id === 2 ? 'same' : 'Same');
+      await contract(id);
+    }
+    const ids = async (sort?: { key: 'customer' | 'serial'; dir: 'asc' | 'desc' }) =>
+      (await listPmDue(t.db, NOW, sort ? { sort } : {})).map((r) => r.vantageEquipmentId);
+    expect(await ids({ key: 'serial', dir: 'desc' })).toEqual([3, 2, 1]);
+    expect(await ids({ key: 'serial', dir: 'asc' })).toEqual([1, 2, 3]);
+    // All three customers tie case-insensitively, so the id decides in both directions.
+    expect(await ids({ key: 'customer', dir: 'desc' })).toEqual([1, 2, 3]);
+    expect(await ids()).toEqual([1, 2, 3]);
+  });
+
   it('Vantage-only machine (no DRMS link) gets a series and a status', async () => {
     await machine(1);
     await contract(1);

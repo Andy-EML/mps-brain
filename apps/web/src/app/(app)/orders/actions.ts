@@ -43,6 +43,14 @@ function revalidateDevice(formData: FormData): void {
   if (typeof drmsId === 'string' && drmsId !== '') revalidatePath(`/devices/${drmsId}`);
 }
 
+/** Where a refused decision lands: see `decisionBackPath`; the device page also posts its own from/back. */
+function backFrom(formData: FormData): string {
+  return decisionBackPath(formData.get('back'), formData.get('drmsId'), {
+    from: formData.get('deviceFrom'),
+    back: formData.get('deviceBack'),
+  });
+}
+
 /** A positive integer id from the form, or null. */
 function idFrom(formData: FormData, key: string): number | null {
   const n = Number(formData.get(key));
@@ -61,14 +69,14 @@ export async function approveAction(formData: FormData): Promise<void> {
     const ids = formData.getAll('proposalId').map(Number).filter((n) => Number.isInteger(n) && n > 0);
     const items = ids.map((proposalId) => ({ proposalId, quantity: Number(formData.get(`qty-${proposalId}`) ?? 1) }));
     await approveProposals(getDb(), { drmsId, items, userId });
-  }, decisionBackPath(formData.get('back'), String(formData.get('drmsId') ?? '')));
+  }, backFrom(formData));
   revalidateDevice(formData);
 }
 
 export async function rejectAction(formData: FormData): Promise<void> {
   const proposalIds = formData.getAll('proposalId').map(Number).filter((n) => Number.isInteger(n) && n > 0);
   const note = String(formData.get('note') ?? '').trim().slice(0, 500) || undefined;
-  const back = decisionBackPath(formData.get('back'), formData.get('drmsId'));
+  const back = backFrom(formData);
   await run(async (userId) => {
     await rejectProposals(getDb(), { proposalIds, userId, note });
   }, back);
@@ -79,7 +87,7 @@ export async function rejectAction(formData: FormData): Promise<void> {
 export async function markOrderedAction(formData: FormData): Promise<void> {
   const orderId = idFrom(formData, 'orderId');
   const reference = String(formData.get('reference') ?? '').trim().slice(0, 100) || undefined;
-  const back = decisionBackPath(formData.get('back'), formData.get('drmsId'));
+  const back = backFrom(formData);
   await run((userId) => markOrderOrdered(getDb(), { orderId: requireId(orderId), reference, userId }), back);
   revalidateDevice(formData);
 }
@@ -87,7 +95,7 @@ export async function markOrderedAction(formData: FormData): Promise<void> {
 /** *Back to review*: undoes the approval of a queued order. */
 export async function returnToReviewAction(formData: FormData): Promise<void> {
   const orderId = idFrom(formData, 'orderId');
-  const back = decisionBackPath(formData.get('back'), formData.get('drmsId'));
+  const back = backFrom(formData);
   await run((userId) => returnOrderToReview(getDb(), { orderId: requireId(orderId), userId }), back);
   revalidateDevice(formData);
 }
@@ -96,7 +104,7 @@ export async function returnToReviewAction(formData: FormData): Promise<void> {
 export async function deleteOrderAction(formData: FormData): Promise<void> {
   const orderId = idFrom(formData, 'orderId');
   const note = String(formData.get('note') ?? '').trim().slice(0, 500) || undefined;
-  const back = decisionBackPath(formData.get('back'), formData.get('drmsId'));
+  const back = backFrom(formData);
   await run((userId) => deleteOrder(getDb(), { orderId: requireId(orderId), userId, note }), back);
   revalidateDevice(formData);
 }

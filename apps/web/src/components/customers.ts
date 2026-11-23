@@ -1,4 +1,6 @@
 import type { CustomerTab, SelfManagedSource } from '@mps/db/queries';
+import { hrefWith } from '../lib/href';
+import { safeReturnPath } from '../lib/device-origin';
 import type { Tone } from './toner';
 
 /**
@@ -53,8 +55,28 @@ export function customerStockBadge(selfManaged: SelfManagedSource | null): { tex
   return { text: 'Dealer', tone: 'muted' };
 }
 
-export function customerHref(vantageId: number): string {
-  return `/customers/${vantageId}`;
+const CUSTOMERS_LIST = '/customers';
+
+/** `back` when it is a Customers list view (not a customer page), else null. */
+function customersListBack(back: unknown): string | null {
+  const kept = safeReturnPath(back, [CUSTOMERS_LIST]);
+  return kept === CUSTOMERS_LIST || kept?.startsWith(`${CUSTOMERS_LIST}?`) ? kept : null;
+}
+
+/**
+ * The customer page. `back` is the Customers list view it was opened from (tab, search, page, sort,
+ * rows), kept only when it is that list and adds something to it, so the page's Back link and
+ * breadcrumb return to the same view.
+ */
+export function customerHref(vantageId: number, back?: string): string {
+  // Only the list: a customer page as back would chain one customer to another.
+  const kept = back != null && back !== CUSTOMERS_LIST ? customersListBack(back) : null;
+  return hrefWith(`/customers/${vantageId}`, { back: kept });
+}
+
+/** The customer page's Back link / breadcrumb root: the list view in `back`, else the plain list. */
+export function customersBackHref(back: unknown): string {
+  return customersListBack(back) ?? CUSTOMERS_LIST;
 }
 
 /**

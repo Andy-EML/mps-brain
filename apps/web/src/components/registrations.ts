@@ -1,6 +1,7 @@
-import type { CustomerMatchFlag, RegistrationStatus, RegistrationTab } from '@mps/db/queries';
+import type { CustomerMatchFlag, RegistrationSortKey, RegistrationStatus, RegistrationTab } from '@mps/db/queries';
 // Relative, not `@/lib/format`: Vitest has no `@/` alias and this module is unit-tested.
 import { formatNumber } from '../lib/format';
+import { safeReturnPath } from '../lib/device-origin';
 import type { Tone } from './toner';
 
 /**
@@ -14,6 +15,18 @@ export const REGISTRATION_TAB_VALUES = ['awaiting', 'waiting', 'registered', 'fa
 export function parseRegistrationTab(value: string | null | undefined): RegistrationTab {
   return REGISTRATION_TAB_VALUES.includes(value as RegistrationTab) ? (value as RegistrationTab) : 'awaiting';
 }
+
+/**
+ * The sort keys of the columns each tab shows (Found on Awaiting, the Registered / Attempted date
+ * on Registered / Failed, Rejected on Rejected). A sort carried over from another tab is dropped.
+ */
+export const REGISTRATION_TAB_SORT_KEYS: Record<RegistrationTab, readonly RegistrationSortKey[]> = {
+  awaiting: ['machine', 'customer', 'created'],
+  waiting: ['machine', 'customer'],
+  registered: ['machine', 'customer', 'finished'],
+  failed: ['machine', 'customer', 'finished'],
+  rejected: ['machine', 'customer', 'decided'],
+};
 
 export interface Badge {
   tone: Tone;
@@ -83,4 +96,21 @@ export function awaitingTabCount(c: { awaitingApproval: number; approved: number
   const total = c.awaitingApproval + c.approved;
   const awaiting = formatNumber(c.awaitingApproval);
   return { total, text: c.approved > 0 ? `${awaiting} + ${formatNumber(c.approved)} sending` : awaiting };
+}
+
+/**
+ * Where a `/registrations` action lands: the exact list view the form was posted from (`back`:
+ * tab, search, page, sort, rows; an old `error` dropped), else the posted tab. Anything that is not
+ * a same-site `/registrations` URL is ignored.
+ */
+export function registrationBackPath(back: unknown, tab: unknown): string {
+  const kept = safeReturnPath(back, ['/registrations']);
+  if (kept !== null) {
+    const url = new URL(kept, 'http://registrations.invalid');
+    url.searchParams.delete('error');
+    const query = url.searchParams.toString();
+    return query ? `/registrations?${query}` : '/registrations';
+  }
+  const parsed = parseRegistrationTab(typeof tab === 'string' ? tab : undefined);
+  return parsed === 'awaiting' ? '/registrations' : `/registrations?tab=${parsed}`;
 }

@@ -1,21 +1,22 @@
-import { countAlerts, getCollectionStatus, listAlerts, type AlertStatus } from '@mps/db/queries';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
+import { ALERT_SORT_KEYS, countAlerts, getCollectionStatus, listAlertsPage, type AlertStatus } from '@mps/db/queries';
 import { AlertTable } from '@/components/alert-table';
 import { CollectionOutageBanner } from '@/components/collection-outage-banner';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
+import { ListControls } from '@/components/list-controls';
 import { PageHeader } from '@/components/page-header';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber, pluralise } from '@/lib/format';
-import { hrefWith } from '@/lib/href';
+import { ALERTS_DEFAULT_ROWS } from '@/lib/list-keep';
+import { lastPageOf, listHref, parseListState, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
 
 export const metadata = { title: 'Alerts · MPS Dashboard' };
 
-/**
- * Alerts are one row per device per type, so the list is bounded by the fleet (~1,000). Cleared
- * alerts accumulate over time, which is the one tab that could outgrow this; 200 is well clear of
- * anything the worker can produce in a year and keeps the page a single query with no pager.
- */
-const LIMIT = 200;
+/** Alerts are one row per device per type; Cleared accumulates over time, so every tab is paged. */
+const LIST_KEY = 'alerts';
+const DEFAULT_ROWS = ALERTS_DEFAULT_ROWS;
 
 const TABS = [
   { value: 'open', label: 'Open' },
@@ -44,13 +45,28 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
 
   const requested = first(params.status);
   const status: AlertStatus = TABS.some((t) => t.value === requested) ? (requested as AlertStatus) : DEFAULT_STATUS;
+  const cookieStore = await cookies();
+  const state = parseListState((name) => first(params[name]), {
+    listKey: LIST_KEY,
+    defaultRows: DEFAULT_ROWS,
+    sortKeys: ALERT_SORT_KEYS,
+    cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
+  });
 
   const db = getDb();
-  const [rows, counts, collection] = await Promise.all([
-    listAlerts(db, { status, limit: LIMIT }),
+  const [{ rows, total }, counts, collection] = await Promise.all([
+    listAlertsPage(db, { status, sort: sortSpec(state), limit: state.rows, offset: (state.page - 1) * state.rows }),
     countAlerts(db),
     getCollectionStatus(db),
   ]);
+
+  const keep = { status: status === DEFAULT_STATUS ? undefined : status };
+  const lastPage = lastPageOf(total, state.rows);
+  if (state.page > lastPage) redirect(listHref('/alerts', keep, state, { page: lastPage }, { defaultRows: DEFAULT_ROWS }));
+  // Sort and page size survive a change of tab; the page does not.
+  const listParams = stateParams(state, { defaultRows: DEFAULT_ROWS });
+  const sorting = { basePath: '/alerts', keep, state, defaultRows: DEFAULT_ROWS };
+  const controls = { ...sorting, total, listKey: LIST_KEY, noun: 'alert' };
 
   const tabs: FilterTab[] = TABS.map((tab) => ({
     value: tab.value,
@@ -88,6 +104,7 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
             tabs={tabs}
             defaultValue={DEFAULT_STATUS}
             ariaLabel="Filter alerts by status"
+            params={listParams}
           />
         }
       />
@@ -100,16 +117,14 @@ export default async function AlertsPage({ searchParams }: PageProps<'/alerts'>)
       </p>
 
       <section className="rounded-xl border border-line bg-card">
+        <ListControls {...controls} className="border-b border-line px-5 py-3.5" />
         <AlertTable
           rows={rows}
           emptyMessage={EMPTY[status]}
-          back={hrefWith('/alerts', { status: status === DEFAULT_STATUS ? undefined : status })}
+          sorting={sorting}
+          back={listHref('/alerts', keep, state, {}, { defaultRows: DEFAULT_ROWS })}
         />
-        {rows.length === LIMIT ? (
-          <p className="border-t border-line px-5 py-3.5 text-xs text-muted-foreground">
-            Showing the {formatNumber(LIMIT)} most recent alerts.
-          </p>
-        ) : null}
+        <ListControls {...controls} position="bottom" className="border-t border-line px-5 py-3.5" />
       </section>
     </>
   );

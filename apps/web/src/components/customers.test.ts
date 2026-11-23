@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CUSTOMER_TABS,
   customerHref,
+  customersBackHref,
   customerStockBadge,
   parseCustomerSearchParams,
   selfManagedPreviewText,
@@ -69,6 +70,16 @@ describe('customerHref', () => {
   it('is the customer page by Vantage id', () => {
     expect(customerHref(1234)).toBe('/customers/1234');
   });
+
+  it('carries the Customers list view it was opened from as back', () => {
+    expect(customerHref(5, '/customers?tab=all&page=2')).toBe('/customers/5?back=%2Fcustomers%3Ftab%3Dall%26page%3D2');
+  });
+
+  it('leaves back off when it adds nothing or is not the Customers list', () => {
+    expect(customerHref(5, '/customers')).toBe('/customers/5');
+    expect(customerHref(5, '//evil.com/customers')).toBe('/customers/5');
+    expect(customerHref(5, '/devices?page=2')).toBe('/customers/5');
+  });
 });
 
 describe('selfManagedPreviewText', () => {
@@ -78,5 +89,14 @@ describe('selfManagedPreviewText', () => {
     );
     expect(selfManagedPreviewText({ pending: 1, devices: 1, sites: 1 })).toBe('Clears 1 pending proposal on 1 machine.');
     expect(selfManagedPreviewText({ pending: 0, devices: 0, sites: 0 })).toBe('No pending proposals to clear.');
+  });
+});
+
+describe('customersBackHref', () => {
+  it('is the Customers list view from back, else the plain list', () => {
+    expect(customersBackHref('/customers?tab=all&page=2')).toBe('/customers?tab=all&page=2');
+    expect(customersBackHref(undefined)).toBe('/customers');
+    expect(customersBackHref('/customers/42')).toBe('/customers');
+    expect(customersBackHref('/customersX?page=2')).toBe('/customers');
   });
 });

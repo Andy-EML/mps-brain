@@ -20,7 +20,7 @@ import {
 } from '../schema';
 import { createTestDb, type TestDb } from '../testing';
 import { getOrderStates } from './order-state';
-import { countAwaitingReview, getReplenishmentStats, listDeviceReplenishment, listReplenishmentQueue } from './replenishment';
+import { countAwaitingReview, getReplenishmentStats, listDeviceReplenishment, listReplenishmentQueue, listReplenishmentQueuePage } from './replenishment';
 import { matchSalesOrders } from './order-watch';
 import { approveProposals, deleteOrder, markOrderOrdered, rejectProposals, returnOrderToReview } from './replenishment-actions';
 
@@ -148,6 +148,21 @@ describe('replenishment queue', () => {
     ]);
 
     expect(await listReplenishmentQueue(t.db, { tab: 'review', limit: 1 })).toHaveLength(1);
+  });
+
+  it('pages the queue with the total of the whole tab, sorted by the chosen key', async () => {
+    const all = await listReplenishmentQueuePage(t.db, { tab: 'review', limit: 10, offset: 0 });
+    expect(all.rows.map((d) => d.drmsId)).toEqual(['d1', 'd2']);
+    expect(all.total).toBe(2);
+    const byCustomer = await listReplenishmentQueuePage(t.db, { tab: 'review', sort: { key: 'customer', dir: 'desc' }, limit: 1, offset: 0 });
+    expect(byCustomer.rows.map((d) => d.drmsId)).toEqual(['d2']);
+    expect(byCustomer.total).toBe(2);
+    const next = await listReplenishmentQueuePage(t.db, { tab: 'review', sort: { key: 'customer', dir: 'desc' }, limit: 1, offset: 1 });
+    expect(next.rows.map((d) => d.drmsId)).toEqual(['d1']);
+    const urgencyDesc = await listReplenishmentQueuePage(t.db, { tab: 'review', sort: { key: 'urgency', dir: 'desc' }, limit: 10, offset: 0 });
+    expect(urgencyDesc.rows.map((d) => d.drmsId)).toEqual(['d2', 'd1']);
+    expect((await listReplenishmentQueuePage(t.db, { tab: 'review', limit: 10, offset: 9 })).rows).toEqual([]);
+    expect((await listReplenishmentQueuePage(t.db, { tab: 'ordered', limit: 10, offset: 0, now: NOW })).total).toBe(0);
   });
 
   it('carries the detected cartridge change on a spare_used proposal, and none on the others', async () => {

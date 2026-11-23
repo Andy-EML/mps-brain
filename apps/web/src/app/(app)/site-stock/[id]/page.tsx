@@ -7,7 +7,15 @@ import { resetAutoReplenishAction } from '@/app/(app)/site-stock/actions';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { customerHref } from '@/components/customers';
 import { PageHeader } from '@/components/page-header';
-import { coveredColours, coveredColoursText, eventAlarmText, eventOutcome, shelfStatus } from '@/components/shelf';
+import {
+  coveredColours,
+  coveredColoursText,
+  eventAlarmText,
+  eventOutcome,
+  shelfBackLink,
+  shelfHref,
+  shelfStatus,
+} from '@/components/shelf';
 import { SelfManagedBadge } from '@/components/self-managed-badge';
 import { DeleteShelfDialog, HoldingsForm } from '@/components/shelf-forms';
 import { ToneBadge } from '@/components/tone-badge';
@@ -57,6 +65,13 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
   const resetRaw = first(query.reset);
   const reset = resetRaw !== undefined && /^\d{1,6}$/.test(resetRaw) ? Number(resetRaw) : null;
 
+  // Where this page was opened from (the Site stock view, or a customer page), for the breadcrumb
+  // root; the forms post it back so a refused save keeps it, and devices opened from here return
+  // to this page with it.
+  const origin = shelfBackLink(first(query.back));
+  const back = origin.href === '/site-stock' ? undefined : origin.href;
+  const here = shelfHref(shelf.id, back);
+
   const status = shelfStatus(shelf.liveTopUp);
   const covered = coveredColours(shelf.isColour, shelf.holding);
   const title = `${shelf.siteName} · ${shelf.familyName}`;
@@ -65,7 +80,7 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
 
   return (
     <>
-      <Breadcrumb className="mb-3" items={[{ label: 'Site stock', href: '/site-stock' }, { label: title }]} />
+      <Breadcrumb className="mb-3" items={[{ label: origin.label, href: origin.href }, { label: title }]} />
 
       <PageHeader
         title={title}
@@ -138,6 +153,7 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
           </div>
           <form action={resetAutoReplenishAction} className="shrink-0">
             <input type="hidden" name="shelfId" value={shelf.id} />
+            {back ? <input type="hidden" name="back" value={back} /> : null}
             <Button type="submit" variant="outline" size="sm">
               Switch back to inherited
             </Button>
@@ -161,6 +177,7 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
             used={shelf.used}
             error={errorIn('holdings')}
             correctError={errorIn('correct')}
+            back={back}
           />
 
           <p className="px-1 text-[12px] text-muted-foreground">
@@ -184,7 +201,7 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
               <ul className="mt-2">
                 {shelf.devices.map((d) => (
                   <li key={d.drmsId} className="border-b border-dashed border-line py-1.5 text-[13px] last:border-b-0">
-                    <Link href={deviceHref(d.drmsId, 'site-stock')} className="font-medium hover:text-brand hover:underline">
+                    <Link href={deviceHref(d.drmsId, 'site-stock', here)} className="font-medium hover:text-brand hover:underline">
                       {d.displayName}
                     </Link>
                     <span className="text-muted-foreground">
@@ -219,7 +236,7 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
                     <span className="tabular">{formatDateTime(e.at)}</span>
                     {' · '}
                     {e.drmsId ? (
-                      <Link href={deviceHref(e.drmsId, 'site-stock')} className="hover:text-brand hover:underline">
+                      <Link href={deviceHref(e.drmsId, 'site-stock', here)} className="hover:text-brand hover:underline">
                         {e.displayName ?? e.drmsId}
                       </Link>
                     ) : (
@@ -244,7 +261,7 @@ export default async function ShelfPage({ params, searchParams }: PageProps<'/si
             Its machines go back to normal replenishment. Recorded in the audit log.
           </p>
         </div>
-        <DeleteShelfDialog shelfId={shelf.id} name={title} liveTopUp={shelf.liveTopUp} error={errorIn('delete')} />
+        <DeleteShelfDialog shelfId={shelf.id} name={title} liveTopUp={shelf.liveTopUp} error={errorIn('delete')} back={back} />
       </section>
     </>
   );

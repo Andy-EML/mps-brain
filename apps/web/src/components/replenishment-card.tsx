@@ -22,10 +22,11 @@ import {
 } from '@/components/replenishment';
 import { ReviewForm } from '@/components/replenishment-queue';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
-import { coveredColoursText } from '@/components/shelf';
+import { coveredColoursText, shelfHref } from '@/components/shelf';
 import { CreateDeviceShelfDialog } from '@/components/shelf-forms';
 import { customerHref as customerPageHref } from '@/components/customers';
 import { ToneBadge } from '@/components/tone-badge';
+import { devicePageHref } from '@/lib/device-origin';
 import { formatDate } from '@/lib/format';
 
 export interface ReplenishmentCardProps {
@@ -114,7 +115,8 @@ export function ReplenishmentCard({
           allowInherit
           isColour={isColour}
           action={updateDeviceSettingsAction}
-          hidden={{ drmsId }}
+          // from/back ride along so a refused save comes back with the page's Back link intact.
+          hidden={{ drmsId, ...(origin?.from ? { from: origin.from } : {}), ...(origin?.back ? { back: origin.back } : {}) }}
           error={error}
         />
       </div>
@@ -144,7 +146,7 @@ export function ReplenishmentCard({
       {!selfManaged && siteStock && siteStock.covered.length > 0 ? (
         <p className="mt-3 rounded-lg bg-brand-soft/60 px-3 py-2 text-[13px]">
           Normal proposals off for {coveredColoursText(siteStock.covered)} —{' '}
-          <Link href={`/site-stock/${siteStock.shelfId}`} className="font-medium text-brand hover:underline">
+          <Link href={shelfHref(siteStock.shelfId, devicePageHref(drmsId, origin))} className="font-medium text-brand hover:underline">
             on a site stock shelf
           </Link>
           .
@@ -216,7 +218,7 @@ export function ReplenishmentCard({
           <h3 className="text-[13px] font-medium">Toner proposals</h3>
           {pending.length > 0 ? (
             <div className="mt-2">
-              <ReviewForm drmsId={drmsId} proposals={pending} unlinked={unlinked} back="device" compact />
+              <ReviewForm drmsId={drmsId} proposals={pending} unlinked={unlinked} back="device" deviceOrigin={origin} compact />
             </div>
           ) : null}
           {decided.length > 0 ? (

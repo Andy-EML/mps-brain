@@ -17,7 +17,8 @@ import {
 import { cn } from 'cn';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { ResetCustomerDialog } from '@/components/customer-override-dialogs';
-import { customerHref, customerStockBadge } from '@/components/customers';
+import { customerHref, customerStockBadge, customersBackHref } from '@/components/customers';
+import { shelfHref } from '@/components/shelf';
 import { DeviceTable } from '@/components/device-table';
 import { OrderHistory, type OrderMachine } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
@@ -139,7 +140,11 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
   const customer = await getCustomer(db, id);
   if (!customer) notFound();
 
-  const path = customerHref(id);
+  // `here` carries the Customers list view this page was opened from: a device or shelf opened
+  // from here comes back to it, the reused forms post it as `returnTo` so a save or a refusal lands
+  // back with the Back link intact, and links to other customers pass the list view on.
+  const listHref = customersBackHref(first(query.back));
+  const here = customerHref(id, listHref);
   const isHeadOffice = customer.sites.length > 0;
   const ids = [id, ...customer.sites.map((s) => s.vantageId)];
   const since = new Date();
@@ -181,7 +186,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
   const machineOf: Record<number, OrderMachine | null> = Object.fromEntries(
     orders.map((o) => [
       o.vantageId,
-      o.deviceName ? { name: o.deviceName, href: o.drmsId ? deviceHref(o.drmsId, 'customers', path) : null } : null,
+      o.deviceName ? { name: o.deviceName, href: o.drmsId ? deviceHref(o.drmsId, 'customers', here) : null } : null,
     ]),
   );
 
@@ -196,15 +201,15 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
       <Breadcrumb
         className="mb-3"
         items={[
-          { label: 'Customers', href: '/customers' },
+          { label: 'Customers', href: listHref },
           ...(customer.headOffice
-            ? [{ label: customer.headOffice.name ?? `Customer ${customer.headOffice.vantageId}`, href: customerHref(customer.headOffice.vantageId) }]
+            ? [{ label: customer.headOffice.name ?? `Customer ${customer.headOffice.vantageId}`, href: customerHref(customer.headOffice.vantageId, listHref) }]
             : []),
           { label: name },
         ]}
       />
 
-      <Link href="/customers" className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-brand hover:underline">
+      <Link href={listHref} className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-brand hover:underline">
         <ArrowLeft aria-hidden className="size-3.5" />
         Back to Customers
       </Link>
@@ -224,7 +229,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
             {customer.headOffice ? (
               <>
                 {' · Head office '}
-                <Link href={customerHref(customer.headOffice.vantageId)} className="font-medium text-brand hover:underline">
+                <Link href={customerHref(customer.headOffice.vantageId, listHref)} className="font-medium text-brand hover:underline">
                   {customer.headOffice.name ?? `Customer ${customer.headOffice.vantageId}`}
                 </Link>
               </>
@@ -253,7 +258,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
               {sm.source === 'head_office' && customer.headOffice ? (
                 <>
                   Via head office{' '}
-                  <Link href={customerHref(customer.headOffice.vantageId)} className="font-medium text-brand hover:underline">
+                  <Link href={customerHref(customer.headOffice.vantageId, listHref)} className="font-medium text-brand hover:underline">
                     {customer.headOffice.name ?? `Customer ${customer.headOffice.vantageId}`}
                   </Link>
                   {' · '}
@@ -293,7 +298,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
                 allowInherit
                 isColour
                 action={updateCustomerAction}
-                hidden={{ vantageCustomerId: String(id), returnTo: path }}
+                hidden={{ vantageCustomerId: String(id), returnTo: here }}
                 error={settingsError}
               />
               {settings ? (
@@ -301,7 +306,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
                   vantageCustomerId={id}
                   customerName={name}
                   deviceCount={settings.deviceCount}
-                  returnTo={path}
+                  returnTo={here}
                 />
               ) : null}
             </div>
@@ -352,7 +357,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
                     return (
                       <tr key={s.vantageId} className="border-b border-line last:border-b-0">
                         <td className={cn(CELL, 'max-w-[320px]')}>
-                          <Link href={customerHref(s.vantageId)} className="block truncate font-medium hover:text-brand hover:underline">
+                          <Link href={customerHref(s.vantageId, listHref)} className="block truncate font-medium hover:text-brand hover:underline">
                             {s.name ?? `Customer ${s.vantageId}`}
                           </Link>
                           {s.reference ? <span className="font-mono text-[11px] text-muted-foreground">{s.reference}</span> : null}
@@ -388,7 +393,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
             rows={devices.visible}
             now={now}
             from="customers"
-            back={path}
+            back={here}
             emptyMessage="No linked DRMS devices for this customer."
             className="border-t border-line"
           />
@@ -398,7 +403,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
                 <ChevronRight aria-hidden className="size-3.5 transition-transform group-open:rotate-90" />
                 Hidden ({formatNumber(devices.hidden.length)})
               </summary>
-              <DeviceTable rows={devices.hidden} now={now} from="customers" back={path} className="border-t border-line" />
+              <DeviceTable rows={devices.hidden} now={now} from="customers" back={here} className="border-t border-line" />
             </details>
           ) : null}
         </Card>
@@ -427,7 +432,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
               families={families.map((f) => ({ id: f.id, name: f.name, isColour: f.isColour, models: f.models }))}
               error={addError}
               customer={{ vantageId: id, name: customer.name, reference: customer.reference, deviceCount: ownMachines }}
-              returnTo={path}
+              returnTo={here}
             />
           }
         >
@@ -449,7 +454,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
                     <div className="flex flex-wrap items-center justify-between gap-2 px-1">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <Link
-                          href={`/site-stock/${shelf.id}`}
+                          href={shelfHref(shelf.id, here)}
                           className="inline-flex min-w-0 items-center gap-1.5 text-[14px] font-medium hover:text-brand hover:underline"
                         >
                           <Boxes aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -469,7 +474,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
                         name={title}
                         liveTopUp={shelf.liveTopUp}
                         error={shelfErrorIn(shelf.id, 'delete')}
-                        returnTo={path}
+                        returnTo={here}
                       />
                     </div>
                     <HoldingsForm
@@ -481,7 +486,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
                       used={shelf.used}
                       error={shelfErrorIn(shelf.id, 'holdings')}
                       correctError={shelfErrorIn(shelf.id, 'correct')}
-                      returnTo={path}
+                      returnTo={here}
                     />
                   </div>
                 );

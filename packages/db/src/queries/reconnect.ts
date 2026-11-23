@@ -3,7 +3,8 @@ import { and, count, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgSelect } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { deviceLinks, drmsEquipment, vantageEquipment } from '../schema';
-import { drmsEquipmentName, lastAlarmSubquery, notHiddenDevice } from './shared';
+import { deviceNameSort } from './devices';
+import { drmsEquipmentName, lastAlarmSubquery, notHiddenDevice, sortOrder, type SortSpec } from './shared';
 
 /** Days without contact before a device that reports meter readings counts as silent. */
 export const RECONNECT_DAYS = 14;
@@ -47,12 +48,25 @@ export interface ReconnectRow {
   registeredInDrms: boolean;
 }
 
+export const RECONNECT_SORT_KEYS = [
+  'customer',
+  'location',
+  'device',
+  'serial',
+  'status',
+  'lastContact',
+  'firstConnected',
+  'lastAlarm',
+] as const;
+export type ReconnectSortKey = (typeof RECONNECT_SORT_KEYS)[number];
+
 export interface ReconnectOptions {
   filter?: ReconnectFilter;
   search?: string;
   /** Omit for every row (the CSV export). */
   limit?: number;
   offset?: number;
+  sort?: SortSpec<ReconnectSortKey>;
   now?: Date;
   days?: number;
 }
@@ -172,7 +186,7 @@ export async function listReconnect(
 
   // Silent lists: most recently silent first, so a machine that has just dropped off is on top.
   // The unmonitored list has no contact date to sort by: registered devices first, then by customer.
-  const order =
+  const defaultOrder = () =>
     filter === 'unmonitored'
       ? [
           sql`${p.registeredInDrms} desc`,
@@ -184,6 +198,21 @@ export async function listReconnect(
           sql`${customerName} asc nulls last`,
           sql`${drmsEquipment.serial} asc nulls last`,
         ];
+  const order = sortOrder<ReconnectSortKey>(
+    {
+      customer: sql`lower(${customerName})`,
+      location: sql`lower(${vantageEquipment.location})`,
+      device: deviceNameSort(),
+      serial: sql`${drmsEquipment.serial}`,
+      status: sql`lower(${drmsEquipment.status})`,
+      lastContact: p.lastContactAt,
+      firstConnected: sql`${drmsEquipment.initialConnectionTime}`,
+      lastAlarm: p.lastAlarmAt,
+    },
+    o.sort,
+    defaultOrder,
+    sql`${drmsEquipment.drmsId} asc`,
+  );
 
   let rowsQuery = joinScope(
     db

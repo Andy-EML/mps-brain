@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../client';
 import { drmsEquipment, drmsRegistrations, users, type RegistrationStatus } from '../schema';
+import { sortOrder, type SortSpec } from './shared';
 
 /**
  * The DRMS registration queue (`/registrations`): its tabs, counts, the sidebar badge and the CSV
@@ -70,6 +71,17 @@ const TAB_ORDER: Record<RegistrationTab, SQL[]> = {
   rejected: [sql`${r.decidedAt} desc nulls last`, desc(r.id)],
 };
 
+export const REGISTRATION_SORT_KEYS = ['machine', 'customer', 'created', 'finished', 'decided'] as const;
+export type RegistrationSortKey = (typeof REGISTRATION_SORT_KEYS)[number];
+
+const SORT_EXPR: Record<RegistrationSortKey, SQL> = {
+  machine: sql`lower(coalesce(${r.deviceName}, ${drmsEquipment.modelName}, ${r.drmsEquipmentId}))`,
+  customer: sql`lower(coalesce(${r.vantageCustomerName}, ${r.drmsCustomerName}))`,
+  created: sql`${r.createdAt}`,
+  finished: sql`${r.finishedAt}`,
+  decided: sql`${r.decidedAt}`,
+};
+
 const rowColumns = {
   id: r.id,
   drmsId: r.drmsEquipmentId,
@@ -104,7 +116,7 @@ function searchWhere(search: string | undefined): SQL | undefined {
 
 export async function listRegistrations(
   db: Db,
-  o: { tab: RegistrationTab; search?: string; limit?: number; offset?: number },
+  o: { tab: RegistrationTab; search?: string; limit?: number; offset?: number; sort?: SortSpec<RegistrationSortKey> },
 ): Promise<{ rows: RegistrationRow[]; total: number }> {
   const where = and(TAB_WHERE[o.tab], searchWhere(o.search));
   let q = db
@@ -114,7 +126,7 @@ export async function listRegistrations(
     .leftJoin(decider, eq(decider.id, r.decidedBy))
     .leftJoin(retrier, eq(retrier.id, r.retryRequestedBy))
     .where(where)
-    .orderBy(...TAB_ORDER[o.tab])
+    .orderBy(...sortOrder(SORT_EXPR, o.sort, () => TAB_ORDER[o.tab], sql`${r.id} asc`))
     .$dynamic();
   if (o.limit !== undefined) q = q.limit(o.limit);
   if (o.offset) q = q.offset(o.offset);

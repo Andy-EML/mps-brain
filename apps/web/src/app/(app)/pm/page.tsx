@@ -1,26 +1,31 @@
 import Link from 'next/link';
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Download, Info } from 'lucide-react';
 import { cn } from 'cn';
-import { getPmSettings, listFamilies, listPmDue, londonDay, type PmRow, type PmSettings } from '@mps/db/queries';
+import { PM_SORT_KEYS, getPmSettings, listFamilies, listPmDue, londonDay, type PmRow, type PmSettings } from '@mps/db/queries';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
-import { Pagination } from '@/components/pagination';
+import { ListControls } from '@/components/list-controls';
 import { PM_VISIT_ROWS } from '@/components/pm-detail';
 import { PmRow as PmTableRow } from '@/components/pm-row';
 import { statusLabel } from '@/components/pm-status';
 import { SearchInput } from '@/components/search-input';
+import { SortHeader } from '@/components/sort-header';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber } from '@/lib/format';
 import { hrefWith } from '@/lib/href';
+import { PM_DEFAULT_ROWS, pmKeep } from '@/lib/list-keep';
+import { lastPageOf, listHref, parseListState, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
 import { pmErrorMessage } from '@/lib/pm-action-form';
 import { PM_STATUSES, applyPmView, countPm, inPmView, parsePmFilters, type PmFilters, type PmViewFilter } from './filters';
 
 export const metadata = { title: 'PM due · MPS Dashboard' };
 
-const PAGE_SIZE = 100;
+const LIST_KEY = 'pm';
+const DEFAULT_ROWS = PM_DEFAULT_ROWS;
 /** Columns in the collapsed row (`PmRow`). */
 const COLUMNS = 7;
 
@@ -57,7 +62,14 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
   await requireUser();
   const params = await searchParams;
   const filters = parsePmFilters(params);
-  const page = Math.max(1, Number.parseInt(first(params.page) ?? '1', 10) || 1);
+  const cookieStore = await cookies();
+  const state = parseListState((name) => first(params[name]), {
+    listKey: LIST_KEY,
+    defaultRows: DEFAULT_ROWS,
+    sortKeys: PM_SORT_KEYS,
+    cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
+  });
+  const page = state.page;
   const openRaw = first(params.open);
   const openId = openRaw && /^\d{1,10}$/.test(openRaw) ? Number(openRaw) : null;
   const pmError = first(params.pmError);
@@ -66,7 +78,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
   const now = new Date();
   const [all, settings, families] = await Promise.all([
     // view 'all' explicitly: the tabs are counted and applied here (inPmView mirrors the DB rule).
-    listPmDue(db, now, { view: 'all', customer: filters.customer, family: filters.family, q: filters.q }),
+    listPmDue(db, now, { view: 'all', customer: filters.customer, family: filters.family, q: filters.q, sort: sortSpec(state) }),
     getPmSettings(db),
     listFamilies(db),
   ]);
@@ -75,15 +87,23 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
   const base = filterParams(filters);
   const today = londonDay(now);
 
-  const lastPage = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  if (page > lastPage && rows.length > 0) {
-    redirect(hrefWith('/pm', { ...base, page: lastPage > 1 ? lastPage : undefined, open: openId ?? undefined }));
-  }
-  const shown = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Pager, rows picker and sort headers keep the filters and the open row (Review Focus 4).
+  const keep = pmKeep(base, openId);
+  const lastPage = lastPageOf(rows.length, state.rows);
+  if (page > lastPage) redirect(listHref('/pm', keep, state, { page: lastPage }, { defaultRows: DEFAULT_ROWS }));
+  const shown = rows.slice((page - 1) * state.rows, page * state.rows);
+  // Sort and page size survive a change of tab, filter or search; the page does not.
+  const listParams = stateParams(state, { defaultRows: DEFAULT_ROWS });
+  const sorting = { basePath: '/pm', keep, state, defaultRows: DEFAULT_ROWS };
+  const controls = { ...sorting, total: rows.length, listKey: LIST_KEY, noun: 'machine' };
 
-  // This view's own URL: forms post it back, the device page's Back link returns to it.
-  const back = hrefWith('/pm', { ...base, page: page > 1 ? page : undefined });
-  const moved = openId !== null && !shown.some((r) => r.vantageEquipmentId === openId) ? movedTo(all, rows, openId, filters, now, settings) : null;
+  // This view's own URL without the open row (the actions add it): forms post it back, the device
+  // page's Back link returns to it.
+  const back = listHref('/pm', base, state, {}, { defaultRows: DEFAULT_ROWS });
+  const moved =
+    openId !== null && !shown.some((r) => r.vantageEquipmentId === openId)
+      ? movedTo(all, rows, openId, filters, now, settings, state.rows, listParams)
+      : null;
 
   const tabs: FilterTab[] = (['due', 'booked', 'dismissed', 'all'] as const).map((v) => ({
     value: v,
@@ -110,6 +130,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
               defaultValue={filters.q}
               placeholder="Search customer, serial or model"
               hiddenParams={{
+                ...listParams,
                 view: base.view as string | undefined,
                 status: base.status as string | undefined,
                 customer: filters.customer,
@@ -138,7 +159,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
             current={filters.view}
             defaultValue="due"
             tabs={tabs}
-            params={{ ...base, view: undefined }}
+            params={{ ...base, ...listParams, view: undefined }}
             ariaLabel="PM list tab"
           />
         </div>
@@ -146,6 +167,9 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
         <form action="/pm" method="get" className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
           {base.view ? <input type="hidden" name="view" value={String(base.view)} /> : null}
           {filters.q ? <input type="hidden" name="search" value={filters.q} /> : null}
+          {Object.entries(listParams).map(([name, value]) => (
+            <input key={name} type="hidden" name={name} value={value} />
+          ))}
           <input
             name="customer"
             list="pm-customers"
@@ -185,7 +209,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
           </button>
           {hasFilters ? (
             <Link
-              href={hrefWith('/pm', { view: base.view, search: filters.q })}
+              href={hrefWith('/pm', { view: base.view, search: filters.q, ...listParams })}
               className="px-1 text-[13px] text-brand hover:underline"
             >
               Clear filters
@@ -214,7 +238,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
             ).map(([value, label, count]) => (
               <Link
                 key={value}
-                href={hrefWith('/pm', { ...base, overdue: value === 'all' ? undefined : value })}
+                href={hrefWith('/pm', { ...base, ...listParams, overdue: value === 'all' ? undefined : value })}
                 aria-current={filters.overdue === value ? 'true' : undefined}
                 className={cn(
                   'rounded-full border px-3 py-1 text-[13px] font-medium transition-colors',
@@ -236,6 +260,8 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
           </p>
         ) : null}
 
+        <ListControls {...controls} className="border-b border-line px-5 py-3.5" />
+
         {shown.length === 0 ? (
           <p className="px-5 py-12 text-center text-sm text-muted-foreground">
             {filters.q || hasFilters ? 'No machines match these filters.' : 'No machine is in this view.'}
@@ -245,13 +271,13 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
             <table className="w-full min-w-[1000px] border-collapse">
               <thead>
                 <tr className="border-b border-line">
-                  <th scope="col" className={HEAD}>Customer</th>
-                  <th scope="col" className={HEAD}>Serial</th>
-                  <th scope="col" className={HEAD}>Model</th>
-                  <th scope="col" className={HEAD}>Status</th>
-                  <th scope="col" className={cn(HEAD, 'text-right')}>Pages since / %</th>
-                  <th scope="col" className={HEAD}>Last counted visit</th>
-                  <th scope="col" className={HEAD}>Est. due</th>
+                  <SortHeader label="Customer" sortKey="customer" className={HEAD} {...sorting} />
+                  <SortHeader label="Serial" sortKey="serial" className={HEAD} {...sorting} />
+                  <SortHeader label="Model" sortKey="model" className={HEAD} {...sorting} />
+                  <SortHeader label="Status" sortKey="status" className={HEAD} {...sorting} />
+                  <SortHeader label="Pages since / %" sortKey="pct" align="right" className={HEAD} {...sorting} />
+                  <SortHeader label="Last counted visit" sortKey="lastVisit" className={HEAD} {...sorting} />
+                  <SortHeader label="Est. due" sortKey="due" className={HEAD} {...sorting} />
                 </tr>
               </thead>
               <tbody>
@@ -273,9 +299,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
           </div>
         )}
 
-        <div className="border-t border-line px-5 py-3.5">
-          <Pagination basePath="/pm" params={base} page={page} pageSize={PAGE_SIZE} total={rows.length} noun="machine" />
-        </div>
+        <ListControls {...controls} position="bottom" className="border-t border-line px-5 py-3.5" />
       </section>
     </>
   );
@@ -290,6 +314,7 @@ function trimVisits(r: PmRow): PmRow {
  * Where the `?open=` machine went when it is not on this page — an action moved it to another tab,
  * or it sits on another page of this one — with a link that opens it there. Null when it is in no
  * view the filters allow (it left the contract list, or the status / overdue filter hides it).
+ * `all` is already in the list's sort order; the link keeps that sort and the page size.
  */
 function movedTo(
   all: PmRow[],
@@ -298,19 +323,21 @@ function movedTo(
   f: PmFilters,
   now: Date,
   settings: PmSettings,
+  pageSize: number,
+  listParams: Record<string, string>,
 ): { name: string; view: PmViewFilter; page: number; href: string } | null {
   const row = all.find((r) => r.vantageEquipmentId === openId);
   if (!row) return null;
   const name = [row.customerName ?? 'Unknown customer', row.serial].filter(Boolean).join(' · ');
   let view: PmViewFilter = f.view;
   let list = rows;
-  let keep = filterParams(f);
+  let keep: Record<string, string | number | undefined> = { ...filterParams(f), ...listParams };
   if (!list.some((r) => r.vantageEquipmentId === openId)) {
     view = (['due', 'booked', 'dismissed'] as const).find((v) => inPmView(row, v, now)) ?? 'all';
     keep = { ...keep, view: view === 'due' ? undefined : view, status: undefined, overdue: undefined };
     list = applyPmView(all, { view, status: 'all', overdue: 'all' }, now, settings);
   }
-  const page = Math.floor(list.findIndex((r) => r.vantageEquipmentId === openId) / PAGE_SIZE) + 1;
+  const page = Math.floor(list.findIndex((r) => r.vantageEquipmentId === openId) / pageSize) + 1;
   return { name, view, page, href: hrefWith('/pm', { ...keep, page: page > 1 ? page : undefined, open: openId }) };
 }
 

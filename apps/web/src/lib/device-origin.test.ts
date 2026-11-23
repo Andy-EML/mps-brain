@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deviceHref, resolveDeviceOrigin, safeBackPath } from './device-origin';
+import { deviceHref, devicePageHref, resolveDeviceOrigin, safeBackPath, safeReturnPath, deviceOriginParams } from './device-origin';
 
 describe('resolveDeviceOrigin', () => {
   it('defaults to the Devices list when there is no from', () => {
@@ -123,5 +123,77 @@ describe('customers origin', () => {
 
   it('deviceHref keeps a customer page as back', () => {
     expect(deviceHref('D1', 'customers', '/customers/42')).toBe('/devices/D1?from=customers&back=%2Fcustomers%2F42');
+  });
+});
+
+describe('Devices list round trip (Review Focus 3)', () => {
+  const back = '/devices?page=3&rows=20&sort=model&dir=desc&colour=colour';
+
+  it('deviceHref keeps the whole list URL and resolveDeviceOrigin hands it back', () => {
+    const href = deviceHref('d1', 'devices', back);
+    const url = new URL(href, 'http://x');
+    expect(url.searchParams.get('back')).toBe(back);
+    expect(resolveDeviceOrigin(url.searchParams.get('from') ?? undefined, url.searchParams.get('back') ?? undefined).href).toBe(back);
+  });
+
+  it('survives a customer name with spaces, ampersands and plus signs', () => {
+    const named = '/devices?customer=Smith+%26+Sons+%2B+Co&page=3&rows=20';
+    const url = new URL(deviceHref('d1', 'devices', named), 'http://x');
+    expect(resolveDeviceOrigin('devices', url.searchParams.get('back') ?? undefined).href).toBe(named);
+  });
+});
+
+describe('site stock origin', () => {
+  it('goes back to the shelf page a device was opened from', () => {
+    expect(resolveDeviceOrigin('site-stock', '/site-stock/9')).toEqual({ key: 'site-stock', label: 'Shelf', href: '/site-stock/9' });
+    expect(resolveDeviceOrigin('site-stock', '/site-stock/9/x').href).toBe('/site-stock');
+  });
+});
+
+describe('deviceOriginParams', () => {
+  it('keeps a valid from and the back it vouches for', () => {
+    expect(deviceOriginParams('devices', '/devices?page=3')).toEqual({ from: 'devices', back: '/devices?page=3' });
+    expect(deviceOriginParams('orders', '/devices?page=3')).toEqual({ from: 'orders', back: undefined });
+    expect(deviceOriginParams('nope', '/devices?page=3')).toEqual({ from: undefined, back: undefined });
+    expect(deviceOriginParams(null, null)).toEqual({ from: undefined, back: undefined });
+  });
+});
+
+describe('safeReturnPath', () => {
+  it('accepts a path under any allowed base, query kept, hash dropped', () => {
+    expect(safeReturnPath('/site-stock?page=2&sort=site#x', ['/site-stock'])).toBe('/site-stock?page=2&sort=site');
+    expect(safeReturnPath('/customers/42', ['/site-stock', '/customers'])).toBe('/customers/42');
+  });
+
+  it('rejects other origins, other sections, look-alike prefixes and over-long values', () => {
+    expect(safeReturnPath('//evil', ['/devices'])).toBeNull();
+    expect(safeReturnPath('https://x/devices', ['/devices'])).toBeNull();
+    expect(safeReturnPath('/devicesX', ['/devices'])).toBeNull();
+    expect(safeReturnPath('/devices/abc', ['/devices'])).toBeNull();
+    expect(safeReturnPath('/admin', ['/devices', '/customers'])).toBeNull();
+    expect(safeReturnPath(`/devices?q=${'a'.repeat(1001)}`, ['/devices'])).toBeNull();
+    expect(safeReturnPath(undefined, ['/devices'])).toBeNull();
+    expect(safeReturnPath('/devices', [])).toBeNull();
+  });
+
+  it('agrees with safeBackPath for one base', () => {
+    expect(safeReturnPath('/pm?status=all', ['/pm'])).toBe(safeBackPath('/pm?status=all', '/pm'));
+  });
+});
+
+describe('devicePageHref', () => {
+  it('is the device page with the from / back it was opened with', () => {
+    expect(devicePageHref('abc 1')).toBe('/devices/abc%201');
+    expect(devicePageHref('abc', { from: 'orders', back: '/orders?tab=rejected' })).toBe(
+      '/devices/abc?from=orders&back=%2Forders%3Ftab%3Drejected',
+    );
+  });
+});
+
+describe('safeReturnPath allowedPaths', () => {
+  it('also accepts a pathname matching an extra pattern, and nothing else', () => {
+    expect(safeReturnPath('/devices/abc?from=orders', ['/orders'], [/^\/devices\/[a-z]+$/])).toBe('/devices/abc?from=orders');
+    expect(safeReturnPath('/devices/abc/x', ['/orders'], [/^\/devices\/[a-z]+$/])).toBeNull();
+    expect(safeReturnPath('//evil.com/devices/abc', ['/orders'], [/^\/devices\/[a-z]+$/])).toBeNull();
   });
 });

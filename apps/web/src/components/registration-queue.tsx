@@ -14,6 +14,7 @@ import {
 } from '@/app/(app)/registrations/actions';
 import { CopyText } from '@/components/copy-text';
 import { customerMatchBadge, registrationStatusBadge, retryConfirmText } from '@/components/registrations';
+import { SortableTh, type SortContext } from '@/components/sort-header';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,8 +26,10 @@ export interface RegistrationQueueProps {
   rows: RegistrationRow[];
   /** Set when a search narrowed the list, for the empty state. */
   search?: string;
-  /** This view's own URL (tab, search, page), so the device page's Back link returns to it. */
+  /** This view's own URL (tab, search, page, sort, rows), so the device page's Back link returns to it. */
   back?: string;
+  /** Makes the Machine, Customer and date columns sortable headers (only the columns a tab shows). */
+  sorting?: SortContext;
 }
 
 const EMPTY: Record<RegistrationTab, string> = {
@@ -45,7 +48,7 @@ const CELL = 'px-4 py-3.5 align-top';
  * count and the pending state of the buttons; every decision is a plain `<form>` posting to a
  * server action, so the page works the same after a refresh.
  */
-export function RegistrationQueue({ tab, rows, search, back }: RegistrationQueueProps) {
+export function RegistrationQueue({ tab, rows, search, back, sorting }: RegistrationQueueProps) {
   if (rows.length === 0) {
     return (
       <p className="px-5 py-12 text-center text-sm text-muted-foreground">
@@ -53,43 +56,67 @@ export function RegistrationQueue({ tab, rows, search, back }: RegistrationQueue
       </p>
     );
   }
-  if (tab === 'awaiting') return <AwaitingForm rows={rows} back={back} />;
+  if (tab === 'awaiting') return <AwaitingForm rows={rows} back={back} sorting={sorting} />;
   return (
     <Table
       head={COLUMNS[tab]}
+      sorting={sorting}
       rows={rows.map((row) => (
         <tr key={row.id} className="border-b border-line last:border-0">
           <MachineCell row={row} back={back} />
           <CustomerCell row={row} />
           {tab === 'waiting' ? <WaitingCells row={row} /> : null}
           {tab === 'registered' ? <RegisteredCells row={row} /> : null}
-          {tab === 'failed' ? <FailedCells row={row} /> : null}
-          {tab === 'rejected' ? <RejectedCells row={row} /> : null}
+          {tab === 'failed' ? <FailedCells row={row} back={back} /> : null}
+          {tab === 'rejected' ? <RejectedCells row={row} back={back} /> : null}
         </tr>
       ))}
     />
   );
 }
 
-const COLUMNS: Record<Exclude<RegistrationTab, 'awaiting'>, string[]> = {
-  waiting: ['Machine', 'Customer', 'Waiting for', 'Last checked'],
-  registered: ['Machine', 'Customer', 'DRMS request', 'DRMS status after', 'Registered'],
-  failed: ['Machine', 'Customer', 'What DRMS said', 'DRMS status after', 'Attempted', ''],
-  rejected: ['Machine', 'Customer', 'Rejected', ''],
+/** A column heading, and the sort key when the column sorts (`REGISTRATION_SORT_KEYS`). */
+type Column = { label: string; sortKey?: string };
+
+const MACHINE: Column = { label: 'Machine', sortKey: 'machine' };
+const CUSTOMER: Column = { label: 'Customer', sortKey: 'customer' };
+
+/**
+ * Per tab. Last checked has no sort key (it is when the nightly scan looked, not a decision); the
+ * Registered / Attempted dates are `finished`, Rejected is `decided`.
+ */
+const COLUMNS: Record<Exclude<RegistrationTab, 'awaiting'>, Column[]> = {
+  waiting: [MACHINE, CUSTOMER, { label: 'Waiting for' }, { label: 'Last checked' }],
+  registered: [MACHINE, CUSTOMER, { label: 'DRMS request' }, { label: 'DRMS status after' }, { label: 'Registered', sortKey: 'finished' }],
+  failed: [
+    MACHINE,
+    CUSTOMER,
+    { label: 'What DRMS said' },
+    { label: 'DRMS status after' },
+    { label: 'Attempted', sortKey: 'finished' },
+    { label: '' },
+  ],
+  rejected: [MACHINE, CUSTOMER, { label: 'Rejected', sortKey: 'decided' }, { label: '' }],
 };
 
-function Table({ head, rows, lead }: { head: string[]; rows: ReactNode; lead?: ReactNode }) {
+const AWAITING_COLUMNS: Column[] = [MACHINE, CUSTOMER, { label: 'Found', sortKey: 'created' }, { label: '' }];
+
+function Table({ head, rows, lead, sorting }: { head: Column[]; rows: ReactNode; lead?: ReactNode; sorting?: SortContext }) {
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[880px] border-collapse text-left">
         <thead>
           <tr className="border-b border-line">
             {lead}
-            {head.map((h, i) => (
-              <th key={`${h}-${i}`} scope="col" className={HEAD}>
-                {h}
-              </th>
-            ))}
+            {head.map((h, i) =>
+              h.sortKey ? (
+                <SortableTh key={`${h.label}-${i}`} label={h.label} sortKey={h.sortKey} sorting={sorting} className={HEAD} />
+              ) : (
+                <th key={`${h.label}-${i}`} scope="col" className={HEAD}>
+                  {h.label}
+                </th>
+              ),
+            )}
           </tr>
         </thead>
         <tbody>{rows}</tbody>
@@ -138,7 +165,7 @@ function who(name: string | null, at: Date | null): string {
 
 /* ------------------------------------------------------- Awaiting approval */
 
-function AwaitingForm({ rows, back }: { rows: RegistrationRow[]; back?: string }) {
+function AwaitingForm({ rows, back, sorting }: { rows: RegistrationRow[]; back?: string; sorting?: SortContext }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [ticked, setTicked] = useState(0);
   const decidable = rows.filter((r) => r.status === 'awaiting_approval');
@@ -149,6 +176,7 @@ function AwaitingForm({ rows, back }: { rows: RegistrationRow[]; back?: string }
   return (
     <form ref={formRef} action={approveRegistrationsAction} onChange={recount}>
       <input type="hidden" name="tab" value="awaiting" />
+      <BackField back={back} />
       <Table
         lead={
           <th scope="col" className="w-10 px-4 py-2.5">
@@ -166,7 +194,8 @@ function AwaitingForm({ rows, back }: { rows: RegistrationRow[]; back?: string }
             ) : null}
           </th>
         }
-        head={['Machine', 'Customer', 'Found', '']}
+        head={AWAITING_COLUMNS}
+        sorting={sorting}
         rows={rows.map((row) => (
           <tr key={row.id} className="border-b border-line last:border-0">
             <td className="w-10 px-4 py-3.5 align-top">
@@ -270,6 +299,11 @@ function BulkButtons({ ticked }: { ticked: number }) {
 
 /* ------------------------------------------------------------ Other tabs */
 
+/** This view's URL (tab, search, page, sort, rows), so the action lands back on the same view. */
+function BackField({ back }: { back?: string }) {
+  return back ? <input type="hidden" name="back" value={back} /> : null;
+}
+
 function WaitingCells({ row }: { row: RegistrationRow }) {
   return (
     <>
@@ -292,7 +326,7 @@ function RegisteredCells({ row }: { row: RegistrationRow }) {
   );
 }
 
-function FailedCells({ row }: { row: RegistrationRow }) {
+function FailedCells({ row, back }: { row: RegistrationRow; back?: string }) {
   return (
     <>
       <td className={cn(CELL, 'max-w-[360px] text-[13px] text-critical')}>{row.error ?? '—'}</td>
@@ -302,6 +336,7 @@ function FailedCells({ row }: { row: RegistrationRow }) {
         <form action={retryRegistrationAction}>
           <input type="hidden" name="id" value={row.id} />
           <input type="hidden" name="tab" value="failed" />
+          <BackField back={back} />
           <PendingButton label="Retry" pendingLabel="Queueing…" confirm={retryConfirmText(row)} />
         </form>
       </td>
@@ -309,7 +344,7 @@ function FailedCells({ row }: { row: RegistrationRow }) {
   );
 }
 
-function RejectedCells({ row }: { row: RegistrationRow }) {
+function RejectedCells({ row, back }: { row: RegistrationRow; back?: string }) {
   return (
     <>
       <td className={cn(CELL, 'text-[13px] text-muted-foreground')}>
@@ -320,6 +355,7 @@ function RejectedCells({ row }: { row: RegistrationRow }) {
         <form action={unrejectRegistrationAction}>
           <input type="hidden" name="id" value={row.id} />
           <input type="hidden" name="tab" value="rejected" />
+          <BackField back={back} />
           <PendingButton label="Back to approval" pendingLabel="Saving…" variant="outline" />
         </form>
       </td>

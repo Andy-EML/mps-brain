@@ -17,7 +17,7 @@ import {
 import { getOrderStates, type OrderRef } from './order-state';
 import { effectiveSettingsSubquery, type SettingSource } from './settings';
 import { listShelfSummariesByIds } from './site-stock';
-import { counterPivotSubquery, drmsEquipmentName, toNumberOrNull } from './shared';
+import { compareBy, counterPivotSubquery, drmsEquipmentName, toNumberOrNull, type SortSpec, type SortValue } from './shared';
 
 /**
  * The toner-order review queue (`/orders`), its header stats and the device page's replenishment
@@ -351,22 +351,61 @@ export async function listReplenishmentQueue(
   db: Db,
   args: { tab: QueueTab; limit?: number; now?: Date },
 ): Promise<QueueDevice[]> {
-  const now = args.now ?? new Date();
+  const devices = await loadQueue(db, args.tab, args.now ?? new Date());
+  devices.sort(tabOrder(args.tab));
+  return devices.slice(0, args.limit ?? DEFAULT_QUEUE_LIMIT);
+}
+
+export const QUEUE_SORT_KEYS = ['urgency', 'recent', 'customer', 'device'] as const;
+export type QueueSortKey = (typeof QUEUE_SORT_KEYS)[number];
+
+const QUEUE_SORT: Record<'customer' | 'device', (d: QueueDevice) => SortValue> = {
+  customer: (d) => d.customerName,
+  device: (d) => d.displayName,
+};
+
+const tabOrder = (tab: QueueTab) => (tab === 'review' || tab === 'on-site' ? byUrgency : byRecency);
+
+/**
+ * The tab devices in the chosen order. urgency and recent are the review and the other tabs own
+ * orders (descending reverses them); customer and device sort by name, blanks last, device id as
+ * tiebreak. No sort (or an unknown key) is the tab default.
+ */
+export function sortQueueDevices(devices: QueueDevice[], tab: QueueTab, sort?: SortSpec<QueueSortKey>): QueueDevice[] {
+  const rows = [...devices];
+  if (!sort || !(QUEUE_SORT_KEYS as readonly string[]).includes(sort.key)) return rows.sort(tabOrder(tab));
+  if (sort.key === 'urgency' || sort.key === 'recent') {
+    const base = sort.key === 'urgency' ? byUrgency : byRecency;
+    return rows.sort(sort.dir === 'desc' ? (a, b) => base(b, a) : base);
+  }
+  return rows.sort(compareBy(QUEUE_SORT, { key: sort.key, dir: sort.dir }, (d) => d.drmsId));
+}
+
+/** One page of a tab, sorted then sliced; total is every device on the tab (the old limit cap does not apply). */
+export async function listReplenishmentQueuePage(
+  db: Db,
+  args: { tab: QueueTab; sort?: SortSpec<QueueSortKey>; limit: number; offset: number; now?: Date },
+): Promise<{ rows: QueueDevice[]; total: number }> {
+  const sorted = sortQueueDevices(await loadQueue(db, args.tab, args.now ?? new Date()), args.tab, args.sort);
+  return { rows: sorted.slice(args.offset, args.offset + args.limit), total: sorted.length };
+}
+
+async function loadQueue(db: Db, tab: QueueTab, now: Date): Promise<QueueDevice[]> {
   const p = replenishmentProposals;
   const o = replenishmentOrders;
   let devices: QueueDevice[];
 
-  if (args.tab === 'review' || args.tab === 'on-site' || args.tab === 'rejected') {
+  if (tab === 'review' || tab === 'on-site' || tab === 'rejected') {
     const where =
-      args.tab === 'review'
+      tab === 'review'
         ? and(eq(p.status, 'pending'), isNull(p.holdReason))
-        : args.tab === 'on-site'
+        : tab === 'on-site'
           ? and(eq(p.status, 'pending'), isNotNull(p.holdReason))
           : and(inArray(p.status, ['rejected', 'superseded']), gte(p.decidedAt, daysBefore(now, REJECTED_TAB_DAYS)));
     devices = await assemble(db, await selectProposals(db, where), [], now);
   } else {
     const where =
-      args.tab === 'in-progress'
+      tab === 'in-progress'
         ? eq(o.status, 'queued')
         : and(eq(o.status, 'submitted'), gte(o.submittedAt, daysBefore(now, ORDERED_TAB_DAYS)));
     const orders = await selectOrders(db, where);
@@ -374,8 +413,7 @@ export async function listReplenishmentQueue(
     devices = await assemble(db, proposals, orders, now);
   }
 
-  devices.sort(args.tab === 'review' || args.tab === 'on-site' ? byUrgency : byRecency);
-  return devices.slice(0, args.limit ?? DEFAULT_QUEUE_LIMIT);
+  return devices;
 }
 
 export interface ReplenishmentStats {

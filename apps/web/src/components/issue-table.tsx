@@ -4,6 +4,7 @@ import type { IssueRow } from '@mps/db/queries';
 import { cn } from 'cn';
 import { setIssueStatusAction, unlinkDeviceAction } from '@/app/(app)/issues/actions';
 import { LinkPicker } from '@/components/link-picker';
+import { SortableTh, type SortContext } from '@/components/sort-header';
 import { ToneBadge } from '@/components/tone-badge';
 import { canLink, canUnlink, issueDetailLines, issueTone, issueTypeTitle } from '@/components/issue-queue';
 import { deviceHref } from '@/lib/device-origin';
@@ -17,6 +18,8 @@ export interface IssueTableProps {
   className?: string;
   /** This list's own URL (path + query), so the device page's Back link returns to the same tab. */
   back?: string;
+  /** Makes Issue, DRMS device, Vantage record and Seen sortable headers. Actions never sorts. */
+  sorting?: SortContext;
 }
 
 const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
@@ -48,6 +51,7 @@ export function IssueTable({
   emptyMessage = 'No issues match this view.',
   className,
   back,
+  sorting,
 }: IssueTableProps) {
   if (rows.length === 0) {
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
@@ -58,18 +62,10 @@ export function IssueTable({
       <table className="w-full min-w-[1040px] border-collapse text-left">
         <thead>
           <tr className="border-b border-line">
-            <th scope="col" className={cn(HEAD, 'w-[22%]')}>
-              Issue
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[20%]')}>
-              DRMS device
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[20%]')}>
-              Vantage record
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[16%]')}>
-              Seen
-            </th>
+            <SortableTh label="Issue" sortKey="issue" sorting={sorting} className={cn(HEAD, 'w-[22%]')} />
+            <SortableTh label="DRMS device" sortKey="device" sorting={sorting} className={cn(HEAD, 'w-[20%]')} />
+            <SortableTh label="Vantage record" sortKey="vantage" sorting={sorting} className={cn(HEAD, 'w-[20%]')} />
+            <SortableTh label="Seen" sortKey="seen" sorting={sorting} className={cn(HEAD, 'w-[16%]')} />
             <th scope="col" className={cn(HEAD, 'w-[22%] text-right')}>
               Actions
             </th>

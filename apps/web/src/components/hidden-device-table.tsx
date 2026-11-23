@@ -3,6 +3,7 @@ import type { HiddenDeviceRow } from '@mps/db/queries';
 import { cn } from 'cn';
 import { unhideFromListAction } from '@/app/(app)/devices/actions';
 import { SubmitButton } from '@/components/hide-device';
+import { SortableTh, type SortContext } from '@/components/sort-header';
 import { deviceHref } from '@/lib/device-origin';
 import { formatDate } from '@/lib/format';
 
@@ -11,6 +12,10 @@ export interface HiddenDeviceTableProps {
   /** The tab's own search and page, posted with Unhide so the action can come back to them. */
   search?: string;
   page: number;
+  /** The tab's sort/dir/rows params, posted with Unhide too so the redirect keeps the ordering. */
+  listParams?: Record<string, string | undefined>;
+  /** Makes Device, Hidden and Reason sortable headers. */
+  sorting?: SortContext;
   /** The tab's URL, for the device page's Back link. */
   back: string;
   emptyMessage: string;
@@ -24,7 +29,16 @@ const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-fore
  * *Unhide* button. No toner bars — a hidden device is one nobody is watching — and no selection,
  * since unhiding is a one-at-a-time decision.
  */
-export function HiddenDeviceTable({ rows, search, page, back, emptyMessage, className }: HiddenDeviceTableProps) {
+export function HiddenDeviceTable({
+  rows,
+  search,
+  page,
+  listParams,
+  sorting,
+  back,
+  emptyMessage,
+  className,
+}: HiddenDeviceTableProps) {
   if (rows.length === 0) {
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
   }
@@ -33,15 +47,9 @@ export function HiddenDeviceTable({ rows, search, page, back, emptyMessage, clas
       <table className="w-full min-w-[720px] border-collapse text-left">
         <thead>
           <tr className="border-b border-line">
-            <th scope="col" className={cn(HEAD, 'w-[34%]')}>
-              Device
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[22%]')}>
-              Hidden
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[32%]')}>
-              Reason
-            </th>
+            <SortableTh label="Device" sortKey="device" sorting={sorting} className={cn(HEAD, 'w-[34%]')} />
+            <SortableTh label="Hidden" sortKey="hidden" sorting={sorting} className={cn(HEAD, 'w-[22%]')} />
+            <SortableTh label="Reason" sortKey="reason" sorting={sorting} className={cn(HEAD, 'w-[32%]')} />
             <th scope="col" className="w-[12%] py-2.5 pr-5">
               <span className="sr-only">Unhide</span>
             </th>
@@ -73,6 +81,9 @@ export function HiddenDeviceTable({ rows, search, page, back, emptyMessage, clas
                   <input type="hidden" name="drmsId" value={row.drmsId} />
                   {search ? <input type="hidden" name="search" value={search} /> : null}
                   <input type="hidden" name="page" value={page} />
+                  {Object.entries(listParams ?? {}).map(([name, value]) =>
+                    value ? <input key={name} type="hidden" name={name} value={value} /> : null,
+                  )}
                   <SubmitButton label="Unhide" pendingLabel="Unhiding…" variant="outline" size="sm" />
                 </form>
               </td>

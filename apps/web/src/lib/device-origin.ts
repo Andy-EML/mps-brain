@@ -36,6 +36,8 @@ const DEFAULT_ORIGIN: DeviceOriginKey = 'devices';
  */
 const SUB_PAGES: Partial<Record<string, RegExp>> = {
   '/customers': /^\/customers\/\d{1,9}$/,
+  // A device opened from a shelf page (`/site-stock/9`) goes back to that shelf.
+  '/site-stock': /^\/site-stock\/\d{1,9}$/,
 };
 
 /** Far longer than any list URL we build; anything bigger is not one of ours. */
@@ -49,12 +51,17 @@ function isOriginKey(value: unknown): value is DeviceOriginKey {
 }
 
 /**
- * `back` as a same-site path + query, or null. It must be a relative path to exactly `basePath`
- * (the origin section itself — or one of its `SUB_PAGES` — not another section), so the "Back" link can only
- * ever return to the list it names — no `//host`, no scheme, no backslashes, no control
- * characters. The hash is dropped.
+ * `back` as a same-site path + query, or null. Its pathname must be exactly one of `allowedBases`
+ * (or one of that base's `SUB_PAGES`, or match one of `allowedPaths`), so a "Back" link can only ever return to a list it names —
+ * no `//host`, no scheme, no backslashes, no control characters, nothing over `MAX_BACK_LENGTH`.
+ * The hash is dropped.
  */
-export function safeBackPath(back: unknown, basePath: string): string | null {
+export function safeReturnPath(
+  back: unknown,
+  allowedBases: readonly string[],
+  /** Further exact pathnames a caller allows (anchored patterns), on top of `allowedBases`. */
+  allowedPaths: readonly RegExp[] = [],
+): string | null {
   if (typeof back !== 'string' || back.length === 0 || back.length > MAX_BACK_LENGTH) return null;
   if (!back.startsWith('/') || back.startsWith('//') || back.includes('\\')) return null;
   if (/[\u0000-\u001f\u007f]/.test(back)) return null;
@@ -65,8 +72,16 @@ export function safeBackPath(back: unknown, basePath: string): string | null {
     return null;
   }
   if (url.origin !== BASE) return null;
-  if (url.pathname !== basePath && !SUB_PAGES[basePath]?.test(url.pathname)) return null;
+  const allowed =
+    allowedBases.some((base) => url.pathname === base || SUB_PAGES[base]?.test(url.pathname) === true) ||
+    allowedPaths.some((pattern) => pattern.test(url.pathname));
+  if (!allowed) return null;
   return `${url.pathname}${url.search}`;
+}
+
+/** `safeReturnPath` for one section: the device page's `back`, checked against its origin's URL. */
+export function safeBackPath(back: unknown, basePath: string): string | null {
+  return safeReturnPath(back, [basePath]);
 }
 
 /** The device page's `from` / `back` search params, as the section to go back to. */
@@ -75,7 +90,12 @@ export function resolveDeviceOrigin(from: unknown, back: unknown): DeviceOrigin 
   const origin = DEVICE_ORIGINS[key];
   const href = safeBackPath(back, origin.href) ?? origin.href;
   // Back to one customer's page rather than the Customers list.
-  const label = key === 'customers' && href.startsWith('/customers/') ? 'Customer' : origin.label;
+  const label =
+    key === 'customers' && href.startsWith('/customers/')
+      ? 'Customer'
+      : key === 'site-stock' && href.startsWith('/site-stock/')
+        ? 'Shelf'
+        : origin.label;
   return { key, label, href };
 }
 
@@ -91,4 +111,19 @@ export function deviceHref(drmsId: string, from: DeviceOriginKey, back?: string)
     from: from === DEFAULT_ORIGIN && keptBack === null ? undefined : from,
     back: keptBack,
   });
+}
+
+/** The device page's own URL with the `from` / `back` it was opened with, for links that come back to it. */
+export function devicePageHref(drmsId: string, origin?: { from?: string; back?: string }): string {
+  return hrefWith(`/devices/${encodeURIComponent(drmsId)}`, { from: origin?.from, back: origin?.back });
+}
+
+/**
+ * A posted `from` / `back` pair (a device page's form) as the device page's own query params, for
+ * an action that redirects back to it: `from` only when it is a known section, `back` only when it
+ * is that section's list. Whatever fails is left off, so the page falls back to the Devices list.
+ */
+export function deviceOriginParams(from: unknown, back: unknown): { from?: DeviceOriginKey; back?: string } {
+  if (!isOriginKey(from)) return { from: undefined, back: undefined };
+  return { from, back: safeBackPath(back, DEVICE_ORIGINS[from].href) ?? undefined };
 }

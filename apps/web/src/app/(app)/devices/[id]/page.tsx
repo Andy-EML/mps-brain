@@ -36,7 +36,7 @@ import { PmCard } from '@/components/pm-card';
 import { replenishmentErrorMessage } from '@/components/replenishment';
 import { SelfManagedBadge } from '@/components/self-managed-badge';
 import { ReplenishmentCard } from '@/components/replenishment-card';
-import { coveredColours } from '@/components/shelf';
+import { coveredColours, shelfHref } from '@/components/shelf';
 import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
@@ -44,7 +44,7 @@ import { TonerYieldCard } from '@/components/toner-yield-card';
 import { YieldChecksProvider, type YieldChecks } from '@/components/yield-note';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { resolveDeviceOrigin } from '@/lib/device-origin';
+import { devicePageHref, resolveDeviceOrigin } from '@/lib/device-origin';
 import { formatDate, formatDateTime, formatNumber, formatRelative, pluralise } from '@/lib/format';
 import { hideErrorMessage } from '@/lib/hide-device';
 import { hrefWith } from '@/lib/href';
@@ -335,7 +335,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
               <ToneBadge tone="muted">Manual replenishment</ToneBadge>
             ) : null}
             {shelfLink ? (
-              <Link href={`/site-stock/${shelfLink.shelfId}`} className="rounded-full hover:opacity-80">
+              <Link href={shelfHref(shelfLink.shelfId, devicePageHref(device.drmsId, { from: fromParam, back: backParam }))} className="rounded-full hover:opacity-80">
                 <ToneBadge tone="muted" dot={false}>
                   <Boxes aria-hidden className="size-3.5" />
                   Site stock: {shelfLink.siteName} · {shelfLink.familyName}

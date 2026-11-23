@@ -1,18 +1,24 @@
 import Link from 'next/link';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { Download, TriangleAlert, Upload } from 'lucide-react';
-import { listFamilies, listShelves, listUnmappedModels } from '@mps/db/queries';
+import { SHELF_SORT_KEYS, listFamilies, listShelves, listUnmappedModels, sortShelves } from '@mps/db/queries';
 import { cn } from 'cn';
 import { Breadcrumb } from '@/components/breadcrumb';
+import { ListControls } from '@/components/list-controls';
 import { PageHeader } from '@/components/page-header';
 import { SearchInput } from '@/components/search-input';
-import { shelfStatus } from '@/components/shelf';
+import { shelfHref, shelfStatus } from '@/components/shelf';
 import { NewShelfDialog } from '@/components/shelf-forms';
 import { ShelfPills } from '@/components/shelf-pills';
+import { SortHeader } from '@/components/sort-header';
 import { ToneBadge } from '@/components/tone-badge';
 import { buttonVariants } from '@/components/ui/button';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber, pluralise } from '@/lib/format';
+import { SITE_STOCK_DEFAULT_ROWS } from '@/lib/list-keep';
+import { lastPageOf, listHref, parseListState, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
 import { shelfErrorMessage } from '@/lib/shelf-form';
 import { importResultMessage, parseImportResult } from '@/lib/site-stock-import';
 
@@ -21,6 +27,9 @@ export const metadata = { title: 'Site stock · MPS Dashboard' };
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
+
+const LIST_KEY = 'site-stock';
+const DEFAULT_ROWS = SITE_STOCK_DEFAULT_ROWS;
 
 const HEAD = 'px-4 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase whitespace-nowrap';
 const CELL = 'px-4 py-3 align-middle text-[13px]';
@@ -44,15 +53,34 @@ export default async function SiteStockPage({ searchParams }: PageProps<'/site-s
   const errorCode = first(params.error);
   const addError = errorCode && first(params.errorFor) === 'add' ? shelfErrorMessage(errorCode) : null;
   const imported = parseImportResult(first(params.imported));
+  const cookieStore = await cookies();
+  const state = parseListState((name) => first(params[name]), {
+    listKey: LIST_KEY,
+    defaultRows: DEFAULT_ROWS,
+    sortKeys: SHELF_SORT_KEYS,
+    cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
+  });
 
   const db = getDb();
   const [shelves, families, unmapped] = await Promise.all([
+    // Every matching shelf, sorted and paged below: the header counts top-ups across all of them.
     listShelves(db, { search: search || undefined }),
     listFamilies(db),
     listUnmappedModels(db),
   ]);
   const unmappedDevices = unmapped.reduce((sum, u) => sum + u.devices, 0);
   const proposed = shelves.filter((s) => s.liveTopUp).length;
+
+  const keep = { search: search || undefined };
+  const lastPage = lastPageOf(shelves.length, state.rows);
+  if (state.page > lastPage) redirect(listHref('/site-stock', keep, state, { page: lastPage }, { defaultRows: DEFAULT_ROWS }));
+  const shown = sortShelves(shelves, sortSpec(state)).slice((state.page - 1) * state.rows, state.page * state.rows);
+  // Sort and page size survive a new search; the page does not.
+  const listParams = stateParams(state, { defaultRows: DEFAULT_ROWS });
+  const sorting = { basePath: '/site-stock', keep, state, defaultRows: DEFAULT_ROWS };
+  const controls = { ...sorting, total: shelves.length, listKey: LIST_KEY, noun: 'shelf', nounPlural: 'shelves' };
+  // This view's own URL, so a shelf page's breadcrumb returns to it.
+  const back = listHref('/site-stock', keep, state, {}, { defaultRows: DEFAULT_ROWS });
 
   return (
     <>
@@ -111,29 +139,37 @@ export default async function SiteStockPage({ searchParams }: PageProps<'/site-s
                     proposed > 0 ? ` · ${formatNumber(proposed)} with a top-up proposed` : ''
                   }`}
           </p>
-          <SearchInput action="/site-stock" defaultValue={search} placeholder="Search site, customer, postcode…" className="w-full sm:w-80" />
+          <SearchInput
+            action="/site-stock"
+            defaultValue={search}
+            placeholder="Search site, customer, postcode…"
+            hiddenParams={listParams}
+            className="w-full sm:w-80"
+          />
         </div>
+
+        {shelves.length > 0 ? <ListControls {...controls} className="border-t border-line px-5 py-3.5" /> : null}
 
         {shelves.length > 0 ? (
           <div className="w-full overflow-x-auto border-t border-line">
             <table className="w-full min-w-[880px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-line">
-                  <th scope="col" className={HEAD}>Site</th>
-                  <th scope="col" className={HEAD}>Cartridge family</th>
-                  <th scope="col" className={cn(HEAD, 'text-right')}>Machines</th>
-                  <th scope="col" className={HEAD}>Spares used / held</th>
-                  <th scope="col" className={HEAD}>Status</th>
+                  <SortHeader label="Site" sortKey="site" className={HEAD} {...sorting} />
+                  <SortHeader label="Cartridge family" sortKey="family" className={HEAD} {...sorting} />
+                  <SortHeader label="Machines" sortKey="machines" align="right" className={HEAD} {...sorting} />
+                  <SortHeader label="Spares used / held" sortKey="used" className={HEAD} {...sorting} />
+                  <SortHeader label="Status" sortKey="status" className={HEAD} {...sorting} />
                 </tr>
               </thead>
               <tbody>
-                {shelves.map((s) => {
+                {shown.map((s) => {
                   const status = shelfStatus(s.liveTopUp);
                   const sub = [s.headOfficeName, s.customerReference, s.postcode].filter(Boolean).join(' · ');
                   return (
                     <tr key={s.id} className="border-b border-line last:border-b-0 hover:bg-muted/40">
                       <td className={cn(CELL, 'max-w-[300px]')}>
-                        <Link href={`/site-stock/${s.id}`} className="font-medium hover:text-brand hover:underline">
+                        <Link href={shelfHref(s.id, back)} className="font-medium hover:text-brand hover:underline">
                           {s.siteName}
                         </Link>
                         {sub ? <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{sub}</p> : null}
@@ -161,6 +197,8 @@ export default async function SiteStockPage({ searchParams }: PageProps<'/site-s
               : 'Add a shelf for each site that keeps spares on hand, or import them from a CSV.'}
           </p>
         )}
+
+        {shelves.length > 0 ? <ListControls {...controls} position="bottom" className="border-t border-line px-5 py-3.5" /> : null}
       </section>
 
       {shelves.length > 0 ? (

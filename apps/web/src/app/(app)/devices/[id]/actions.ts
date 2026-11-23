@@ -16,6 +16,7 @@ import {
 } from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { shelfHref } from '@/components/shelf';
 import { hrefWith } from '@/lib/href';
 import { parseSettingsForm } from '@/lib/settings-form';
 
@@ -43,7 +44,11 @@ export async function updateDeviceSettingsAction(formData: FormData): Promise<vo
     const patch = parseSettingsForm(formData, { allowInherit: true, isColour: device.isColour });
     await updateDeviceSettings(db, { drmsIds: [drmsId], patch, userId: user.userId });
   } catch (err) {
-    if (err instanceof SettingsError) redirect(`${page}?settingsError=${err.code}`);
+    if (err instanceof SettingsError) {
+      // Keeps from/back, so the page's Back link still returns to the list it was opened from.
+      const here = devicePage(drmsId, formData);
+      redirect(hrefWith(here.path, { ...here.params, settingsError: err.code }));
+    }
     throw err;
   }
 
@@ -121,7 +126,8 @@ export async function createDeviceShelfAction(formData: FormData): Promise<void>
   // The site stock pages, and the device pages that show a shelf badge.
   revalidatePath('/site-stock', 'layout');
   revalidatePath('/devices', 'layout');
-  redirect(`/site-stock/${shelfId}`);
+  // The new shelf's breadcrumb comes back to this device page.
+  redirect(shelfHref(shelfId, hrefWith(page.path, page.params)));
 }
 
 /**

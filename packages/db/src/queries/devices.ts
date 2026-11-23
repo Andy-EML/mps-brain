@@ -13,7 +13,9 @@ import {
   lastAlarmSubquery,
   notHiddenDevice,
   offlineCutoff,
+  sortOrder,
   toNumberOrNull,
+  type SortSpec,
 } from './shared';
 
 export interface DeviceRow {
@@ -86,10 +88,19 @@ export interface DeviceListOptions {
   replenish?: 'auto-off' | 'site-stock' | 'self-managed';
   limit?: number;
   offset?: number;
+  /** Re-orders the page set only; the filters and the total are unchanged. */
+  sort?: SortSpec<DeviceSortKey>;
 }
 
+/**
+ * The devices list's sortable columns. `pages` (Pages / mo) is not here: the column is a
+ * placeholder until meter history lands, so there is nothing to order by.
+ */
+export const DEVICE_SORT_KEYS = ['device', 'customer', 'model', 'serial', 'toner'] as const;
+export type DeviceSortKey = (typeof DEVICE_SORT_KEYS)[number];
+
 /** What picks the devices, as opposed to which page of them: everything but limit and offset. */
-export type DeviceListFilters = Omit<DeviceListOptions, 'limit' | 'offset'>;
+export type DeviceListFilters = Omit<DeviceListOptions, 'limit' | 'offset' | 'sort'>;
 
 /**
  * The customer name a device row shows: the linked Vantage customer's, else the DRMS one. Needs
@@ -297,6 +308,28 @@ export function deviceListOrder(): SQL[] {
   ];
 }
 
+/** `deviceDisplayName` (@mps/core) in SQL: DRMS Name, else customer + model, else serial, else id. */
+export function deviceNameSort(): SQL {
+  return sql`lower(coalesce(nullif(trim(${drmsEquipmentName()}), ''), nullif(trim(concat_ws(' ', ${deviceCustomerName()}, ${drmsEquipment.modelName})), ''), ${drmsEquipment.serial}, ${drmsEquipment.drmsId}))`;
+}
+
+/** `deviceListOrder`, or the chosen column; needs the joins from `joinDeviceList`. */
+export function deviceSortOrder(
+  pivot: ReturnType<typeof counterPivotSubquery>,
+  sort: SortSpec<DeviceSortKey> | undefined,
+): SQL[] {
+  const map: Record<DeviceSortKey, SQL> = {
+    device: deviceNameSort(),
+    customer: sql`lower(${deviceCustomerName()})`,
+    model: sql`lower(${drmsEquipment.modelName})`,
+    serial: sql`${drmsEquipment.serial}`,
+    // The lowest reading among the cartridges the device has (`least` skips nulls): the one that
+    // runs out first, which is what the list's bars make the eye look for.
+    toner: sql`least(${pivot.black}, ${pivot.cyan}, ${pivot.magenta}, ${pivot.yellow})`,
+  };
+  return sortOrder(map, sort, deviceListOrder, sql`${drmsEquipment.drmsId} asc`);
+}
+
 export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ rows: DeviceRow[]; total: number }> {
   const limit = o.limit ?? 50;
   const offset = o.offset ?? 0;
@@ -308,7 +341,7 @@ export async function listDevices(db: Db, o: DeviceListOptions = {}): Promise<{ 
     // Already grouped to one row per device, so this cannot multiply rows (or the count below).
     .leftJoin(alarms, eq(alarms.drmsId, drmsEquipment.drmsId))
     .where(where)
-    .orderBy(...deviceListOrder())
+    .orderBy(...deviceSortOrder(pivot, o.sort))
     .limit(limit)
     .offset(offset);
 

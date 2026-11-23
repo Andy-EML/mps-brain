@@ -156,3 +156,68 @@ export const DEFAULT_OFFLINE_HOURS = 24;
 export function offlineCutoff(hours: number = DEFAULT_OFFLINE_HOURS): Date {
   return new Date(Date.now() - hours * 3_600_000);
 }
+
+export type SortDir = 'asc' | 'desc';
+
+/** A requested sort: one of a list's `*_SORT_KEYS` and a direction. */
+export interface SortSpec<K extends string> {
+  key: K;
+  dir: SortDir;
+}
+
+/**
+ * The ORDER BY for a sortable list: the chosen key's expression in the chosen direction with nulls
+ * last either way, then `tiebreak` (the row id) so a page break never falls between ties. No sort
+ * (or a key the map does not know, which a hostile query string could send) gives `fallback()`,
+ * the list's own default order, untouched.
+ */
+export function sortOrder<K extends string>(
+  map: Record<K, SQL>,
+  sort: SortSpec<K> | undefined,
+  fallback: () => SQL[],
+  tiebreak: SQL,
+): SQL[] {
+  if (!sort || !Object.hasOwn(map, sort.key)) return fallback();
+  const dir = sort.dir === 'desc' ? sql.raw('desc') : sql.raw('asc');
+  return [sql`${map[sort.key]} ${dir} nulls last`, tiebreak];
+}
+
+/** What a sortable column of an in-memory list can yield; null/undefined (and NaN) sort last. */
+export type SortValue = string | number | boolean | Date | null | undefined;
+
+function compareValues(a: SortValue, b: SortValue): number {
+  if (typeof a === 'string' && typeof b === 'string') return a.localeCompare(b, undefined, { sensitivity: 'base' });
+  if (a instanceof Date && b instanceof Date) return a.getTime() - b.getTime();
+  return Number(a) - Number(b);
+}
+
+const isBlank = (v: SortValue): boolean => v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v));
+
+/**
+ * The comparator for a sortable list that is sorted in memory (the SQL lists use `sortOrder`):
+ * the chosen key's value in the chosen direction with blanks last either way, then the row `id`
+ * ascending so a page break never falls between ties. No sort, or a key the map does not know
+ * (a hostile query string), gives `fallback` — the list's own default order, untouched.
+ */
+export function compareBy<T, K extends string>(
+  getters: Record<K, (row: T) => SortValue>,
+  sort: SortSpec<K> | undefined,
+  id: (row: T) => string | number,
+  fallback: (a: T, b: T) => number = () => 0,
+): (a: T, b: T) => number {
+  if (!sort || !Object.hasOwn(getters, sort.key)) return fallback;
+  const get = getters[sort.key];
+  const sign = sort.dir === 'desc' ? -1 : 1;
+  return (a, b) => {
+    const x = get(a);
+    const y = get(b);
+    const blankX = isBlank(x);
+    const blankY = isBlank(y);
+    if (blankX !== blankY) return blankX ? 1 : -1;
+    const c = blankX ? 0 : sign * compareValues(x, y);
+    if (c !== 0) return c;
+    const ia = id(a);
+    const ib = id(b);
+    return ia < ib ? -1 : ia > ib ? 1 : 0;
+  };
+}

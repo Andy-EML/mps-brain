@@ -14,6 +14,7 @@ import {
 import { requireUser } from '@/lib/auth';
 import { customerReturn } from '@/lib/customer-return';
 import { getDb } from '@/lib/db';
+import { shelfBackLink, shelfHref } from '@/components/shelf';
 import { parseCounts, parseId } from '@/lib/shelf-form';
 
 /**
@@ -29,16 +30,29 @@ import { parseCounts, parseId } from '@/lib/shelf-form';
  * The customer page (`/customers/<id>`) shows the same forms for its shelves and posts
  * `returnTo=/customers/<id>`: the user then lands back on it, errors included (with `&shelf=<id>`
  * saying which shelf's form they belong to).
+ *
+ * The shelf page posts its own `back` (the Site stock view or customer page it was opened from):
+ * a redirect to the shelf page keeps it, so the breadcrumb still goes back there.
  */
 
 const LIST = '/site-stock';
 const MIN_QUERY = 2;
 
-const shelfPage = (id: number) => `${LIST}/${id}`;
+/** `page` (which may already carry `?back=`) with `params` added. */
+function withParams(page: string, params: Record<string, string>): string {
+  const url = new URL(page, 'http://site-stock.invalid');
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  return `${url.pathname}${url.search}`;
+}
 
 function fail(page: string, code: string, form: string, shelfId?: number | null): never {
-  const shelf = shelfId == null ? '' : `&shelf=${shelfId}`;
-  redirect(`${page}?error=${encodeURIComponent(code)}&errorFor=${encodeURIComponent(form)}${shelf}`);
+  redirect(withParams(page, { error: code, errorFor: form, ...(shelfId == null ? {} : { shelf: String(shelfId) }) }));
+}
+
+/** The shelf page's posted `back`, when it is somewhere a shelf page may go back to. */
+function postedBack(formData: FormData): string | undefined {
+  const href = shelfBackLink(formData.get('back')).href;
+  return href === LIST ? undefined : href;
 }
 
 function refresh() {
@@ -71,7 +85,7 @@ export async function createShelfAction(formData: FormData): Promise<void> {
   }
   refresh();
   // From a customer page: back to it, where the new shelf's holdings can be set in place.
-  redirect(returnTo ? `${returnTo}#shelf-${shelfId}` : shelfPage(shelfId));
+  redirect(returnTo ? `${returnTo}#shelf-${shelfId}` : shelfHref(shelfId));
 }
 
 /** The shelf page's holdings *Save*. */
@@ -114,7 +128,7 @@ export async function deleteShelfAction(formData: FormData): Promise<void> {
     throw err;
   }
   refresh();
-  redirect(customerReturn(formData) ?? LIST);
+  redirect(customerReturn(formData) ?? postedBack(formData) ?? LIST);
 }
 
 /**
@@ -133,7 +147,7 @@ export async function resetAutoReplenishAction(formData: FormData): Promise<void
     throw err;
   }
   refresh();
-  redirect(`${page}?reset=${updated}`);
+  redirect(withParams(page, { reset: String(updated) }));
 }
 
 /** The posted shelf id, or null when it is junk. */
@@ -147,7 +161,7 @@ function pageFor(formData: FormData): string {
   const returnTo = customerReturn(formData);
   if (returnTo) return returnTo;
   const id = postedShelfId(formData);
-  return id === null ? LIST : shelfPage(id);
+  return id === null ? LIST : shelfHref(id, postedBack(formData));
 }
 
 /** On a customer page, which shelf's form an error belongs to; the shelf page needs no such hint. */

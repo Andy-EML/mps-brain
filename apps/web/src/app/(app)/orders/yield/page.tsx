@@ -1,34 +1,65 @@
 import Link from 'next/link';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { Info } from 'lucide-react';
-import { UNDER_YIELD_PCT_THRESHOLD, listUnderYielding } from '@mps/db/queries';
+import { UNDER_YIELD_PCT_THRESHOLD, YIELD_SORT_KEYS, listUnderYielding } from '@mps/db/queries';
 import { cn } from 'cn';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { colourLabel } from '@/components/colour-chip';
+import { ListControls } from '@/components/list-controls';
 import { PageHeader } from '@/components/page-header';
 import { Swatch } from '@/components/review-detail-panel';
+import { SortHeader } from '@/components/sort-header';
 import { CARTRIDGE_FAMILIES_HREF, sharePercent } from '@/components/toner-yield';
 import { ToneBadge } from '@/components/tone-badge';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { deviceHref } from '@/lib/device-origin';
 import { formatDate, formatNumber, pluralise } from '@/lib/format';
+import { TONER_YIELD_DEFAULT_ROWS } from '@/lib/list-keep';
+import { lastPageOf, listHref, parseListState, rowsCookieName, sortSpec } from '@/lib/list-state';
 
 export const metadata = { title: 'Toner yield · MPS Dashboard' };
 
+const LIST_KEY = 'toner-yield';
+const DEFAULT_ROWS = TONER_YIELD_DEFAULT_ROWS;
+const BASE = '/orders/yield';
+
 const HEAD = 'px-5 py-2.5 text-left text-[11px] font-medium tracking-wider text-muted-foreground uppercase whitespace-nowrap';
 const CELL = 'px-5 py-3 align-top text-[13px]';
+
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
 
 /**
  * `/orders/yield`: every linked device and colour whose cartridges average under 70% of the rated
  * yield (over its last few measured cartridges), worst first. Needs rated yields on the cartridge
  * families, so with none entered the list is empty and says why.
  */
-export default async function TonerYieldPage() {
+export default async function TonerYieldPage({ searchParams }: PageProps<'/orders/yield'>) {
   // First statement: the (app) layout's own requireUser() does not gate this page, because Next
   // fetches layout and page data in parallel.
   await requireUser();
-  const rows = await listUnderYielding(getDb());
+  const params = await searchParams;
+  const cookieStore = await cookies();
+  const state = parseListState((name) => first(params[name]), {
+    listKey: LIST_KEY,
+    defaultRows: DEFAULT_ROWS,
+    sortKeys: YIELD_SORT_KEYS,
+    cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
+  });
+  const rows = await listUnderYielding(getDb(), new Date(), sortSpec(state));
   const devices = new Set(rows.map((r) => r.drmsEquipmentId)).size;
+
+  const keep = {};
+  const lastPage = lastPageOf(rows.length, state.rows);
+  if (state.page > lastPage) redirect(listHref(BASE, keep, state, { page: lastPage }, { defaultRows: DEFAULT_ROWS }));
+  const shown = rows.slice((state.page - 1) * state.rows, state.page * state.rows);
+  const sorting = { basePath: BASE, keep, state, defaultRows: DEFAULT_ROWS };
+  const controls = { ...sorting, total: rows.length, listKey: LIST_KEY, noun: 'cartridge colour' };
+  // This list's own URL, so the device page's Back link returns to the same page and sort.
+  const back = listHref(BASE, keep, state, {}, { defaultRows: DEFAULT_ROWS });
 
   return (
     <>
@@ -69,23 +100,25 @@ export default async function TonerYieldPage() {
             </p>
           </div>
         ) : (
+          <>
+          <ListControls {...controls} className="border-b border-line px-5 py-3.5" />
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr>
-                  <th className={HEAD}>Customer</th>
-                  <th className={HEAD}>Serial</th>
-                  <th className={HEAD}>Model</th>
-                  <th className={HEAD}>Family</th>
-                  <th className={HEAD}>Colour</th>
-                  <th className={HEAD}>Avg achieved</th>
-                  <th className={HEAD}>Cartridges</th>
-                  <th className={HEAD}>Last order</th>
+                  <SortHeader label="Customer" sortKey="customer" className={HEAD} {...sorting} />
+                  <SortHeader label="Serial" sortKey="serial" className={HEAD} {...sorting} />
+                  <SortHeader label="Model" sortKey="model" className={HEAD} {...sorting} />
+                  <SortHeader label="Family" sortKey="family" className={HEAD} {...sorting} />
+                  <SortHeader label="Colour" sortKey="colour" className={HEAD} {...sorting} />
+                  <SortHeader label="Avg achieved" sortKey="achieved" className={HEAD} {...sorting} />
+                  <SortHeader label="Cartridges" sortKey="cartridges" className={HEAD} {...sorting} />
+                  <SortHeader label="Last order" sortKey="lastOrder" className={HEAD} {...sorting} />
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => {
-                  const href = deviceHref(r.drmsEquipmentId, 'toner-yield');
+                {shown.map((r) => {
+                  const href = deviceHref(r.drmsEquipmentId, 'toner-yield', back);
                   return (
                     <tr key={`${r.drmsEquipmentId}-${r.colour}`} className="border-t border-line/70">
                       <td className={CELL}>
@@ -127,6 +160,8 @@ export default async function TonerYieldPage() {
               </tbody>
             </table>
           </div>
+          <ListControls {...controls} position="bottom" className="border-t border-line px-5 py-3.5" />
+          </>
         )}
       </section>
     </>

@@ -166,6 +166,15 @@ describe('decisionBackPath', () => {
     expect(decisionBackPath('device', '')).toBe('/orders');
     expect(decisionBackPath('device', null)).toBe('/orders');
   });
+
+  it('keeps the device page’s own from/back, so its Back link still returns to the list', () => {
+    expect(decisionBackPath('device', 'd1', { from: 'devices', back: '/devices?page=3&rows=20' })).toBe(
+      '/devices/d1?from=devices&back=%2Fdevices%3Fpage%3D3%26rows%3D20',
+    );
+    // A crafted back is dropped rather than carried.
+    expect(decisionBackPath('device', 'd1', { from: 'devices', back: '//evil.com' })).toBe('/devices/d1?from=devices');
+    expect(decisionBackPath('device', 'd1', { from: 'nope', back: '/devices?page=3' })).toBe('/devices/d1');
+  });
 });
 
 describe('replenishmentErrorMessage', () => {

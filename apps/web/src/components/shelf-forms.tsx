@@ -81,9 +81,17 @@ function SubmitButton({
   );
 }
 
-/** A customer page posting one of these forms, so the action brings the user back to it. */
-function ReturnField({ returnTo }: { returnTo?: string }) {
-  return returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null;
+/**
+ * A customer page posting one of these forms, so the action brings the user back to it; or, on the
+ * shelf page, the page it was opened from (`back`), so a refused save keeps its breadcrumb.
+ */
+function ReturnField({ returnTo, back }: { returnTo?: string; back?: string }) {
+  return (
+    <>
+      {returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null}
+      {back ? <input type="hidden" name="back" value={back} /> : null}
+    </>
+  );
 }
 
 function deviceCount(n: number): string {
@@ -333,6 +341,8 @@ export interface HoldingsFormProps {
   correctError?: string | null;
   /** The customer page posting this, so saving lands back on it (see `customerReturn`). */
   returnTo?: string;
+  /** The shelf page's own `back`, kept when an action comes back to the shelf page. */
+  back?: string;
 }
 
 const clamp = (n: number) => Math.min(MAX_HOLDING, Math.max(0, Math.trunc(n)));
@@ -343,7 +353,7 @@ const clamp = (n: number) => Math.min(MAX_HOLDING, Math.max(0, Math.trunc(n)));
  * page keys this on the saved values, so it starts again from them after a save; a refused save
  * keeps what the operator entered.
  */
-export function HoldingsForm({ shelfId, isColour, holding, used, error, correctError, returnTo }: HoldingsFormProps) {
+export function HoldingsForm({ shelfId, isColour, holding, used, error, correctError, returnTo, back }: HoldingsFormProps) {
   const colours = shelfColours(isColour);
   const [values, setValues] = useState<Record<ReplenishColour, number>>(() => ({ ...holding }));
   const router = useRouter();
@@ -360,12 +370,12 @@ export function HoldingsForm({ shelfId, isColour, holding, used, error, correctE
     <section className="rounded-xl border border-line bg-card px-5 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-[15px] font-medium">Holdings</h2>
-        <CorrectCountsDialog shelfId={shelfId} isColour={isColour} used={used} error={correctError} returnTo={returnTo} />
+        <CorrectCountsDialog shelfId={shelfId} isColour={isColour} used={used} error={correctError} returnTo={returnTo} back={back} />
       </div>
       <p className="mt-0.5 text-[13px] text-muted-foreground">Spares kept on the shelf, and how many have gone in since the last top-up.</p>
       <form action={save} className="mt-2">
         <input type="hidden" name="shelfId" value={shelfId} />
-        <ReturnField returnTo={returnTo} />
+        <ReturnField returnTo={returnTo} back={back} />
         <table className="w-full border-collapse text-left text-[13px]">
           <thead>
             <tr className="border-b border-line">
@@ -460,6 +470,7 @@ interface CorrectCountsDialogProps {
   used: ShelfConsumableCounts;
   error?: string | null;
   returnTo?: string;
+  back?: string;
 }
 
 /**
@@ -467,7 +478,7 @@ interface CorrectCountsDialogProps {
  * Opens with the error inside it after a refused save. Sits in the box header, outside the
  * holdings form, so the two never submit together.
  */
-function CorrectCountsDialog({ shelfId, isColour, used, error, returnTo }: CorrectCountsDialogProps) {
+function CorrectCountsDialog({ shelfId, isColour, used, error, returnTo, back }: CorrectCountsDialogProps) {
   const colours = shelfColours(isColour);
   const [open, setOpen] = useState(error != null);
   const [values, setValues] = useState<Record<ReplenishColour, string>>(() => strings(used));
@@ -501,7 +512,7 @@ function CorrectCountsDialog({ shelfId, isColour, used, error, returnTo }: Corre
         </DialogHeader>
         <form action={save} className="flex flex-col gap-4">
           <input type="hidden" name="shelfId" value={shelfId} />
-          <ReturnField returnTo={returnTo} />
+          <ReturnField returnTo={returnTo} back={back} />
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
             {colours.map((c) => (
               <label key={c} className="flex flex-col gap-1 text-[12px] text-muted-foreground">
@@ -543,13 +554,15 @@ export interface DeleteShelfDialogProps {
   error?: string | null;
   /** The customer page posting this, so deleting lands back on it rather than on Site stock. */
   returnTo?: string;
+  /** The shelf page's own `back`: deleting lands on that list view rather than plain Site stock. */
+  back?: string;
 }
 
 /**
  * *Delete shelf*, confirmed first. A pending top-up is withdrawn with it; an approved one blocks
  * the delete (`in_use`), and the error shows in here.
  */
-export function DeleteShelfDialog({ shelfId, name, liveTopUp, error, returnTo }: DeleteShelfDialogProps) {
+export function DeleteShelfDialog({ shelfId, name, liveTopUp, error, returnTo, back }: DeleteShelfDialogProps) {
   const [open, setOpen] = useState(error != null);
 
   return (
@@ -568,7 +581,7 @@ export function DeleteShelfDialog({ shelfId, name, liveTopUp, error, returnTo }:
         </DialogHeader>
         <form action={deleteShelfAction} className="flex flex-col gap-4">
           <input type="hidden" name="shelfId" value={shelfId} />
-          <ReturnField returnTo={returnTo} />
+          <ReturnField returnTo={returnTo} back={back} />
           <FormError error={error} />
           <DialogFooter>
             <SubmitButton label="Delete shelf" pendingLabel="Deleting…" destructive />

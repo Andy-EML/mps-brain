@@ -1,6 +1,7 @@
-import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, count, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { deviceAlerts, drmsEquipment, users } from '../schema';
+import { sortOrder, type SortSpec } from './shared';
 
 /**
  * The three states an alert can be in, as the `/alerts` page presents them.
@@ -32,19 +33,29 @@ function statusFilter(status: AlertStatus | undefined) {
   return undefined;
 }
 
-export async function listAlerts(
-  db: Db,
-  o: { includeCleared?: boolean; limit?: number; drmsId?: string; status?: AlertStatus } = {},
-): Promise<AlertRow[]> {
-  const limit = o.limit ?? 50;
+export const ALERT_SORT_KEYS = ['device', 'customer', 'alert', 'detected'] as const;
+export type AlertSortKey = (typeof ALERT_SORT_KEYS)[number];
+
+export interface AlertListOptions {
+  includeCleared?: boolean;
+  limit?: number;
+  offset?: number;
+  drmsId?: string;
+  status?: AlertStatus;
+  sort?: SortSpec<AlertSortKey>;
+}
+
+function alertWhere(o: AlertListOptions) {
   const conds = [
     // `status` is the precise filter the alerts page needs; `includeCleared` is the coarse one the
     // device page and the nav badge already use. Given both, the precise one wins.
     o.status ? statusFilter(o.status) : o.includeCleared ? undefined : isNull(deviceAlerts.clearedAt),
     o.drmsId ? eq(deviceAlerts.drmsEquipmentId, o.drmsId) : undefined,
   ].filter((c) => c !== undefined);
-  const where = conds.length > 0 ? and(...conds) : undefined;
+  return conds.length > 0 ? and(...conds) : undefined;
+}
 
+function alertRowsQuery(db: Db, o: AlertListOptions) {
   return db
     .select({
       id: deviceAlerts.id,
@@ -62,9 +73,40 @@ export async function listAlerts(
     .from(deviceAlerts)
     .leftJoin(drmsEquipment, eq(drmsEquipment.drmsId, deviceAlerts.drmsEquipmentId))
     .leftJoin(users, eq(users.id, deviceAlerts.acknowledgedBy))
-    .where(where)
-    .orderBy(desc(deviceAlerts.firstDetectedAt))
-    .limit(limit);
+    .where(alertWhere(o))
+    .orderBy(
+      ...sortOrder<AlertSortKey>(
+        {
+          device: sql`lower(coalesce(${drmsEquipment.productName}, ${drmsEquipment.serial}, ${deviceAlerts.drmsEquipmentId}))`,
+          customer: sql`lower(${drmsEquipment.customerName})`,
+          alert: sql`lower(${deviceAlerts.type})`,
+          detected: sql`${deviceAlerts.firstDetectedAt}`,
+        },
+        o.sort,
+        () => [desc(deviceAlerts.firstDetectedAt)],
+        sql`${deviceAlerts.id} asc`,
+      ),
+    )
+    .$dynamic();
+}
+
+export async function listAlerts(
+  db: Db,
+  o: { includeCleared?: boolean; limit?: number; drmsId?: string; status?: AlertStatus } = {},
+): Promise<AlertRow[]> {
+  return alertRowsQuery(db, o).limit(o.limit ?? 50);
+}
+
+/** One page of alerts plus the total they are a page of (same filter, sortable). */
+export async function listAlertsPage(
+  db: Db,
+  o: AlertListOptions & { limit: number; offset: number },
+): Promise<{ rows: AlertRow[]; total: number }> {
+  const [rows, [totalRow]] = await Promise.all([
+    alertRowsQuery(db, o).limit(o.limit).offset(o.offset),
+    db.select({ n: count() }).from(deviceAlerts).where(alertWhere(o)),
+  ]);
+  return { rows, total: Number(totalRow?.n ?? 0) };
 }
 
 export type AlertCounts = Record<AlertStatus, number>;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { awaitingTabCount, customerMatchBadge, parseRegistrationTab, registrationStatusBadge, retryConfirmText, selectedIds } from './registrations';
+import { REGISTRATION_TAB_SORT_KEYS, awaitingTabCount, customerMatchBadge, parseRegistrationTab, registrationBackPath, registrationStatusBadge, retryConfirmText, selectedIds } from './registrations';
 
 describe('parseRegistrationTab', () => {
   it('accepts the five tabs and falls back to awaiting approval', () => {
@@ -61,5 +61,29 @@ describe('awaitingTabCount', () => {
   it('keeps the thousands separators the other tab counts have', () => {
     expect(awaitingTabCount({ awaitingApproval: 1234, approved: 0 }).text).toBe('1,234');
     expect(awaitingTabCount({ awaitingApproval: 1234, approved: 1500 }).text).toBe('1,234 + 1,500 sending');
+  });
+});
+
+describe('registrationBackPath', () => {
+  it('returns to the exact list view the form was posted from, old error dropped', () => {
+    expect(registrationBackPath('/registrations?tab=failed&page=3&rows=20&sort=customer&dir=desc&error=x', 'failed')).toBe(
+      '/registrations?tab=failed&page=3&rows=20&sort=customer&dir=desc',
+    );
+  });
+
+  it('falls back to the posted tab when back is missing or not this list', () => {
+    expect(registrationBackPath(null, 'awaiting')).toBe('/registrations');
+    expect(registrationBackPath('//evil.com/registrations', 'rejected')).toBe('/registrations?tab=rejected');
+    expect(registrationBackPath('/devices?page=2', 'junk')).toBe('/registrations');
+  });
+});
+
+describe('REGISTRATION_TAB_SORT_KEYS', () => {
+  it('is the sort keys of the columns each tab shows', () => {
+    expect(REGISTRATION_TAB_SORT_KEYS.awaiting).toEqual(['machine', 'customer', 'created']);
+    expect(REGISTRATION_TAB_SORT_KEYS.waiting).toEqual(['machine', 'customer']);
+    expect(REGISTRATION_TAB_SORT_KEYS.registered).toEqual(['machine', 'customer', 'finished']);
+    expect(REGISTRATION_TAB_SORT_KEYS.failed).toEqual(['machine', 'customer', 'finished']);
+    expect(REGISTRATION_TAB_SORT_KEYS.rejected).toEqual(['machine', 'customer', 'decided']);
   });
 });

@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import Link from 'next/link';
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Download, Info } from 'lucide-react';
 import { cn } from 'cn';
@@ -8,6 +9,7 @@ import {
   listReconnect,
   NEWLY_SILENT_MAX_DAYS,
   RECONNECT_DAYS,
+  RECONNECT_SORT_KEYS,
   type ReconnectFilter,
   type ReconnectRow,
 } from '@mps/db/queries';
@@ -15,18 +17,22 @@ import { Breadcrumb } from '@/components/breadcrumb';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { CopyText } from '@/components/copy-text';
 import { PageHeader } from '@/components/page-header';
-import { Pagination } from '@/components/pagination';
+import { ListControls } from '@/components/list-controls';
 import { SearchInput } from '@/components/search-input';
+import { SortHeader, type SortContext } from '@/components/sort-header';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatDate, formatDateTime, formatNumber, pluralise } from '@/lib/format';
 import { deviceHref } from '@/lib/device-origin';
 import { hrefWith } from '@/lib/href';
-import { monitoringGroupLabel, parseReconnectFilter } from './filters';
+import { RECONNECT_DEFAULT_ROWS } from '@/lib/list-keep';
+import { keepSort, lastPageOf, listHref, parseListState, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
+import { monitoringGroupLabel, parseReconnectFilter, reconnectSortKeys } from './filters';
 
 export const metadata = { title: 'Needs reconnecting · MPS Dashboard' };
 
-const PAGE_SIZE = 50;
+const LIST_KEY = 'reconnect';
+const DEFAULT_ROWS = RECONNECT_DEFAULT_ROWS;
 
 const EMPTY: Record<ReconnectFilter, string> = {
   all: `Every machine that sends meter readings has been in touch in the last ${RECONNECT_DAYS} days.`,
@@ -49,12 +55,24 @@ export default async function ReconnectPage({ searchParams }: PageProps<'/reconn
 
   const search = first(params.search)?.trim() || undefined;
   const filter = parseReconnectFilter(first(params.filter));
-  const page = Math.max(1, Number.parseInt(first(params.page) ?? '1', 10) || 1);
+  const cookieStore = await cookies();
+  // A sort on a column this table does not show (carried over from the other one) is dropped, so
+  // Not monitored yet keeps its grouping.
+  const state = keepSort(
+    parseListState((name) => first(params[name]), {
+      listKey: LIST_KEY,
+      defaultRows: DEFAULT_ROWS,
+      sortKeys: RECONNECT_SORT_KEYS,
+      cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
+    }),
+    reconnectSortKeys(filter),
+  );
+  const page = state.page;
 
   const db = getDb();
   const now = new Date();
   const [{ rows, total }, counts] = await Promise.all([
-    listReconnect(db, { filter, search, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, now }),
+    listReconnect(db, { filter, search, limit: state.rows, offset: (page - 1) * state.rows, sort: sortSpec(state), now }),
     getReconnectCounts(db, { now }),
   ]);
 
@@ -62,19 +80,16 @@ export default async function ReconnectPage({ searchParams }: PageProps<'/reconn
 
   // A page number past the end (a stale bookmark, or a search that shrank the list) would otherwise
   // show the empty state over a list that does have rows.
-  if (rows.length === 0 && total > 0 && page > 1) {
-    const lastPage = Math.ceil(total / PAGE_SIZE);
-    redirect(
-      hrefWith('/reconnect', {
-        search,
-        filter: filterParam,
-        page: lastPage > 1 ? lastPage : undefined,
-      }),
-    );
-  }
+  const keep = { search, filter: filterParam };
+  const lastPage = lastPageOf(total, state.rows);
+  if (page > lastPage) redirect(listHref('/reconnect', keep, state, { page: lastPage }, { defaultRows: DEFAULT_ROWS }));
+  // Sort and page size survive a change of tab or search; the page does not.
+  const listParams = stateParams(state, { defaultRows: DEFAULT_ROWS });
+  const sorting: SortContext = { basePath: '/reconnect', keep, state, defaultRows: DEFAULT_ROWS };
+  const controls = { ...sorting, total, listKey: LIST_KEY, noun: 'machine' };
 
   // This view's own URL, for the device page's Back link.
-  const back = hrefWith('/reconnect', { search, filter: filterParam, page: page > 1 ? page : undefined });
+  const back = listHref('/reconnect', keep, state, {}, { defaultRows: DEFAULT_ROWS });
 
   const tabs: FilterTab[] = [
     { value: 'all', label: <TabLabel label="All" count={counts.silent} /> },
@@ -102,7 +117,7 @@ export default async function ReconnectPage({ searchParams }: PageProps<'/reconn
               action="/reconnect"
               defaultValue={search}
               placeholder="Search customer or serial"
-              hiddenParams={{ filter: filterParam }}
+              hiddenParams={{ filter: filterParam, ...listParams }}
               className="w-[280px]"
             />
             {/* A plain link, not next/link: the response is a file download, not a page. */}
@@ -123,7 +138,7 @@ export default async function ReconnectPage({ searchParams }: PageProps<'/reconn
             basePath="/reconnect"
             current={filter}
             tabs={tabs}
-            params={{ search }}
+            params={{ search, ...listParams }}
             ariaLabel="Filter machines"
           />
         </div>
@@ -146,26 +161,19 @@ export default async function ReconnectPage({ searchParams }: PageProps<'/reconn
           )}
         </p>
 
+        <ListControls {...controls} className="border-b border-line px-5 py-3.5" />
+
         {rows.length === 0 ? (
           <p className="px-5 py-12 text-center text-sm text-muted-foreground">
             {search ? `No machines match “${search}”.` : EMPTY[filter]}
           </p>
         ) : filter === 'unmonitored' ? (
-          <UnmonitoredTable rows={rows} back={back} />
+          <UnmonitoredTable rows={rows} back={back} sorting={sorting} />
         ) : (
-          <SilentTable rows={rows} back={back} />
+          <SilentTable rows={rows} back={back} sorting={sorting} />
         )}
 
-        <div className="border-t border-line px-5 py-3.5">
-          <Pagination
-            basePath="/reconnect"
-            params={{ search, filter: filterParam }}
-            page={page}
-            pageSize={PAGE_SIZE}
-            total={total}
-            noun="machine"
-          />
-        </div>
+        <ListControls {...controls} position="bottom" className="border-t border-line px-5 py-3.5" />
       </section>
     </>
   );
@@ -218,30 +226,27 @@ function DeviceCells({ row, back }: { row: ReconnectRow; back: string }) {
   );
 }
 
-function SilentTable({ rows, back }: { rows: ReconnectRow[]; back: string }) {
+/** The headers both tables share; each sorts the list server-side. */
+function CommonHeads({ sorting }: { sorting: SortContext }) {
+  return (
+    <>
+      <SortHeader label="Customer" sortKey="customer" className={HEAD} {...sorting} />
+      <SortHeader label="Location" sortKey="location" className={HEAD} {...sorting} />
+      <SortHeader label="Device" sortKey="device" className={HEAD} {...sorting} />
+      <SortHeader label="Serial" sortKey="serial" className={HEAD} {...sorting} />
+      <SortHeader label="DRMS status" sortKey="status" className={HEAD} {...sorting} />
+    </>
+  );
+}
+
+function SilentTable({ rows, back, sorting }: { rows: ReconnectRow[]; back: string; sorting: SortContext }) {
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[880px] border-collapse text-left">
         <thead>
           <tr className="border-b border-line">
-            <th scope="col" className={HEAD}>
-              Customer
-            </th>
-            <th scope="col" className={HEAD}>
-              Location
-            </th>
-            <th scope="col" className={HEAD}>
-              Device
-            </th>
-            <th scope="col" className={HEAD}>
-              Serial
-            </th>
-            <th scope="col" className={HEAD}>
-              DRMS status
-            </th>
-            <th scope="col" className={cn(HEAD, 'text-right')}>
-              Last contact
-            </th>
+            <CommonHeads sorting={sorting} />
+            <SortHeader label="Last contact" sortKey="lastContact" align="right" className={HEAD} {...sorting} />
           </tr>
         </thead>
         <tbody>
@@ -272,39 +277,25 @@ function SilentTable({ rows, back }: { rows: ReconnectRow[]; back: string }) {
   );
 }
 
-/** Grouped by `registeredInDrms`, which is how the query sorts them. */
-function UnmonitoredTable({ rows, back }: { rows: ReconnectRow[]; back: string }) {
+/**
+ * Grouped by `registeredInDrms`, which is how the query sorts them by default. A chosen sort mixes
+ * the two groups, so the group headings are left out and the list is flat.
+ */
+function UnmonitoredTable({ rows, back, sorting }: { rows: ReconnectRow[]; back: string; sorting: SortContext }) {
+  const grouped = sorting.state.sort === null;
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[880px] border-collapse text-left">
         <thead>
           <tr className="border-b border-line">
-            <th scope="col" className={HEAD}>
-              Customer
-            </th>
-            <th scope="col" className={HEAD}>
-              Location
-            </th>
-            <th scope="col" className={HEAD}>
-              Device
-            </th>
-            <th scope="col" className={HEAD}>
-              Serial
-            </th>
-            <th scope="col" className={HEAD}>
-              DRMS status
-            </th>
-            <th scope="col" className={HEAD}>
-              First connected
-            </th>
-            <th scope="col" className={cn(HEAD, 'text-right')}>
-              Last alarm
-            </th>
+            <CommonHeads sorting={sorting} />
+            <SortHeader label="First connected" sortKey="firstConnected" className={HEAD} {...sorting} />
+            <SortHeader label="Last alarm" sortKey="lastAlarm" align="right" className={HEAD} {...sorting} />
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => {
-            const startsGroup = i === 0 || rows[i - 1]!.registeredInDrms !== row.registeredInDrms;
+            const startsGroup = grouped && (i === 0 || rows[i - 1]!.registeredInDrms !== row.registeredInDrms);
             return (
               <Fragment key={row.drmsId}>
                 {startsGroup ? (

@@ -16,7 +16,7 @@ import { loadCombinedMeters } from './meter-history';
 import { clearPmActions, loadManualResets, loadOpenPmActions, resolvePmAction, type PmAction, type PmActionClearedReason } from './pm-actions';
 import { computePm, groupVisits, DEFAULT_PM_SETTINGS, type PmResult, type PmSettings, type PmStatus, type VisitUnit } from './pm-due';
 import { SettingsError } from './settings';
-import { notHiddenDevice } from './shared';
+import { compareBy, notHiddenDevice, type SortSpec, type SortValue } from './shared';
 
 const PM_SETTINGS_KEY = 'pm_settings';
 
@@ -137,6 +137,8 @@ export interface PmFilter {
   customer?: string;
   family?: number;
   q?: string;
+  /** Overrides the default order (overdue first, then percent used). */
+  sort?: SortSpec<PmSortKey>;
 }
 
 interface MachineRow {
@@ -368,10 +370,36 @@ export async function listPmDue(db: Db, now: Date = new Date(), f: PmFilter = {}
     rows = rows.filter((r) => [r.customerName, r.town, r.serial, r.model, r.family].some((x) => (x ?? '').toLowerCase().includes(q)));
   }
 
+  return sortPmRows(rows, f.sort);
+}
+
+export const PM_SORT_KEYS = ['customer', 'serial', 'model', 'status', 'pages', 'pct', 'lastVisit', 'due', 'town'] as const;
+export type PmSortKey = (typeof PM_SORT_KEYS)[number];
+
+/** Status columns sort by how urgent they are, not alphabetically. */
+const PM_STATUS_RANK: Record<PmStatus, number> = { overdue: 0, due_soon: 1, held: 2, booked: 3, unknown: 4, ok: 5 };
+
+const PM_SORT: Record<PmSortKey, (r: PmRow) => SortValue> = {
+  customer: (r) => r.customerName,
+  serial: (r) => r.serial,
+  model: (r) => r.model,
+  status: (r) => PM_STATUS_RANK[r.result.status],
+  pages: (r) => r.result.pagesSince,
+  pct: (r) => r.result.pctUsed,
+  lastVisit: (r) => r.result.lastQualifying?.at ?? null,
+  due: (r) => r.result.estDueDate,
+  town: (r) => r.town,
+};
+
+/** Today's order: overdue first, then the most used, then the equipment id. */
+function defaultPmOrder(a: PmRow, b: PmRow): number {
   const rank = (r: PmRow) => (r.result.status === 'overdue' ? 0 : 1);
-  return rows.sort(
-    (a, b) => rank(a) - rank(b) || (b.result.pctUsed ?? -1) - (a.result.pctUsed ?? -1) || a.vantageEquipmentId - b.vantageEquipmentId,
-  );
+  return rank(a) - rank(b) || (b.result.pctUsed ?? -1) - (a.result.pctUsed ?? -1) || a.vantageEquipmentId - b.vantageEquipmentId;
+}
+
+/** The rows in the chosen order (equipment id as tiebreak, blanks last); no sort is the default order. */
+export function sortPmRows(rows: PmRow[], sort?: SortSpec<PmSortKey>): PmRow[] {
+  return [...rows].sort(compareBy(PM_SORT, sort, (r) => r.vantageEquipmentId, defaultPmOrder));
 }
 
 /** PM state for one machine (by Vantage equipment id); null when it has no active contract, is hidden, or is unknown. */

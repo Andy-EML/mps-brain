@@ -35,6 +35,7 @@ import {
   topUpChips,
   topUpWhy,
 } from '@/components/review-row';
+import { shelfHref } from '@/components/shelf';
 import { ConsumablePill } from '@/components/shelf-pills';
 import { ToneBadge } from '@/components/tone-badge';
 import { ProposalYieldNote } from '@/components/yield-note';
@@ -51,13 +52,17 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { deviceHref } from '@/lib/device-origin';
+import { deviceHref, devicePageHref } from '@/lib/device-origin';
 import { formatDate, formatDateTime, formatPercent, pluralise } from '@/lib/format';
-import { hrefWith } from '@/lib/href';
 
 export interface ReplenishmentQueueProps {
   tab: QueueTab;
   devices: QueueDevice[];
+  /**
+   * This list's own URL (tab, page, sort, rows): the device links return to it and every decision
+   * form posts it, so a refused decision comes back to the same tab, page and sort.
+   */
+  back: string;
 }
 
 const EMPTY: Record<QueueTab, string> = {
@@ -73,7 +78,7 @@ const EMPTY: Record<QueueTab, string> = {
  * component only for the quantity steppers and the pending state of the buttons; every decision
  * is a plain `<form>` posting to a server action, so the page works the same after a refresh.
  */
-export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
+export function ReplenishmentQueue({ tab, devices, back }: ReplenishmentQueueProps) {
   if (devices.length === 0) {
     return <p className="px-5 py-12 text-center text-sm text-muted-foreground">{EMPTY[tab]}</p>;
   }
@@ -82,7 +87,7 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
     return (
       <ul className="divide-y divide-line">
         {devices.map((device) => (
-          <ReviewRow key={device.drmsId} device={device} back={tab === 'on-site' ? 'on-site' : undefined} />
+          <ReviewRow key={device.drmsId} device={device} back={back} />
         ))}
       </ul>
     );
@@ -91,8 +96,8 @@ export function ReplenishmentQueue({ tab, devices }: ReplenishmentQueueProps) {
     <ul className="divide-y divide-line">
       {devices.map((device) => (
         <li key={device.drmsId} className="px-5 py-5">
-          <DeviceHeading device={device} back={hrefWith('/orders', { tab })} />
-          {tab === 'in-progress' ? <InProgress device={device} /> : null}
+          <DeviceHeading device={device} back={back} />
+          {tab === 'in-progress' ? <InProgress device={device} back={back} /> : null}
           {tab === 'ordered' ? <Ordered device={device} /> : null}
           {tab === 'rejected' ? <Rejected device={device} /> : null}
         </li>
@@ -132,7 +137,7 @@ function DeviceHeading({ device, back }: { device: QueueDevice; back: string }) 
       <div className="min-w-0">
         {shelf ? (
           <p className="mb-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <Link href={`/site-stock/${shelf.id}`} className="text-[15px] font-medium text-brand hover:underline">
+            <Link href={shelfHref(shelf.id, back)} className="text-[15px] font-medium text-brand hover:underline">
               {shelf.siteName}
             </Link>
             <SiteStockBadge />
@@ -174,7 +179,7 @@ function orderContext(p: QueueProposal): { text: string; open: boolean } | null 
  * lines and the device detail. The detail is fetched on first open and kept; the proposal form stays mounted once opened, so
  * collapsing a row does not lose an edited quantity.
  */
-function ReviewRow({ device, back }: { device: QueueDevice; back?: 'on-site' }) {
+function ReviewRow({ device, back }: { device: QueueDevice; back: string }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const panelId = `review-panel-${device.drmsId}`;
@@ -263,7 +268,7 @@ function ReviewRow({ device, back }: { device: QueueDevice; back?: 'on-site' }) 
         </button>
         {device.serial ? <CopyText text={device.serial} className="text-xs text-muted-foreground" /> : null}
         <form action={approveAction}>
-          {back ? <input type="hidden" name="back" value={back} /> : null}
+          <input type="hidden" name="back" value={back} />
           {approveAllFields(device.drmsId, device.proposals).map(([name, value], i) => (
             <input key={i} type="hidden" name={name} value={value} />
           ))}
@@ -283,11 +288,11 @@ function ReviewRow({ device, back }: { device: QueueDevice; back?: 'on-site' }) 
             />
             <ReviewDetailPanel state={detail} proposals={device.proposals} onRetry={load} />
             <p className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
-              <Link href={deviceHref(device.drmsId, 'orders')} className="text-brand hover:underline">
+              <Link href={deviceHref(device.drmsId, 'orders', back)} className="text-brand hover:underline">
                 Open device page
               </Link>
               {site ? (
-                <Link href={`/site-stock/${site.id}`} className="text-brand hover:underline">
+                <Link href={shelfHref(site.id, back)} className="text-brand hover:underline">
                   Open site stock shelf
                 </Link>
               ) : null}
@@ -322,10 +327,15 @@ export interface ReviewFormProps {
   /** No current Vantage link: nothing can be approved, only rejected. */
   unlinked: boolean;
   /**
-   * Set on the device page and the Probably on site tab, so a refused decision comes back there
-   * (see `decisionBackPath`).
+   * Where a refused decision comes back to (see `decisionBackPath`): `device` on the device page,
+   * the queue's own URL (tab, page, sort) on `/orders`.
    */
-  back?: 'device' | 'on-site';
+  back?: string;
+  /**
+   * With `back=device`: the device page's own `from` / `back`, posted as `deviceFrom` / `deviceBack`
+   * so a refused decision lands on the device page with its Back link intact.
+   */
+  deviceOrigin?: { from?: string; back?: string };
   /** The machine the proposals are on, named in a top-up's reason; left out on the device page. */
   deviceName?: string;
   /**
@@ -346,8 +356,10 @@ export interface ReviewFormProps {
  * selected + reason. Used by the queue's Review tab and the device page's Replenishment card; both
  * post to the same actions, which revalidate both pages.
  */
-export function ReviewForm({ drmsId, proposals, unlinked, back, deviceName, shelf, compact = false }: ReviewFormProps) {
+export function ReviewForm({ drmsId, proposals, unlinked, back, deviceOrigin, deviceName, shelf, compact = false }: ReviewFormProps) {
   const { topUp, own } = proposalGroups({ shelf: shelf ?? null, proposals });
+  // The shelf link comes back to the page this form is on: the device page, or the queue's view.
+  const shelfBack = back === 'device' ? devicePageHref(drmsId, deviceOrigin) : back;
   const rows = (list: QueueProposal[]) => (
     <div className="grid gap-2">
       {list.map((p) =>
@@ -363,12 +375,14 @@ export function ReviewForm({ drmsId, proposals, unlinked, back, deviceName, shel
     <form action={approveAction}>
       <input type="hidden" name="drmsId" value={drmsId} />
       {back ? <input type="hidden" name="back" value={back} /> : null}
+      {deviceOrigin?.from ? <input type="hidden" name="deviceFrom" value={deviceOrigin.from} /> : null}
+      {deviceOrigin?.back ? <input type="hidden" name="deviceBack" value={deviceOrigin.back} /> : null}
       {shelf && topUp.length > 0 ? (
         <div className="grid gap-4">
           <section aria-label={`Site stock top-up for ${shelf.siteName}`}>
             <h3 className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] font-medium">
               <span>Site stock top-up</span>
-              <Link href={`/site-stock/${shelf.id}`} className="text-brand hover:underline">
+              <Link href={shelfHref(shelf.id, shelfBack)} className="text-brand hover:underline">
                 {shelf.siteName}
               </Link>
               <span className="font-normal text-muted-foreground">{shelfMeta(shelf)}</span>
@@ -589,17 +603,17 @@ function linesText(proposals: QueueProposal[]): string {
   return proposals.map((p) => `${colourLabel(p.colour)} ×${p.quantity}`).join(' · ') || '—';
 }
 
-function InProgress({ device }: { device: QueueDevice }) {
+function InProgress({ device, back }: { device: QueueDevice; back: string }) {
   return (
     <div className="grid gap-2">
       {device.orders.map((order) => (
-        <InProgressOrder key={order.id} device={device} order={order} />
+        <InProgressOrder key={order.id} device={device} order={order} back={back} />
       ))}
     </div>
   );
 }
 
-function InProgressOrder({ device, order }: { device: QueueDevice; order: QueueOrder }) {
+function InProgressOrder({ device, order, back }: { device: QueueDevice; order: QueueOrder; back: string }) {
   const proposals = proposalsOf(device, order);
   return (
     <div className="rounded-lg border border-line px-4 py-3">
@@ -610,7 +624,7 @@ function InProgressOrder({ device, order }: { device: QueueDevice; order: QueueO
           <ProposalYieldNote key={p.id} proposalId={p.id} prefix={colourLabel(p.colour)} className="mt-1" />
         ))}
 
-      {order.status === 'queued' ? <QueuedOrderActions device={device} order={order} proposals={proposals} /> : null}
+      {order.status === 'queued' ? <QueuedOrderActions device={device} order={order} proposals={proposals} back={back} /> : null}
     </div>
   );
 }
@@ -620,8 +634,18 @@ function InProgressOrder({ device, order }: { device: QueueDevice; order: QueueO
  * say it has been raised by hand in Vantage, take the approval back, or delete it. *Delete* opens a dialog first; the other two
  * either need a reference typed or put everything back as it was, so one click is safe.
  */
-function QueuedOrderActions({ device, order, proposals }: { device: QueueDevice; order: QueueOrder; proposals: QueueProposal[] }) {
-  const fields = <OrderFields device={device} order={order} />;
+function QueuedOrderActions({
+  device,
+  order,
+  proposals,
+  back,
+}: {
+  device: QueueDevice;
+  order: QueueOrder;
+  proposals: QueueProposal[];
+  back: string;
+}) {
+  const fields = <OrderFields device={device} order={order} back={back} />;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
       <form action={markOrderedAction} className="flex flex-wrap items-center gap-2">
@@ -640,24 +664,34 @@ function QueuedOrderActions({ device, order, proposals }: { device: QueueDevice;
         {fields}
         <PendingButton label="Back to review" pendingLabel="Moving…" variant="outline" />
       </form>
-      <DeleteOrderDialog device={device} order={order} proposals={proposals} />
+      <DeleteOrderDialog device={device} order={order} proposals={proposals} back={back} />
     </div>
   );
 }
 
-/** The hidden fields every queued-order form posts; a refusal comes back to the In progress tab. */
-function OrderFields({ device, order }: { device: QueueDevice; order: QueueOrder }) {
+/** The hidden fields every queued-order form posts; a refusal comes back to the same In progress page. */
+function OrderFields({ device, order, back }: { device: QueueDevice; order: QueueOrder; back: string }) {
   return (
     <>
       <input type="hidden" name="orderId" value={order.id} />
       <input type="hidden" name="drmsId" value={device.drmsId} />
-      <input type="hidden" name="back" value="in-progress" />
+      <input type="hidden" name="back" value={back} />
     </>
   );
 }
 
 /** *Delete…*, confirmed first, because it sits beside two buttons that do something else entirely. */
-function DeleteOrderDialog({ device, order, proposals }: { device: QueueDevice; order: QueueOrder; proposals: QueueProposal[] }) {
+function DeleteOrderDialog({
+  device,
+  order,
+  proposals,
+  back,
+}: {
+  device: QueueDevice;
+  order: QueueOrder;
+  proposals: QueueProposal[];
+  back: string;
+}) {
   const reasonId = `delete-order-reason-${order.id}`;
   // A colour rejected before a retry is still on the order, but this does not touch it.
   const approved = proposals.filter((p) => p.status === 'approved');
@@ -676,7 +710,7 @@ function DeleteOrderDialog({ device, order, proposals }: { device: QueueDevice; 
               Nothing is sent to Vantage, so an order already raised there stays open.
             </DialogDescription>
           </DialogHeader>
-          <OrderFields device={device} order={order} />
+          <OrderFields device={device} order={order} back={back} />
           <div className="grid gap-1.5">
             <Label htmlFor={reasonId}>Reason (optional)</Label>
             <Input id={reasonId} name="note" maxLength={500} />

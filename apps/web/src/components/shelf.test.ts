@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ShelfConsumableCounts } from '@mps/core';
-import { coveredColours, coveredColoursText, eventAlarmText, eventOutcome, pillState, shelfColours, shelfPills, shelfStatus } from './shelf';
+import { coveredColours, coveredColoursText, eventAlarmText, eventOutcome, pillState, shelfBackLink, shelfHref, shelfColours, shelfPills, shelfStatus } from './shelf';
 
 const zero: ShelfConsumableCounts = { black: 0, cyan: 0, magenta: 0, yellow: 0, waste: 0 };
 const counts = (c: Partial<ShelfConsumableCounts>): ShelfConsumableCounts => ({ ...zero, ...c });
@@ -111,5 +111,40 @@ describe('eventAlarmText', () => {
   it('names a level-rise use as a toner level rise, not an alarm', () => {
     expect(eventAlarmText('black', 'level_rise')).toBe('Toner level rise (black)');
     expect(eventAlarmText('black', 'fresh_cartridge')).toBe('Toner Empty (black)');
+  });
+});
+
+describe('shelfHref', () => {
+  it('is the shelf page, carrying the list view it was opened from', () => {
+    expect(shelfHref(9)).toBe('/site-stock/9');
+    expect(shelfHref(9, '/site-stock?page=2&sort=site')).toBe('/site-stock/9?back=%2Fsite-stock%3Fpage%3D2%26sort%3Dsite');
+    expect(shelfHref(9, '/customers/42')).toBe('/site-stock/9?back=%2Fcustomers%2F42');
+  });
+
+  it('drops a back that adds nothing or points elsewhere', () => {
+    expect(shelfHref(9, '/site-stock')).toBe('/site-stock/9');
+    expect(shelfHref(9, 'https://evil.com/site-stock')).toBe('/site-stock/9');
+    expect(shelfHref(9, '/alerts?page=2')).toBe('/site-stock/9');
+    expect(shelfHref(9, '/orders/yield')).toBe('/site-stock/9');
+    expect(shelfHref(9, '/devices')).toBe('/site-stock/9');
+    expect(shelfHref(9, '/devices/abc/edit')).toBe('/site-stock/9');
+    expect(shelfHref(9, '/site-stock/3')).toBe('/site-stock/9');
+  });
+
+  it('carries a Toner orders view or a device page it was opened from', () => {
+    expect(shelfHref(9, '/orders?tab=on-site')).toBe('/site-stock/9?back=%2Forders%3Ftab%3Don-site');
+    expect(shelfHref(9, '/devices/abc-123?from=orders')).toBe('/site-stock/9?back=%2Fdevices%2Fabc-123%3Ffrom%3Dorders');
+  });
+});
+
+describe('shelfBackLink', () => {
+  it('goes back to the Site stock view, or the customer page, it was opened from', () => {
+    expect(shelfBackLink(undefined)).toEqual({ label: 'Site stock', href: '/site-stock' });
+    expect(shelfBackLink('/site-stock?page=2&sort=site')).toEqual({ label: 'Site stock', href: '/site-stock?page=2&sort=site' });
+    expect(shelfBackLink('/customers/42')).toEqual({ label: 'Customer', href: '/customers/42' });
+    expect(shelfBackLink('//evil.com')).toEqual({ label: 'Site stock', href: '/site-stock' });
+    expect(shelfBackLink('/orders?tab=on-site')).toEqual({ label: 'Toner orders', href: '/orders?tab=on-site' });
+    expect(shelfBackLink('/devices/abc-123?from=orders')).toEqual({ label: 'Device', href: '/devices/abc-123?from=orders' });
+    expect(shelfBackLink('/customers?tab=sites')).toEqual({ label: 'Customers', href: '/customers?tab=sites' });
   });
 });

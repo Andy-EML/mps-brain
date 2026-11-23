@@ -13,7 +13,7 @@ import {
   vantageEquipment,
 } from '../schema';
 import { effectiveSettingsSubquery } from './settings';
-import { drmsEquipmentName } from './shared';
+import { compareBy, drmsEquipmentName, type SortSpec, type SortValue } from './shared';
 
 const MONITORED = sql`upper(${drmsEquipment.status}) in ('REGISTERED','DISCOVERED') and ${drmsEquipment.missingSince} is null`;
 
@@ -166,15 +166,38 @@ export function listShelfSummariesByIds(db: Db, ids: number[]): Promise<ShelfSum
   return ids.length === 0 ? Promise.resolve([]) : summaries(db, ids);
 }
 
-export async function listShelves(db: Db, args: { search?: string } = {}): Promise<ShelfSummary[]> {
+export const SHELF_SORT_KEYS = ['site', 'family', 'machines', 'used', 'status'] as const;
+export type ShelfSortKey = (typeof SHELF_SORT_KEYS)[number];
+
+const SHELF_SORT: Record<ShelfSortKey, (s: ShelfSummary) => SortValue> = {
+  site: (s) => s.siteName,
+  family: (s) => s.familyName,
+  machines: (s) => s.machines,
+  used: (s) => REPLENISH_COLOURS.reduce((n, c) => n + s.used[c], 0),
+  status: (s) => s.liveTopUp,
+};
+
+/** Today's order: shelves with a live top-up first, then site, then family. */
+function defaultShelfOrder(a: ShelfSummary, b: ShelfSummary): number {
+  return Number(b.liveTopUp) - Number(a.liveTopUp) || a.siteName.localeCompare(b.siteName) || a.familyName.localeCompare(b.familyName);
+}
+
+/** The shelves in the chosen order (shelf id as tiebreak, blanks last); no sort is the default order. */
+export function sortShelves(rows: ShelfSummary[], sort?: SortSpec<ShelfSortKey>): ShelfSummary[] {
+  return [...rows].sort(compareBy(SHELF_SORT, sort, (s) => s.id, defaultShelfOrder));
+}
+
+async function filteredShelves(db: Db, search?: string): Promise<ShelfSummary[]> {
   let all = await summaries(db);
-  const q = args.search?.trim().toLowerCase();
+  const q = search?.trim().toLowerCase();
   if (q) {
     all = all.filter((s) => [s.siteName, s.customerReference, s.postcode, s.familyName].some((v) => v !== null && v.toLowerCase().includes(q)));
   }
-  return all.sort(
-    (a, b) => Number(b.liveTopUp) - Number(a.liveTopUp) || a.siteName.localeCompare(b.siteName) || a.familyName.localeCompare(b.familyName),
-  );
+  return all;
+}
+
+export async function listShelves(db: Db, args: { search?: string } = {}): Promise<ShelfSummary[]> {
+  return sortShelves(await filteredShelves(db, args.search));
 }
 
 export interface ShelfDetail extends ShelfSummary {

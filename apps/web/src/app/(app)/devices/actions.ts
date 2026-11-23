@@ -5,6 +5,8 @@ import { redirect } from 'next/navigation';
 import { inArray } from 'drizzle-orm';
 import { drmsEquipment } from '@mps/db';
 import {
+  DEVICE_SORT_KEYS,
+  HIDDEN_SORT_KEYS,
   describeSelection,
   HideError,
   hideDevices,
@@ -18,7 +20,9 @@ import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { deviceFilterParams, parseDeviceFilters, type DeviceFilters } from '@/lib/device-filters';
 import { hideErrorMessage } from '@/lib/hide-device';
+import { DEVICES_DEFAULT_ROWS, HIDDEN_DEFAULT_ROWS } from '@/lib/device-list';
 import { hrefWith } from '@/lib/href';
+import { parseListState, stateParams } from '@/lib/list-state';
 import {
   describeSettingsPatch,
   parseSettingsForm,
@@ -69,6 +73,18 @@ interface ListView {
   filter: NonNullable<DeviceListOptions['filter']>;
   filters: DeviceFilters;
   page: number;
+  /** Sort, direction and page size, validated like the page validates them; defaults left out. */
+  listParams: Record<string, string | undefined>;
+}
+
+/** The posted sort/dir/rows, re-validated (an unknown sort or page size is dropped, not echoed). */
+function postedListParams(formData: FormData, sortKeys: readonly string[], defaultRows: number) {
+  const state = parseListState((name) => text(formData, name) || undefined, {
+    listKey: 'posted',
+    defaultRows,
+    sortKeys,
+  });
+  return stateParams(state, { defaultRows });
 }
 
 /** The list view the bar was used from, validated, so the redirect goes back to exactly it. */
@@ -81,6 +97,7 @@ function listView(formData: FormData): ListView {
     filter,
     filters: parseDeviceFilters((name) => text(formData, name) || undefined),
     page: Number.isInteger(page) && page > 1 ? page : 1,
+    listParams: postedListParams(formData, DEVICE_SORT_KEYS, DEVICES_DEFAULT_ROWS),
   };
 }
 
@@ -90,6 +107,7 @@ function listHref(view: ListView, extra: Record<string, string | number>): strin
     search: view.search,
     filter: view.filter === 'all' ? undefined : view.filter,
     ...deviceFilterParams(view.filters),
+    ...view.listParams,
     page: view.page > 1 ? view.page : undefined,
     ...extra,
   });
@@ -258,8 +276,15 @@ export async function unhideFromListAction(formData: FormData): Promise<void> {
   const drmsId = text(formData, 'drmsId');
   const search = text(formData, 'search') || undefined;
   const page = Number.parseInt(text(formData, 'page'), 10);
+  const listParams = postedListParams(formData, HIDDEN_SORT_KEYS, HIDDEN_DEFAULT_ROWS);
   const back = (extra: Record<string, string | number>) =>
-    hrefWith('/devices', { filter: 'hidden', search, page: Number.isInteger(page) && page > 1 ? page : undefined, ...extra });
+    hrefWith('/devices', {
+      filter: 'hidden',
+      search,
+      ...listParams,
+      page: Number.isInteger(page) && page > 1 ? page : undefined,
+      ...extra,
+    });
   let unhidden: number;
   try {
     ({ unhidden } = await unhideDevices(getDb(), { drmsIds: drmsId ? [drmsId] : [], userId: user.userId }));

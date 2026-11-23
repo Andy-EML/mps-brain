@@ -1,18 +1,20 @@
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { listIssues } from '@mps/db/queries';
+import { ISSUE_SORT_KEYS, listIssues } from '@mps/db/queries';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { IssueTable } from '@/components/issue-table';
 import { issueTabs, NOISY_TYPE } from '@/components/issue-queue';
 import { PageHeader } from '@/components/page-header';
-import { Pagination } from '@/components/pagination';
+import { ListControls } from '@/components/list-controls';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber, pluralise } from '@/lib/format';
-import { hrefWith } from '@/lib/href';
+import { lastPageOf, listHref, parseListState, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
 
 export const metadata = { title: 'Link issues · MPS Dashboard' };
 
-const PAGE_SIZE = 50;
+const LIST_KEY = 'issues';
+const DEFAULT_ROWS = 50;
 
 const STATUSES = [
   { value: 'open', label: 'Open' },
@@ -39,7 +41,14 @@ export default async function IssuesPage({ searchParams }: PageProps<'/issues'>)
   const requestedStatus = first(params.status);
   const status: Status = STATUSES.some((s) => s.value === requestedStatus) ? (requestedStatus as Status) : 'open';
   const type = first(params.type) ?? DEFAULT_TYPE;
-  const page = Math.max(1, Number.parseInt(first(params.page) ?? '1', 10) || 1);
+  const cookieStore = await cookies();
+  const state = parseListState((name) => first(params[name]), {
+    listKey: LIST_KEY,
+    defaultRows: DEFAULT_ROWS,
+    sortKeys: ISSUE_SORT_KEYS,
+    cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
+  });
+  const page = state.page;
 
   const { rows, total, countsByType } = await listIssues(getDb(), {
     status: status === 'any' ? undefined : status,
@@ -47,8 +56,9 @@ export default async function IssuesPage({ searchParams }: PageProps<'/issues'>)
     // nothing. Anything else is a real issue type and filters to it.
     type: type === DEFAULT_TYPE || type === 'all' ? undefined : type,
     excludeTypes: type === DEFAULT_TYPE ? [NOISY_TYPE] : undefined,
-    limit: PAGE_SIZE,
-    offset: (page - 1) * PAGE_SIZE,
+    limit: state.rows,
+    offset: (page - 1) * state.rows,
+    sort: sortSpec(state),
   });
 
   // Carried on the tab links and the pager so switching one control keeps the others.
@@ -57,10 +67,13 @@ export default async function IssuesPage({ searchParams }: PageProps<'/issues'>)
 
   // A page number past the end (a stale bookmark, or a tab whose rows an operator just cleared)
   // would otherwise render an empty state over a list that does have rows.
-  if (rows.length === 0 && total > 0 && page > 1) {
-    const lastPage = Math.ceil(total / PAGE_SIZE);
-    redirect(hrefWith('/issues', { type: typeParam, status: statusParam, page: lastPage > 1 ? lastPage : undefined }));
-  }
+  const keep = { type: typeParam, status: statusParam };
+  const lastPage = lastPageOf(total, state.rows);
+  if (page > lastPage) redirect(listHref('/issues', keep, state, { page: lastPage }, { defaultRows: DEFAULT_ROWS }));
+  // Sort and page size survive a change of type or status tab; the page does not.
+  const listParams = stateParams(state, { defaultRows: DEFAULT_ROWS });
+  const sorting = { basePath: '/issues', keep, state, defaultRows: DEFAULT_ROWS };
+  const controls = { ...sorting, total, listKey: LIST_KEY, noun: 'issue' };
 
   const tabs: FilterTab[] = issueTabs(countsByType).map((tab) => ({
     value: tab.value,
@@ -92,7 +105,7 @@ export default async function IssuesPage({ searchParams }: PageProps<'/issues'>)
             tabs={STATUSES}
             defaultValue="open"
             ariaLabel="Filter issues by status"
-            params={{ type: typeParam }}
+            params={{ type: typeParam, ...listParams }}
           />
         }
       />
@@ -106,26 +119,20 @@ export default async function IssuesPage({ searchParams }: PageProps<'/issues'>)
             tabs={tabs}
             defaultValue={DEFAULT_TYPE}
             ariaLabel="Filter issues by type"
-            params={{ status: statusParam }}
+            params={{ status: statusParam, ...listParams }}
           />
         </div>
+
+        <ListControls {...controls} className="border-b border-line px-5 py-3.5" />
 
         <IssueTable
           rows={rows}
           emptyMessage={emptyMessage(type, status)}
-          back={hrefWith('/issues', { type: typeParam, status: statusParam, page: page > 1 ? page : undefined })}
+          sorting={sorting}
+          back={listHref('/issues', keep, state, {}, { defaultRows: DEFAULT_ROWS })}
         />
 
-        <div className="border-t border-line px-5 py-3.5">
-          <Pagination
-            basePath="/issues"
-            params={{ type: typeParam, status: statusParam }}
-            page={page}
-            pageSize={PAGE_SIZE}
-            total={total}
-            noun="issue"
-          />
-        </div>
+        <ListControls {...controls} position="bottom" className="border-t border-line px-5 py-3.5" />
       </section>
     </>
   );

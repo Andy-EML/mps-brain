@@ -23,7 +23,7 @@ import {
   type DeviceRow,
   type RawDeviceRow,
 } from './devices';
-import { drmsEquipmentName, lastAlarmSubquery, notHiddenDevice, toNumberOrNull } from './shared';
+import { compareBy, drmsEquipmentName, lastAlarmSubquery, notHiddenDevice, toNumberOrNull, type SortSpec, type SortValue } from './shared';
 import { listShelfSummariesByIds, type ShelfSummary } from './site-stock';
 
 export interface VantageCustomerMatch {
@@ -201,6 +201,25 @@ async function loadCustomerRows(
   });
 }
 
+export const CUSTOMER_SORT_KEYS = ['name', 'ref', 'town', 'machines', 'pending', 'shelves', 'sites', 'stock'] as const;
+export type CustomerSortKey = (typeof CUSTOMER_SORT_KEYS)[number];
+
+const CUSTOMER_SORT: Record<CustomerSortKey, (r: CustomerRow) => SortValue> = {
+  name: (r) => r.name,
+  ref: (r) => r.reference,
+  town: (r) => r.town,
+  machines: (r) => r.machines,
+  pending: (r) => r.pending,
+  shelves: (r) => r.shelves,
+  sites: (r) => r.sites,
+  stock: (r) => r.selfManaged,
+};
+
+/** The rows in the chosen order (id as tiebreak, blanks last); no sort leaves them as given (name A-Z). */
+export function sortCustomerRows(rows: CustomerRow[], sort?: SortSpec<CustomerSortKey>): CustomerRow[] {
+  return sort ? [...rows].sort(compareBy(CUSTOMER_SORT, sort, (r) => r.vantageId)) : rows;
+}
+
 const TAB_FILTER: Record<CustomerTab, (r: CustomerRow) => boolean> = {
   'with-machines': (r) => !r.deleted && r.machines > 0,
   'self-managed': (r) => r.selfManaged !== null,
@@ -216,13 +235,13 @@ const TAB_FILTER: Record<CustomerTab, (r: CustomerRow) => boolean> = {
  */
 export async function listCustomers(
   db: Db,
-  o: { tab?: CustomerTab; search?: string; limit?: number; offset?: number },
+  o: { tab?: CustomerTab; search?: string; sort?: SortSpec<CustomerSortKey>; limit?: number; offset?: number },
 ): Promise<{ rows: CustomerRow[]; total: number; counts: Record<CustomerTab, number> }> {
   const all = await loadCustomerRows(db, { search: o.search, includeDeletedFlagged: true });
   const counts = Object.fromEntries(
     (Object.keys(TAB_FILTER) as CustomerTab[]).map((tab) => [tab, all.filter(TAB_FILTER[tab]).length]),
   ) as Record<CustomerTab, number>;
-  const filtered = all.filter(TAB_FILTER[o.tab ?? 'with-machines']);
+  const filtered = sortCustomerRows(all.filter(TAB_FILTER[o.tab ?? 'with-machines']), o.sort);
   const offset = o.offset ?? 0;
   const limit = o.limit ?? 50;
   return { rows: filtered.slice(offset, offset + limit), total: filtered.length, counts };

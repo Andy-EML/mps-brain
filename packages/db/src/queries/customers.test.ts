@@ -144,6 +144,23 @@ describe('customer read queries', () => {
     expect(rows.map((r) => r.name)).toEqual(['Acme Printing', 'Hewetts Ashford', 'Hewetts Dover', 'Hewetts Group']);
   });
 
+  it('sorts the filtered list and pages it, with the total and tab counts unchanged by sort', async () => {
+    const asc = await listCustomers(t.db, { tab: 'with-machines', sort: { key: 'name', dir: 'asc' } });
+    const desc = await listCustomers(t.db, { tab: 'with-machines', sort: { key: 'name', dir: 'desc' } });
+    expect(desc.rows.map((r) => r.name)).toEqual(asc.rows.map((r) => r.name).reverse());
+    expect(desc.counts).toEqual(asc.counts);
+    const page = await listCustomers(t.db, { tab: 'with-machines', sort: { key: 'name', dir: 'desc' }, limit: 2, offset: 1 });
+    expect(page.total).toBe(4);
+    expect(page.rows.map((r) => r.name)).toEqual(desc.rows.slice(1, 3).map((r) => r.name));
+    // machines desc: ties (equal machine counts) fall to the customer id, so a page edge is stable.
+    const m = await listCustomers(t.db, { tab: 'with-machines', sort: { key: 'machines', dir: 'desc' } });
+    const counts = m.rows.map((r) => r.machines);
+    expect(counts).toEqual([...counts].sort((a, b) => b - a));
+    for (let i = 1; i < m.rows.length; i++) {
+      if (m.rows[i]!.machines === m.rows[i - 1]!.machines) expect(m.rows[i]!.vantageId).toBeGreaterThan(m.rows[i - 1]!.vantageId);
+    }
+  });
+
   it('self-managed lists the head office and its sites with their source', async () => {
     const { rows } = await listCustomers(t.db, { tab: 'self-managed' });
     expect(rows.map((r) => [r.vantageId, r.selfManaged])).toEqual([

@@ -3,6 +3,7 @@ import { Check } from 'lucide-react';
 import type { AlertRow } from '@mps/db/queries';
 import { cn } from 'cn';
 import { acknowledgeAlertAction } from '@/app/(app)/alerts/actions';
+import { SortableTh, type SortContext } from '@/components/sort-header';
 import { ToneBadge } from '@/components/tone-badge';
 import type { Tone } from '@/components/toner';
 import { deviceHref } from '@/lib/device-origin';
@@ -16,6 +17,8 @@ export interface AlertTableProps {
   className?: string;
   /** This list's own URL (path + query), so the device page's Back link returns to the same tab. */
   back?: string;
+  /** Makes Device, Customer, Alert and Detected sortable headers. Actions never sorts. */
+  sorting?: SortContext;
 }
 
 const HEAD = 'px-5 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
@@ -52,6 +55,7 @@ export function AlertTable({
   emptyMessage = 'No alerts in this view.',
   className,
   back,
+  sorting,
 }: AlertTableProps) {
   if (rows.length === 0) {
     return <p className={cn('px-5 py-12 text-center text-sm text-muted-foreground', className)}>{emptyMessage}</p>;
@@ -62,18 +66,10 @@ export function AlertTable({
       <table className="w-full min-w-[960px] border-collapse text-left">
         <thead>
           <tr className="border-b border-line">
-            <th scope="col" className={cn(HEAD, 'w-[24%]')}>
-              Device
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[20%]')}>
-              Customer
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[28%]')}>
-              Alert
-            </th>
-            <th scope="col" className={cn(HEAD, 'w-[16%]')}>
-              Detected
-            </th>
+            <SortableTh label="Device" sortKey="device" sorting={sorting} className={cn(HEAD, 'w-[24%]')} />
+            <SortableTh label="Customer" sortKey="customer" sorting={sorting} className={cn(HEAD, 'w-[20%]')} />
+            <SortableTh label="Alert" sortKey="alert" sorting={sorting} className={cn(HEAD, 'w-[28%]')} />
+            <SortableTh label="Detected" sortKey="detected" sorting={sorting} className={cn(HEAD, 'w-[16%]')} />
             <th scope="col" className={cn(HEAD, 'w-[12%] text-right')}>
               Actions
             </th>

@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import {
+  DEVICE_SORT_KEYS,
   getCollectionStatus,
   getConsumableWarnings,
   getCustomerCount,
@@ -25,6 +26,7 @@ import { getDb } from '@/lib/db';
 import { deviceFilterParams, hasDeviceFilters, parseDeviceFilters } from '@/lib/device-filters';
 import { formatNumber, formatRelative, pluralise } from '@/lib/format';
 import { hrefWith } from '@/lib/href';
+import { parseListState, sortSpec, stateParams, type ListState } from '@/lib/list-state';
 
 export const metadata = { title: 'Fleet overview · MPS Dashboard' };
 
@@ -44,13 +46,22 @@ export default async function FleetOverviewPage({ searchParams }: PageProps<'/'>
   const filters = parseDeviceFilters((name) => first(params[name]));
   const filterParams = deviceFilterParams(filters);
   const filtered = hasDeviceFilters(filters);
+  // Sortable headers only: no pager or rows picker on a fixed 8-row preview, so `rows` and `page`
+  // are pinned whatever the URL says, and only sort/dir are read (and carried to /devices).
+  const parsed = parseListState((name) => first(params[name]), {
+    listKey: 'fleet',
+    defaultRows: PREVIEW_ROWS,
+    sortKeys: DEVICE_SORT_KEYS,
+  });
+  const state: ListState<(typeof DEVICE_SORT_KEYS)[number]> = { ...parsed, page: 1, rows: PREVIEW_ROWS };
+  const sortParams = stateParams(state, { defaultRows: PREVIEW_ROWS });
 
   const [summary, health, customers, issueCounts, preview, warnings, collection, replenishment, reconnect, options] = await Promise.all([
     getFleetSummary(db),
     getTonerHealth(db),
     getCustomerCount(db),
     getIssueCounts(db, { status: 'open' }),
-    listDevices(db, { ...filters, limit: PREVIEW_ROWS }),
+    listDevices(db, { ...filters, limit: PREVIEW_ROWS, sort: sortSpec(state) }),
     getConsumableWarnings(db),
     getCollectionStatus(db),
     getReplenishmentStats(db, now),
@@ -135,10 +146,17 @@ export default async function FleetOverviewPage({ searchParams }: PageProps<'/'>
           <h2 className="text-[15px] font-medium">Devices</h2>
           <TonerLegend />
         </div>
-        <DeviceFilterBar basePath="/" filters={filters} options={options} className="px-5 pb-4" />
+        <DeviceFilterBar
+          basePath="/"
+          filters={filters}
+          params={sortParams}
+          options={options}
+          className="px-5 pb-4"
+        />
         <DeviceTable
           from="fleet"
-          back={hrefWith('/', filterParams)}
+          sorting={{ basePath: '/', keep: filterParams, state, defaultRows: PREVIEW_ROWS }}
+          back={hrefWith('/', { ...filterParams, ...sortParams })}
           rows={preview.rows}
           now={now}
           emptyMessage={filtered ? 'No devices match these filters.' : 'No devices have been synced yet.'}
@@ -146,9 +164,10 @@ export default async function FleetOverviewPage({ searchParams }: PageProps<'/'>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3.5">
           <p className="text-sm text-muted-foreground">
             Showing {formatNumber(preview.rows.length)} of {formatNumber(preview.total)}{' '}
-            {filtered ? `matching ${pluralise(preview.total, 'device')}` : pluralise(preview.total, 'device')}, customer A–Z
+            {filtered ? `matching ${pluralise(preview.total, 'device')}` : pluralise(preview.total, 'device')}
+            {state.sort ? '' : ', customer A–Z'}
           </p>
-          <Link href={hrefWith('/devices', filterParams)} className="text-sm font-medium text-brand hover:underline">
+          <Link href={hrefWith('/devices', { ...filterParams, ...sortParams })} className="text-sm font-medium text-brand hover:underline">
             View all devices
           </Link>
         </div>
