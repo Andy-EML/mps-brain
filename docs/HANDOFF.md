@@ -54,6 +54,26 @@
 >   page, so the file has the same rows as on screen (not grouped by town).
 > - **Removed**: the overdue-reason select. The All / pages / time pills remain.
 
+> **Update 2026-11-24: planner reshape (`/pm/planner`).** Presentation only: no migrations, no jobs,
+> no Vantage or DRMS writes.
+> - **Tabs**: `/pm/planner` opens on the Map. The Board is the second tab at
+>   `/pm/planner?view=board`; `?view=map` still works. Card actions redirect back to `?view=board`
+>   (`plannerRedirectHref`, `apps/web/src/lib/planner-form.ts`).
+> - **Board columns**, left to right: PMs in area → Planned → Booked. No Asked engineer or Done
+>   column. Storage is unchanged: `pm_plan.board_column` still stores `to_plan`, `asked` and `done`.
+>   Planned shows `to_plan` and `asked`; Done cards are hidden ("drop off").
+> - **Asked tag**: an asked card shows `Asked <engineer> · <day>` from the latest
+>   `Asked <engineer> for <day>` note line (`askedTag`, `apps/web/src/lib/planner-columns.ts`).
+>   With no such line it shows `Asked engineer`.
+> - **Back to Planned**: a manually booked card offers it (`unbookCardAction`,
+>   `apps/web/src/app/(app)/pm/planner/actions.ts`), which undoes the open booked `pm_action`. A card
+>   booked by a Vantage PM job has no such button.
+> - **PMs in area** (`apps/web/src/components/planner-pms-in-area.tsx`): Today/Tomorrow switch; each
+>   call is collapsed until clicked; machines at the call's own site fold into one line. Drag a
+>   machine (MIME `application/x-pm-ids`, payload `ids:1,2`) onto Planned (`planner-drop-zone.tsx`),
+>   or use *Add to plan* / *Ask*. These use the non-redirecting map actions (`mapAddToPlanAction`,
+>   `mapAskEngineerAction`).
+
 **Read this section first, then `CLAUDE.md`, then the current spec. The 2026-09-18 sections below
 (Foundation) are kept only for the detail; where they disagree, this one wins.**
 
