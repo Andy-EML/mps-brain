@@ -5,7 +5,7 @@ import { Breadcrumb } from '@/components/breadcrumb';
 import { PageHeader } from '@/components/page-header';
 import { PlannerBoard } from '@/components/planner-board';
 import { PlannerMap } from '@/components/planner-map';
-import { PlannerUpcoming } from '@/components/planner-upcoming';
+import { PlannerPmsInArea } from '@/components/planner-pms-in-area';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { pmErrorMessage } from '@/lib/pm-action-form';
@@ -75,6 +75,7 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
       </>
     );
   }
+  // Both days; the panel's Today / Tomorrow switch picks one.
   const upcomingPanel = upcomingView(upcoming, lastSchedule ? [lastSchedule] : [], now, error);
   // Forms post this back; the device page's Back returns to it. Errors and the card are not kept.
   const back = PLANNER;
@@ -108,9 +109,9 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
         cards={cards}
         patches={settings.patches}
         pmsInArea={
-          // PMs in area (was Upcoming jobs): each engineer's booked calls for today and tomorrow with nearby PMs.
+          // PMs in area (was Upcoming jobs): each engineer's booked calls, today or tomorrow, with nearby PMs; drag onto Planned.
           <aside id="upcoming" aria-labelledby="upcoming-heading" className="min-w-0">
-            <PlannerUpcoming view={upcomingPanel} back={back} />
+            <PlannerPmsInArea view={upcomingPanel} />
           </aside>
         }
         back={back}

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { groupCardsByArea, type BoardCard, type PmPatch } from '@mps/db/queries';
 import { PlannerCard } from '@/components/planner-card';
+import { PlannerDropZone } from '@/components/planner-drop-zone';
 import { customerHref } from '@/components/customers';
 import { deviceHref } from '@/lib/device-origin';
 import { visibleColumnOf, type VisibleColumn } from '@/lib/planner-columns';
@@ -24,7 +25,8 @@ export interface PlannerBoardProps {
 
 /**
  * The planner board (server-rendered): three columns left to right — PMs in area (the slot), Planned
- * (stored To plan + Asked; an asked card carries an `Asked <engineer> · <day>` tag) and Booked —
+ * (stored To plan + Asked; an asked card carries an `Asked <engineer> · <day>` tag; a drop target for
+ * machines dragged from PMs in area) and Booked —
  * side by side on wide screens and stacked below that. Done cards are not shown. Planned and Booked
  * group their cards county -> patch -> district with a count header ("GU14 · 5 due · 2 overdue ·
  * 1 priority"); the cards (`PlannerCard`) carry the actions. Display strings and links are worked out
@@ -38,8 +40,8 @@ export function PlannerBoard({ cards, patches, pmsInArea, back, error }: Planner
         const inColumn = cards.filter((c) => visibleColumnOf(c.column) === col.key);
         const groups = groupCardsByArea(inColumn, patches);
         const headingId = `planner-col-${col.key}`;
-        return (
-          <section key={col.key} aria-labelledby={headingId} className="flex min-w-0 flex-col rounded-xl border border-line bg-muted/20">
+        const column = (
+          <section key={col.key} aria-labelledby={headingId} className="flex h-full min-w-0 flex-col rounded-xl border border-line bg-muted/20">
             <header className="border-b border-line px-4 py-3">
               <h2 id={headingId} className="flex items-baseline gap-2 text-[15px] font-semibold">
                 {col.label}
@@ -83,6 +85,14 @@ export function PlannerBoard({ cards, patches, pmsInArea, back, error }: Planner
               ))}
             </div>
           </section>
+        );
+        // Planned takes machines dragged from PMs in area.
+        return col.key === 'planned' ? (
+          <PlannerDropZone key={col.key} className="min-w-0">
+            {column}
+          </PlannerDropZone>
+        ) : (
+          column
         );
       })}
     </div>

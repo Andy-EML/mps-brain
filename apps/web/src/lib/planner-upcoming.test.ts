@@ -4,6 +4,7 @@ import {
   askNote,
   callTimeText,
   diaryNeedsRefresh,
+  groupCallSuggestions,
   parseAskForm,
   parseSuggestionForm,
   suggestionDistanceText,
@@ -171,6 +172,33 @@ const engineer = (calls: UpcomingCall[], over: Partial<UpcomingEngineer> = {}): 
   ...over,
 });
 
+describe('groupCallSuggestions', () => {
+  it("splits the call's own site from the machines nearby, keeping order", () => {
+    const g = groupCallSuggestions(
+      call({
+        suggestions: [
+          suggestion({ vantageEquipmentId: 1 }),
+          suggestion({ vantageEquipmentId: 2, sameSite: true }),
+          suggestion({ vantageEquipmentId: 3 }),
+          suggestion({ vantageEquipmentId: 4, sameSite: true }),
+        ],
+      }),
+    );
+    expect(g.site.map((s) => s.vantageEquipmentId)).toEqual([2, 4]);
+    expect(g.others.map((s) => s.vantageEquipmentId)).toEqual([1, 3]);
+  });
+
+  it('puts everything in the site group when all are at the same site', () => {
+    const g = groupCallSuggestions(call({ suggestions: [suggestion({ sameSite: true }), suggestion({ vantageEquipmentId: 2, sameSite: true })] }));
+    expect(g.site).toHaveLength(2);
+    expect(g.others).toEqual([]);
+  });
+
+  it('returns two empty groups when there are no suggestions', () => {
+    expect(groupCallSuggestions(call())).toEqual({ site: [], others: [] });
+  });
+});
+
 describe('upcomingView', () => {
   const now = new Date('2026-11-24T10:00:00Z');
   const fresh = [{ job: 'vantage-schedule', status: 'success', startedAt: now, finishedAt: now }];
@@ -185,7 +213,7 @@ describe('upcomingView', () => {
     expect(upcomingView({ engineers: [] }, fresh, now, null).empty).toBe('No booked calls today or tomorrow');
   });
 
-  it('builds days, calls and suggestions with display text', () => {
+  it('builds days, calls and compact suggestion lines', () => {
     const v = upcomingView(
       {
         engineers: [
@@ -193,47 +221,74 @@ describe('upcomingView', () => {
             call({
               started: true,
               suggestions: [
-                suggestion({ vantageEquipmentId: 1, boardColumn: 'to_plan', priority: true }),
+                suggestion({ vantageEquipmentId: 1, boardColumn: 'to_plan', priority: true, model: 'Konica Minolta C300i Digital Colour Photocopier' }),
                 suggestion({ vantageEquipmentId: 2, distanceMiles: null, sameDistrict: true, whenInArea: true, overdueMonths: 18, boardColumn: 'done' }),
-                suggestion({ vantageEquipmentId: 3, sameSite: true, status: 'due_soon', overdueMonths: null, boardColumn: 'asked' }),
+                suggestion({ vantageEquipmentId: 3, sameSite: true, status: 'due_soon', overdueMonths: null, boardColumn: 'asked', customerName: 'Bravo Ltd' }),
+                suggestion({ vantageEquipmentId: 4, sameSite: true, distanceMiles: 0, customerName: 'Bravo Ltd' }),
               ],
             }),
             call({ workUnitId: 11, customerId: null, customerName: null, district: null, located: null, equipment: null, categoryName: 'Site visit' }),
             call({ workUnitId: 12, located: null, district: 'GU14' }),
           ]),
         ],
+        today: '2026-11-24',
+        tomorrow: '2026-11-25',
       },
       fresh,
       now,
       { card: 2, message: 'Nope' },
     );
     expect(v.empty).toBeNull();
+    expect(v.dayLabels).toEqual({ today: 'Today 24 Nov', tomorrow: 'Tomorrow 25 Nov' });
     const [eng] = v.engineers;
     expect(eng!.name).toBe('Dave');
     expect(eng!.canAsk).toBe(true);
     expect(eng!.days.map((d) => d.heading)).toEqual(['Today 24 Nov', 'Tomorrow 25 Nov']);
     expect(eng!.days[1]!.emptyText).toBe('No booked calls tomorrow');
     const [c1, c2, c3] = eng!.days[0]!.calls;
-    expect(c1).toMatchObject({ anchor: 'call-10', time: '09:30', customer: 'Bravo Ltd', started: true, locationNote: null });
-    expect(c1!.suggestions.map((s) => [s.id, s.distanceText, s.onBoardText, s.canAdd, s.canAsk, s.overdueText, s.error])).toEqual([
-      [1, '1.2 mi', 'On board: To plan', false, true, 'overdue 3m', null],
-      [2, 'Same district (GU14)', 'On board: Done', true, true, 'overdue 18m', 'Nope'],
-      [3, 'Same site', 'On board: Asked engineer', false, true, null, null],
+    expect(c1).toMatchObject({ anchor: 'call-10', time: '09:30', customer: 'Bravo Ltd', started: true, locationNote: null, nearby: 4 });
+    expect(c1!.summary).toBe('09:30 Bravo Ltd · 4 nearby');
+    expect(c1!.siteText).toBe('Bravo Ltd — 2 machines here');
+    expect(c1!.site.map((s) => s.id)).toEqual([3, 4]);
+    expect(c1!.others.map((s) => [s.id, s.line, s.onBoard, s.canAdd, s.canAsk, s.error])).toEqual([
+      [1, 'Acme · C300i · overdue 3m · 1.2 mi', 'Planned', false, false, null],
+      [2, 'Acme · C300i · overdue 18m · same district', null, true, true, 'Nope'],
     ]);
-    expect(c1!.suggestions[0]!.machine).toBe('C300i · A1');
+    expect(c1!.site.map((s) => [s.id, s.line, s.onBoard, s.canAdd])).toEqual([
+      [3, 'Bravo Ltd · C300i · due soon · same site', 'Planned', false],
+      [4, 'Bravo Ltd · C300i · overdue 3m · same site', null, true],
+    ]);
+    expect(c1!.others[0]!.machine).toBe('Konica Minolta C300i Digital Colour Photocopier · A1');
+    expect(c1!.others[0]!.priority).toBe(true);
     expect(c2).toMatchObject({ customer: 'Unknown customer', customerLink: null, locationNote: 'No location for this call', category: 'Site visit', equipment: null });
+    expect(c2!.summary).toBe('09:30 Unknown customer · none nearby');
+    expect(c2!.siteText).toBeNull();
     expect(c3!.locationNote).toBe('No map location — matching on GU14 only');
   });
 
-  it('cannot ask an unassigned engineer, and a booked suggestion has no actions', () => {
+  it('says one machine here, singular', () => {
+    const v = upcomingView({ engineers: [engineer([call({ suggestions: [suggestion({ sameSite: true })] })])] }, fresh, now, null);
+    expect(v.engineers[0]!.days[0]!.calls[0]!.siteText).toBe('Bravo Ltd — 1 machine here');
+  });
+
+  it('cannot ask an unassigned engineer, and a booked suggestion shows its column instead of actions', () => {
     const v = upcomingView(
-      { engineers: [engineer([call({ suggestions: [suggestion({ boardColumn: 'booked' })] })], { engineerId: null, name: 'Unassigned' })] },
+      {
+        engineers: [
+          engineer([call({ suggestions: [suggestion({ boardColumn: 'booked' }), suggestion({ vantageEquipmentId: 2 })] })], {
+            engineerId: null,
+            name: 'Unassigned',
+          }),
+        ],
+      },
       fresh,
       now,
       null,
     );
     expect(v.engineers[0]!.canAsk).toBe(false);
-    expect(v.engineers[0]!.days[0]!.calls[0]!.suggestions[0]).toMatchObject({ canAsk: false, canAdd: false, onBoardText: 'On board: Booked' });
+    const [booked, free] = v.engineers[0]!.days[0]!.calls[0]!.others;
+    expect(booked).toMatchObject({ canAsk: false, canAdd: false, onBoard: 'Booked' });
+    expect(free).toMatchObject({ canAsk: false, canAdd: true, onBoard: null });
   });
 
   it('reports whether a refused card is shown under a suggestion', () => {
