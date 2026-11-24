@@ -20,7 +20,7 @@ import { OSM_ATTRIBUTION, OSM_TILES, boardColumnText, pinDueText, pinTone, type 
  * browser, and they carry the viewport, never a customer.
  */
 
-const BACK = '/pm/planner?view=map';
+const BACK = '/pm/planner';
 const METRES_PER_MILE = 1609.344;
 /** Roughly the UK, until the pins are fitted. */
 const START: [number, number] = [53.5, -2];

@@ -32,7 +32,7 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
   // fetches layout and page data in parallel.
   await requireUser();
   const params = await searchParams;
-  const view = first(params.view) === 'map' ? 'map' : 'board';
+  const view = first(params.view) === 'board' ? 'board' : 'map';
   const cardRaw = first(params.card);
   const errorKey = first(params.plannerError);
   const error =
@@ -78,7 +78,7 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
   // Both days; the panel's Today / Tomorrow switch picks one.
   const upcomingPanel = upcomingView(upcoming, lastSchedule ? [lastSchedule] : [], now, error);
   // Forms post this back; the device page's Back returns to it. Errors and the card are not kept.
-  const back = PLANNER;
+  const back = `${PLANNER}?view=board`;
   const pageError = errorKey && !error ? pmErrorMessage(errorKey) : null;
   // A refused action shows on its card, or under its suggestion; the page says it only when neither is on screen.
   // Done cards are not on the board, so an error on one counts as missing.
@@ -121,7 +121,7 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
   );
 }
 
-/** Breadcrumb, title and the Board | Map switch (links, so back and refresh keep the view). */
+/** Breadcrumb, title and the Map | Board switch (links, so back and refresh keep the view). */
 function PlannerHeader({ view }: { view: 'board' | 'map' }) {
   const tab = (active: boolean) =>
     cn(
@@ -147,11 +147,11 @@ function PlannerHeader({ view }: { view: 'board' | 'map' }) {
         }
       />
       <nav aria-label="Planner view" className="mb-4 flex flex-wrap items-center gap-1">
-        <Link href={PLANNER} aria-current={view === 'board' ? 'page' : undefined} className={tab(view === 'board')}>
-          Board
-        </Link>
-        <Link href={`${PLANNER}?view=map`} aria-current={view === 'map' ? 'page' : undefined} className={tab(view === 'map')}>
+        <Link href={PLANNER} aria-current={view === 'map' ? 'page' : undefined} className={tab(view === 'map')}>
           Map
+        </Link>
+        <Link href={`${PLANNER}?view=board`} aria-current={view === 'board' ? 'page' : undefined} className={tab(view === 'board')}>
+          Board
         </Link>
       </nav>
     </>

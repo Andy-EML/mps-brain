@@ -66,7 +66,7 @@ export function plannerReturnHref(raw: FormDataEntryValue | string | null): stri
 
 /**
  * The redirect after a planner action: back to the posted planner URL, scrolled to the card
- * (`#card-<id>`). A refusal adds `card=<id>&plannerError=<key>` so the card shows the sentence;
+ * (`#card-<id>`) on the Board view (`view=board`; the bare planner is the map). A refusal adds `card=<id>&plannerError=<key>` so the card shows the sentence;
  * earlier ones are dropped either way.
  */
 export function plannerRedirectHref(raw: FormDataEntryValue | string | null, card: number | null, errorKey?: string): string {
@@ -74,6 +74,8 @@ export function plannerRedirectHref(raw: FormDataEntryValue | string | null, car
   const params = url.searchParams;
   params.delete('card');
   params.delete('plannerError');
+  // Card actions live on the board, which is no longer the default view: always land back on it.
+  params.set('view', 'board');
   if (errorKey) {
     if (card !== null) params.set('card', String(card));
     params.set('plannerError', errorKey);

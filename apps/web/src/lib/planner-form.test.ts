@@ -82,18 +82,24 @@ describe('plannerReturnHref', () => {
 });
 
 describe('plannerRedirectHref', () => {
+  it('planner redirect keeps board view', () => {
+    expect(plannerRedirectHref('/pm/planner?view=board', 12)).toBe('/pm/planner?view=board#card-12');
+    expect(plannerRedirectHref('/pm/planner', 12)).toBe('/pm/planner?view=board#card-12');
+    expect(plannerRedirectHref('/pm/planner?view=map', 12)).toBe('/pm/planner?view=board#card-12');
+  });
+
   it('goes back to the card, with the error key when refused', () => {
-    expect(plannerRedirectHref('/pm/planner?x=1', 42)).toBe('/pm/planner?x=1#card-42');
-    expect(plannerRedirectHref('/pm/planner?x=1', 42, 'past_booked')).toBe('/pm/planner?x=1&card=42&plannerError=past_booked#card-42');
+    expect(plannerRedirectHref('/pm/planner?x=1', 42)).toBe('/pm/planner?x=1&view=board#card-42');
+    expect(plannerRedirectHref('/pm/planner?x=1', 42, 'past_booked')).toBe('/pm/planner?x=1&view=board&card=42&plannerError=past_booked#card-42');
   });
 
   it('replaces an earlier error and card', () => {
-    expect(plannerRedirectHref('/pm/planner?card=1&plannerError=save_failed', 2)).toBe('/pm/planner#card-2');
+    expect(plannerRedirectHref('/pm/planner?card=1&plannerError=save_failed', 2)).toBe('/pm/planner?view=board#card-2');
   });
 
   it('without a machine goes to the planner', () => {
-    expect(plannerRedirectHref('https://evil', null)).toBe('/pm/planner');
-    expect(plannerRedirectHref('/pm/planner', null, 'invalid_pm_action')).toBe('/pm/planner?plannerError=invalid_pm_action');
+    expect(plannerRedirectHref('https://evil', null)).toBe('/pm/planner?view=board');
+    expect(plannerRedirectHref('/pm/planner', null, 'invalid_pm_action')).toBe('/pm/planner?view=board&plannerError=invalid_pm_action');
   });
 });
 
