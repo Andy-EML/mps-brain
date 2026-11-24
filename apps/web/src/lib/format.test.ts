@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatGap, formatIsoDateTime } from './format';
+import { formatGap, formatIsoDateTime, machineActionLabel } from './format';
 
 const NOW = new Date('2026-09-18T12:00:00Z');
 const hoursBefore = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -40,5 +40,16 @@ describe('formatIsoDateTime', () => {
   it('is empty for nothing', () => {
     expect(formatIsoDateTime(null)).toBe('');
     expect(formatIsoDateTime(new Date('nope'))).toBe('');
+  });
+});
+
+describe('machineActionLabel', () => {
+  it('starts with the visible text and names the customer and serial', () => {
+    expect(machineActionLabel('Remove', 'Acme Ltd', 'A1B2C3')).toBe('Remove: Acme Ltd, serial A1B2C3');
+  });
+  it('falls back when the customer or serial is missing', () => {
+    expect(machineActionLabel('Priority', null, 'A1')).toBe('Priority: Unknown customer, serial A1');
+    expect(machineActionLabel('Plan actions', 'Acme', null)).toBe('Plan actions: Acme');
+    expect(machineActionLabel('Priority', '  ', '')).toBe('Priority: Unknown customer');
   });
 });

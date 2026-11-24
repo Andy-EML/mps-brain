@@ -83,7 +83,8 @@ function expectSorted<T, K extends string>(
 
 describe('sortCustomerRows', () => {
   const row = (vantageId: number, o: Partial<CustomerRow>): CustomerRow => ({
-    vantageId, name: null, reference: null, town: null, machines: 0, pending: 0, shelves: 0, sites: 0, selfManaged: null, deleted: false, ...o,
+    vantageId, name: null, reference: null, town: null, machines: 0, pending: 0, shelves: 0, sites: 0, selfManaged: null, deleted: false,
+    otherDealer: { dealer: null, source: null, region: null }, ...o,
   });
   const rows = [
     row(40, {}),
@@ -126,6 +127,7 @@ describe('sortPmRows', () => {
       town: o.town ?? null,
       serial: o.serial ?? null,
       model: o.model ?? null,
+      plan: { whenInArea: false, priority: false, boardColumn: null },
       result: {
         status: o.status ?? 'ok',
         pagesSince: o.pages ?? null,
@@ -164,6 +166,12 @@ describe('sortPmRows', () => {
     expect(ids(sortPmRows(rows), (r) => r.vantageEquipmentId)).toEqual([10, 30, 20, 40]);
     const bad = { key: '__proto__', dir: 'asc' } as unknown as { key: 'town'; dir: 'asc' };
     expect(ids(sortPmRows(rows, bad), (r) => r.vantageEquipmentId)).toEqual([10, 30, 20, 40]);
+  });
+
+  it('the default order puts priority machines first; an explicit sort ignores priority', () => {
+    const prio = rows.map((r) => (r.vantageEquipmentId === 20 ? { ...r, plan: { ...r.plan, priority: true } } : r));
+    expect(ids(sortPmRows(prio), (r) => r.vantageEquipmentId)).toEqual([20, 10, 30, 40]);
+    expect(ids(sortPmRows(prio, { key: 'pages', dir: 'desc' }), (r) => r.vantageEquipmentId)).toEqual([10, 30, 20, 40]);
   });
 });
 

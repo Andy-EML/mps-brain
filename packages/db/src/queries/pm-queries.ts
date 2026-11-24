@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, exists, inArray, isNull, sql } from 'drizzle-orm';
+import { postcodeOutward } from '@mps/core';
 import type { Db } from '../client';
 import { getAppState, setAppState } from '../app-state';
 import {
@@ -13,6 +14,8 @@ import {
   vantageWorkVisits,
 } from '../schema';
 import { loadCombinedMeters } from './meter-history';
+import { loadDealerResolver, type OtherDealerInfo } from './other-dealer';
+import { loadPlanRows, type BoardColumnStored } from './pm-plan';
 import { clearPmActions, loadManualResets, loadOpenPmActions, resolvePmAction, type PmAction, type PmActionClearedReason } from './pm-actions';
 import { computePm, groupVisits, DEFAULT_PM_SETTINGS, type PmResult, type PmSettings, type PmStatus, type VisitUnit } from './pm-due';
 import { SettingsError } from './settings';
@@ -115,6 +118,16 @@ export interface PmRow {
   customerName: string | null;
   /** The customer's town (Vantage customer `Town`), or null. */
   town: string | null;
+  /** The Vantage customer (site) id, or null when the machine has none. */
+  customerId: number | null;
+  /** The postcode district (outward code, e.g. GU14) of the customer's postcode, or null. */
+  district: string | null;
+  /** The customer's Vantage `County` (free text, often blank), or null. */
+  county: string | null;
+  /** Who services this site for PM (the region rule or a manual flag). Other-dealer machines leave the default lists. */
+  otherDealer: OtherDealerInfo;
+  /** Per-machine planner state from `pm_plan`: the flags and the stored board column (null = not on the board). */
+  plan: { whenInArea: boolean; priority: boolean; boardColumn: BoardColumnStored | null };
   serial: string | null;
   model: string | null;
   family: string | null;
@@ -130,6 +143,9 @@ export interface PmRow {
 
 export type PmView = 'due' | 'booked' | 'dismissed';
 
+/** `ours` (default) drops other-dealer sites, `other` keeps only them, `all` keeps both. */
+export type PmDealerScope = 'ours' | 'other' | 'all';
+
 export interface PmFilter {
   status?: PmStatus[] | 'default';
   /** Defaults to `due` when `status` is `'default'`, otherwise no view filtering. `due` is the default view plus overdue bookings. */
@@ -137,7 +153,9 @@ export interface PmFilter {
   customer?: string;
   family?: number;
   q?: string;
-  /** Overrides the default order (overdue first, then percent used). */
+  /** Whose machines: ours (default), other-dealer sites, or both. */
+  dealer?: PmDealerScope;
+  /** Overrides the default order (priority first, then overdue, then percent used). */
   sort?: SortSpec<PmSortKey>;
 }
 
@@ -146,6 +164,9 @@ interface MachineRow {
   drmsEquipmentId: string | null;
   customerName: string | null;
   town: string | null;
+  customerId: number | null;
+  postCode: string | null;
+  county: string | null;
   serial: string | null;
   model: string | null;
   familyId: number | null;
@@ -171,6 +192,9 @@ async function loadMachines(db: Db, ids: number[] | null): Promise<MachineRow[]>
       drmsEquipmentId: deviceLinks.drmsEquipmentId,
       customerName: vantageEquipment.customerName,
       town: sql<string | null>`nullif(btrim(${vantageCustomers.raw}->>'Town'), '')`,
+      customerId: vantageEquipment.vantageCustomerId,
+      postCode: sql<string | null>`nullif(btrim(${vantageCustomers.raw}->>'PostCode'), '')`,
+      county: sql<string | null>`nullif(btrim(${vantageCustomers.raw}->>'County'), '')`,
       serial: sql<string | null>`coalesce(${vantageEquipment.serial}, ${drmsEquipment.serial})`,
       model: sql<string | null>`${modelExpr}`,
       familyId: cartridgeFamilies.id,
@@ -261,13 +285,21 @@ async function loadVisits(db: Db, ids: number[]): Promise<Map<number, VisitUnit[
   return out;
 }
 
+const NO_PLAN: PmRow['plan'] = { whenInArea: false, priority: false, boardColumn: null };
+
+function planOf(p: { whenInArea: boolean; priority: boolean; boardColumn: BoardColumnStored | null } | undefined): PmRow['plan'] {
+  return p ? { whenInArea: p.whenInArea, priority: p.priority, boardColumn: p.boardColumn } : NO_PLAN;
+}
+
 async function buildRows(db: Db, machines: MachineRow[], s: PmSettings, now: Date): Promise<PmRow[]> {
   const ids = machines.map((m) => m.vantageEquipmentId);
-  const [visits, meters, actions, resets] = await Promise.all([
+  const [visits, meters, actions, resets, dealerOf, plans] = await Promise.all([
     loadVisits(db, ids),
     loadCombinedMeters(db, ids, now),
     loadOpenPmActions(db, ids),
     loadManualResets(db, ids),
+    loadDealerResolver(db),
+    loadPlanRows(db, ids),
   ]);
   const clears: { id: number; reason: PmActionClearedReason }[] = [];
   const rows = machines.map((m) => {
@@ -305,6 +337,11 @@ async function buildRows(db: Db, machines: MachineRow[], s: PmSettings, now: Dat
       drmsEquipmentId: m.drmsEquipmentId,
       customerName: m.customerName,
       town: m.town,
+      customerId: m.customerId,
+      district: postcodeOutward(m.postCode),
+      county: m.county,
+      otherDealer: dealerOf(m.customerId),
+      plan: planOf(plans.get(m.vantageEquipmentId)),
       serial: m.serial,
       model: m.model,
       family: m.family,
@@ -349,6 +386,8 @@ export async function listPmDue(db: Db, now: Date = new Date(), f: PmFilter = {}
   const machines = await loadMachines(db, null);
   let rows = await buildRows(db, machines, s, now);
 
+  const dealer = f.dealer ?? 'ours';
+  if (dealer !== 'all') rows = rows.filter((r) => (r.otherDealer.dealer !== null) === (dealer === 'other'));
   const view = f.view ?? (f.status === 'default' ? 'due' : 'all');
   rows = rows.filter((r) => inPmView(r, view, now));
   if (f.status === 'default') {
@@ -391,10 +430,11 @@ const PM_SORT: Record<PmSortKey, (r: PmRow) => SortValue> = {
   town: (r) => r.town,
 };
 
-/** Today's order: overdue first, then the most used, then the equipment id. */
+/** The default order: priority machines first, then overdue, then the most used, then the equipment id. */
 function defaultPmOrder(a: PmRow, b: PmRow): number {
+  const prio = (r: PmRow) => (r.plan.priority ? 0 : 1);
   const rank = (r: PmRow) => (r.result.status === 'overdue' ? 0 : 1);
-  return rank(a) - rank(b) || (b.result.pctUsed ?? -1) - (a.result.pctUsed ?? -1) || a.vantageEquipmentId - b.vantageEquipmentId;
+  return prio(a) - prio(b) || rank(a) - rank(b) || (b.result.pctUsed ?? -1) - (a.result.pctUsed ?? -1) || a.vantageEquipmentId - b.vantageEquipmentId;
 }
 
 /** The rows in the chosen order (equipment id as tiebreak, blanks last); no sort is the default order. */
@@ -407,4 +447,16 @@ export async function getEquipmentPm(db: Db, vantageEquipmentId: number, now: Da
   const machines = await loadMachines(db, [vantageEquipmentId]);
   if (machines.length === 0) return null;
   return (await buildRows(db, machines, await getPmSettings(db), now))[0] ?? null;
+}
+
+/**
+ * PM rows for these Vantage equipment ids in one pass (the same rows `getEquipmentPm` gives); an id
+ * with no active contract, hidden, or not a real machine is absent from the map.
+ */
+export async function listPmForEquipment(db: Db, vantageEquipmentIds: number[], now: Date = new Date()): Promise<Map<number, PmRow>> {
+  if (vantageEquipmentIds.length === 0) return new Map();
+  const machines = await loadMachines(db, [...new Set(vantageEquipmentIds)]);
+  if (machines.length === 0) return new Map();
+  const rows = await buildRows(db, machines, await getPmSettings(db), now);
+  return new Map(rows.map((r) => [r.vantageEquipmentId, r]));
 }

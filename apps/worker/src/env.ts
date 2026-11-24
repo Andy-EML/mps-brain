@@ -24,6 +24,13 @@ const envSchema = z.object({
   CONTRACTS_CRON: z.string().min(1).default('55 2 * * *'),
   /** Vantage work visits (12-month window, incremental). Nightly, after contracts. */
   WORK_CRON: z.string().min(1).default('5 3 * * *'),
+  /** Vantage scheduled field calls for today and tomorrow (PM planner Upcoming jobs): every 30 min, 06:00-19:30. */
+  SCHEDULE_CRON: z.string().min(1).default('*/30 6-19 * * *'),
+  /** Vantage engineers (PM planner). Nightly. */
+  ENGINEERS_CRON: z.string().min(1).default('15 3 * * *'),
+  /** postcodes.io district lookups (county and centroid for the PM planner). Nightly, after engineers. */
+  POSTCODE_CRON: z.string().min(1).default('40 3 * * *'),
+  POSTCODES_BASE_URL: z.url().default('https://api.postcodes.io'),
   OFFLINE_ALERT_HOURS: z.coerce.number().int().positive().default(24),
   TZ_SCHEDULE: z.string().min(1).default('Europe/London'),
   ADMIN_USERNAME: z.string().min(1).default('admin'),

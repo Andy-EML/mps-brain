@@ -21,6 +21,10 @@ describe('loadEnv', () => {
       DRMS_PULL_CRON: '15 * * * *',
       ALARMS_CRON: '*/30 * * * *',
       ORDERS_CRON: '20 * * * *',
+      SCHEDULE_CRON: '*/30 6-19 * * *',
+      ENGINEERS_CRON: '15 3 * * *',
+      POSTCODE_CRON: '40 3 * * *',
+      POSTCODES_BASE_URL: 'https://api.postcodes.io',
       OFFLINE_ALERT_HOURS: 24,
       TZ_SCHEDULE: 'Europe/London',
       ADMIN_USERNAME: 'admin',
@@ -29,6 +33,15 @@ describe('loadEnv', () => {
       AUTO_REGISTER_EXCLUDE: 'tfc group',
     });
     expect(env).not.toHaveProperty('DRMS_AUTO_REGISTER_ENABLED');
+  });
+  it('reads the planner feed schedules and rejects a bad postcodes.io URL', () => {
+    expect(loadEnv({ ...base, SCHEDULE_CRON: '*/15 7-18 * * *', ENGINEERS_CRON: '0 4 * * *', POSTCODE_CRON: '0 5 * * *', POSTCODES_BASE_URL: 'http://localhost:9' })).toMatchObject({
+      SCHEDULE_CRON: '*/15 7-18 * * *',
+      ENGINEERS_CRON: '0 4 * * *',
+      POSTCODE_CRON: '0 5 * * *',
+      POSTCODES_BASE_URL: 'http://localhost:9',
+    });
+    expect(() => loadEnv({ ...base, POSTCODES_BASE_URL: 'not a url' })).toThrow();
   });
   it('reads the registration settings and rejects an exclusion that is not a valid regex', () => {
     expect(loadEnv({ ...base, AUTO_REGISTER_PAUSE_SECONDS: '120', AUTO_REGISTER_MAX_PER_RUN: '5', AUTO_REGISTER_EXCLUDE: 'tfc group|acme' })).toMatchObject({

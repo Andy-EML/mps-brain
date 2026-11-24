@@ -12,6 +12,7 @@ export const DEVICE_ORIGINS = {
   'toner-yield': { label: 'Toner yield', href: '/orders/yield' },
   'site-stock': { label: 'Site stock', href: '/site-stock' },
   pm: { label: 'PM due', href: '/pm' },
+  'pm-planner': { label: 'PM planner', href: '/pm/planner' },
   reconnect: { label: 'Reconnect', href: '/reconnect' },
   registrations: { label: 'DRMS registrations', href: '/registrations' },
   alerts: { label: 'Alerts', href: '/alerts' },

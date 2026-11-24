@@ -13,3 +13,5 @@ export * from './device-name';
 export * from './site-stock-csv';
 export * from './cartridge-change';
 export * from './not-fitted';
+export * from './region';
+export * from './county';

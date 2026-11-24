@@ -14,6 +14,9 @@ describe('QUEUE_OPTIONS', () => {
       [QUEUES.vantageMeters]: { name: 'vantage-meters', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       [QUEUES.vantageContracts]: { name: 'vantage-contracts', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       [QUEUES.vantageWork]: { name: 'vantage-work', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
+      [QUEUES.vantageEngineers]: { name: 'vantage-engineers', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
+      [QUEUES.vantageSchedule]: { name: 'vantage-schedule', policy: 'stately', retryLimit: 0, expireInSeconds: 1800 },
+      [QUEUES.postcodeLookup]: { name: 'postcode-lookup', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       [QUEUES.replenishEvaluate]: { name: 'replenish-evaluate', policy: 'stately', retryLimit: 0, expireInSeconds: 1800 },
       [QUEUES.drmsRegistrationScan]: { name: 'drms-registration-scan', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       // Up to 40 registrations with a 90 s pause and a poll each: hours, not minutes.

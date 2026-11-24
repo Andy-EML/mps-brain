@@ -51,6 +51,8 @@ apps/web          Next.js UI (Foundation Part 2)
 
 Data flow: `vantage-pull` and `drms-pull` upsert raw records, then each queues `link-run` (+120 s), which computes links and issues in `@mps/core` and persists them. `drms-snapshot` stores `LatestCounters` for each Registered or Discovered device (most of the fleet is Discovered; there is no production DRMS access, KM controls it), deduped on `(device, CounterId)`. Every job writes a `sync_runs` row.
 
+PM planner (`/pm/planner`, migrations `0021`-`0023`): `vantage-schedule` (`*/30 6-19 * * *`) copies engineers' booked calls for today/tomorrow into `vantage_scheduled_units`, `vantage-engineers` (nightly) copies engineer names, and `postcode-lookup` (nightly, 100 districts per run) caches outward-code county and centroid in `postcode_districts`. After a first deploy, use *Run now* on `postcode-lookup` until every district is cached.
+
 Job functions take injected deps (`db`, the client, `now`) and return a `JobResult`. Test them against `createTestDb()` with fake clients, never live APIs.
 
 ## Rules that aren't obvious from the code
@@ -66,6 +68,7 @@ Job functions take injected deps (`db`, the client, `now`) and return a `JobResu
 - Phase 0 (see spec): DRMS `ErpId` = Vantage `Equipment.Id` when set (mostly empty or a copy of the serial, so serial is the main key). `CustomerErpId` is a DRMS-side `CUST
 - Keep the full API payload in `raw jsonb` on synced rows, since later sub-projects need fields we haven't modelled.
 - Dealer fixed values (for later registration work): `GB500`, `OFC580`, COM servers in use: **`COM_GB502` and `COM_GB503`** (not GB501). Almost every device is configured by hand to connect straight to CSRC; a handful go through the DCA (`DEFCNTCOM_GB500`).
+- **postcodes.io is the one other external dependency** (read-only, no key): `postcode-lookup` sends outward codes only (e.g. `GU14`), never full postcodes or customer data. The worker must be able to reach `api.postcodes.io` (`POSTCODES_BASE_URL`).
 - Secrets only come from env (`.env` locally, Portainer stack env in prod). Never log tokens, and never commit `.env` or `fixtures/raw/`.
 
 ## Deploy target

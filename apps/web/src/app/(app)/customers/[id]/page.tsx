@@ -4,6 +4,7 @@ import { ArrowLeft, Boxes, ChevronRight, PackageX } from 'lucide-react';
 import {
   getCustomer,
   getDefaultSettings,
+  getPlannerSettings,
   listCustomerDevices,
   listCustomerOrders,
   listCustomerSettings,
@@ -21,6 +22,8 @@ import { customerHref, customerStockBadge, customersBackHref } from '@/component
 import { shelfHref } from '@/components/shelf';
 import { DeviceTable } from '@/components/device-table';
 import { OrderHistory, type OrderMachine } from '@/components/order-history';
+import { OtherDealerBadge } from '@/components/other-dealer-badge';
+import { OtherDealerControl } from '@/components/other-dealer-control';
 import { PageHeader } from '@/components/page-header';
 import { SelfManagedSwitch } from '@/components/self-managed-switch';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
@@ -150,7 +153,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
   const since = new Date();
   since.setMonth(since.getMonth() - ORDER_MONTHS);
 
-  const [devices, orders, shelves, preview, settingsRows, defaults, families] = await Promise.all([
+  const [devices, orders, shelves, preview, settingsRows, defaults, families, planner] = await Promise.all([
     listCustomerDevices(db, ids),
     listCustomerOrders(db, ids, since),
     listCustomerShelves(db, ids),
@@ -158,7 +161,9 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
     listCustomerSettings(db),
     getDefaultSettings(db),
     listFamilies(db),
+    getPlannerSettings(db),
   ]);
+  const dealerSuggestions = [...new Set([planner.regionDealers.ireland, planner.regionDealers.scotland].filter((d): d is string => !!d))];
   const settings = settingsRows.find((r) => r.vantageCustomerId === id);
 
   // Errors from the reused actions.
@@ -221,6 +226,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
             {customer.deleted ? <ToneBadge tone="critical" dot={false}>Deleted in Vantage</ToneBadge> : null}
             {isHeadOffice ? <ToneBadge tone="muted" dot={false}>Head office</ToneBadge> : null}
             {customer.isOnStop ? <ToneBadge tone="critical">On stop</ToneBadge> : null}
+            <OtherDealerBadge info={customer.otherDealer} />
           </>
         }
         subtitle={
@@ -237,13 +243,27 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
           </>
         }
         actions={
-          <SelfManagedSwitch
-            vantageCustomerId={id}
-            customerName={name}
-            on={sm.source === 'site'}
-            viaHeadOffice={sm.source === 'head_office' ? customer.headOffice : null}
-            preview={preview}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <SelfManagedSwitch
+              vantageCustomerId={id}
+              customerName={name}
+              on={sm.source === 'site'}
+              viaHeadOffice={sm.source === 'head_office' ? customer.headOffice : null}
+              preview={preview}
+            />
+            <OtherDealerControl
+              // Remounts from the saved state after a save.
+              key={`${customer.ownOverride}|${customer.ownDealerName}`}
+              vantageCustomerId={id}
+              customerName={name}
+              ownOverride={customer.ownOverride}
+              ownDealerName={customer.ownDealerName}
+              effective={customer.otherDealer}
+              defaultInfo={customer.otherDealerDefault}
+              suggestions={dealerSuggestions}
+              isHeadOffice={isHeadOffice}
+            />
+          </div>
         }
       />
 
@@ -361,6 +381,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
                             {s.name ?? `Customer ${s.vantageId}`}
                           </Link>
                           {s.reference ? <span className="font-mono text-[11px] text-muted-foreground">{s.reference}</span> : null}
+                          <OtherDealerBadge info={s.otherDealer} className="ml-2 px-2 py-0.5 text-[11px]" />
                         </td>
                         <td className={CELL}>{s.town ?? '—'}</td>
                         <td className={cn(CELL, 'text-right tabular')}>{formatNumber(s.machines)}</td>

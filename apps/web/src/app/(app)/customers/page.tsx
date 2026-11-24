@@ -1,13 +1,11 @@
-import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { CUSTOMER_SORT_KEYS, listCustomers, type CustomerTab } from '@mps/db/queries';
+import { CUSTOMER_SORT_KEYS, listCustomerWarnings, listCustomers, type CustomerTab, type CustomerWarnings } from '@mps/db/queries';
 import { cn } from 'cn';
-import { CustomerTableRow } from '@/components/customer-table-row';
+import { CustomerAccordionRow } from '@/components/customer-accordion-row';
 import {
   CUSTOMER_TABS,
   DEFAULT_CUSTOMER_TAB,
-  customerHref,
   customerStockBadge,
   parseCustomerSearchParams,
 } from '@/components/customers';
@@ -33,6 +31,7 @@ function first(value: string | string[] | undefined): string | undefined {
 
 const HEAD = 'px-4 py-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase whitespace-nowrap';
 const CELL = 'px-4 py-3 align-middle text-[13px]';
+const NO_WARNINGS: CustomerWarnings = { noReading: 0, pmOverdue: 0, pending: 0 };
 
 const EMPTY: Record<CustomerTab, string> = {
   'with-machines': 'No customer has a linked DRMS device yet.',
@@ -45,8 +44,9 @@ const EMPTY: Record<CustomerTab, string> = {
  * `/customers`, for every signed-in user: Vantage customers with their machine, pending proposal
  * and shelf counts and who keeps their toner (the dealer, or the customer itself — on its own flag
  * or its head office's). Tabs With machines (default) / Self-managed / Head offices / All, each with
- * its count; the search (name, reference, town) narrows the rows and the counts alike. A row opens
- * the customer page.
+ * its count; the search (name, reference, town) narrows the rows and the counts alike. A row
+ * expands in place onto its machine lines (a head office on the Head offices tab: its sites), with
+ * a red ! for any warning; the name opens the customer page.
  */
 export default async function CustomersPage({ searchParams }: PageProps<'/customers'>) {
   // First statement: the (app) layout's own requireUser() does not gate this page, because Next
@@ -63,6 +63,8 @@ export default async function CustomersPage({ searchParams }: PageProps<'/custom
     cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
   });
   const showSites = tab === 'head-offices';
+  // Header cells (Name, Ref, Town, Machines, Pending, Shelves, [Sites], Stock): the panel's colSpan.
+  const columns = showSites ? 8 : 7;
   // Sites is a column only on Head offices; a `sort=sites` carried to another tab is dropped there.
   const state = parsed.sort === 'sites' && !showSites ? { ...parsed, sort: null } : parsed;
   const page = state.page;
@@ -75,6 +77,8 @@ export default async function CustomersPage({ searchParams }: PageProps<'/custom
     offset: (page - 1) * state.rows,
     sort: sortSpec(state),
   });
+  // The red ! per row: this page's customers only, one set-wise call.
+  const warnings = await listCustomerWarnings(db, rows.map((r) => r.vantageId));
 
   const tabParam = tab === DEFAULT_CUSTOMER_TAB ? undefined : tab;
   const searchParam = search || undefined;
@@ -149,20 +153,15 @@ export default async function CustomersPage({ searchParams }: PageProps<'/custom
               </thead>
               <tbody>
                 {rows.map((r) => {
-                  const href = customerHref(r.vantageId, back);
                   const stock = customerStockBadge(r.selfManaged);
                   return (
-                    <CustomerTableRow key={r.vantageId} href={href}>
-                      <td className={cn(CELL, 'max-w-[320px]')}>
-                        <Link href={href} className="block truncate font-medium hover:text-brand hover:underline">
-                          {r.name ?? `Customer ${r.vantageId}`}
-                        </Link>
-                        {r.deleted ? (
-                          <ToneBadge tone="critical" dot={false} className="mt-1 px-2 py-0.5 text-[11px]">
-                            Deleted in Vantage
-                          </ToneBadge>
-                        ) : null}
-                      </td>
+                    <CustomerAccordionRow
+                      key={r.vantageId}
+                      row={r}
+                      warnings={warnings.get(r.vantageId) ?? NO_WARNINGS}
+                      back={back}
+                      columns={columns}
+                    >
                       <td className={cn(CELL, 'font-mono text-[12px]')}>{r.reference ?? '—'}</td>
                       <td className={CELL}>{r.town ?? '—'}</td>
                       <td className={cn(CELL, 'text-right tabular')}>{formatNumber(r.machines)}</td>
@@ -178,7 +177,7 @@ export default async function CustomersPage({ searchParams }: PageProps<'/custom
                           </ToneBadge>
                         )}
                       </td>
-                    </CustomerTableRow>
+                    </CustomerAccordionRow>
                   );
                 })}
               </tbody>

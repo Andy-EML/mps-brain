@@ -1,4 +1,4 @@
-import { asc, desc, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getAppState } from '../app-state';
 import type { Db } from '../client';
 import { counterNames, syncRuns, users } from '../schema';
@@ -43,6 +43,27 @@ export async function listSyncRuns(
     .from(syncRuns)
     .orderBy(desc(syncRuns.startedAt))
     .limit(limit);
+}
+
+export type SyncRunRow = Awaited<ReturnType<typeof listSyncRuns>>[number];
+
+/** The latest run of `job` that finished well (`success` or `partial`), or null when there is none. */
+export async function lastGoodSyncRun(db: Db, job: string): Promise<SyncRunRow | null> {
+  const [row] = await db
+    .select({
+      id: syncRuns.id,
+      job: syncRuns.job,
+      startedAt: syncRuns.startedAt,
+      finishedAt: syncRuns.finishedAt,
+      status: syncRuns.status,
+      stats: syncRuns.stats,
+      errorSample: syncRuns.errorSample,
+    })
+    .from(syncRuns)
+    .where(and(eq(syncRuns.job, job), inArray(syncRuns.status, ['success', 'partial'])))
+    .orderBy(desc(syncRuns.startedAt))
+    .limit(1);
+  return row ?? null;
 }
 
 /** Re-export of `getAppState` under the name later tasks import from `@mps/db/queries`. */

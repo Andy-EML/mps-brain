@@ -139,3 +139,13 @@ export function formatPercent(value: number | null | undefined): string {
 
 /* The toner banding that used to live here is now `tonerState` in `@/components/toner`, next to
  * `deviceStatusLabel` and its tests — one source of truth for the 5%/20% thresholds. */
+
+/**
+ * An accessible name for a per-machine control: the visible text (or the icon's name) first, then
+ * the customer and serial, so a screen-reader list of buttons tells the rows apart.
+ */
+export function machineActionLabel(action: string, customerName: string | null, serial: string | null): string {
+  const customer = customerName?.trim() || 'Unknown customer';
+  const s = serial?.trim();
+  return `${action}: ${customer}${s ? `, serial ${s}` : ''}`;
+}

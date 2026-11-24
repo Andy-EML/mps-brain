@@ -1,7 +1,16 @@
-import { DEFAULT_PM_SETTINGS, getPmSettings, hasSavedPmSettings, listWorkCategories, type PmSettings } from '@mps/db/queries';
+import {
+  DEFAULT_PLANNER_SETTINGS,
+  DEFAULT_PM_SETTINGS,
+  getPlannerSettings,
+  getPmSettings,
+  hasSavedPmSettings,
+  listWorkCategories,
+  type PmSettings,
+} from '@mps/db/queries';
 import { cn } from 'cn';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { PageHeader } from '@/components/page-header';
+import { PlannerSettingsCard } from '@/components/planner-settings-card';
 import { SettingsTabs } from '@/components/settings-tabs';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { formatNumber, pluralise } from '@/lib/format';
+import { plannerSettingsToValues } from '@/lib/planner-settings-form';
 import { suggestPmCategoryIds } from '@/lib/pm-settings-form';
 import { settingsErrorMessage } from '@/lib/settings-form';
 import { savePmSettingsAction } from './actions';
@@ -99,7 +109,12 @@ export default async function PmSettingsPage({ searchParams }: PageProps<'/setti
   const saved = !error && first(params.saved) === '1';
 
   const db = getDb();
-  const [settings, categories, hasSaved] = await Promise.all([getPmSettings(db), listWorkCategories(db), hasSavedPmSettings(db)]);
+  const [settings, categories, hasSaved, planner] = await Promise.all([
+    getPmSettings(db),
+    listWorkCategories(db),
+    hasSavedPmSettings(db),
+    getPlannerSettings(db),
+  ]);
 
   // A saved id with no visits any more stays listed (and ticked), so saving does not quietly drop it.
   const seen = new Set(categories.map((c) => c.id));
@@ -240,6 +255,13 @@ export default async function PmSettingsPage({ searchParams }: PageProps<'/setti
           </Button>
         </div>
       </form>
+
+      {/* A form of its own (client, useActionState), so saving one card never re-saves the other. */}
+      <PlannerSettingsCard
+        initial={plannerSettingsToValues(planner)}
+        defaults={plannerSettingsToValues(DEFAULT_PLANNER_SETTINGS)}
+        className="mt-5"
+      />
     </>
   );
 }

@@ -13,6 +13,12 @@ export const QUEUES = {
   vantageContracts: 'vantage-contracts',
   /** Nightly: Vantage work visits for the last 12 months (PM due). */
   vantageWork: 'vantage-work',
+  /** Nightly: Vantage engineers (id, name, active) for the PM planner. */
+  vantageEngineers: 'vantage-engineers',
+  /** Intraday (06:00-19:30): work units scheduled for today and tomorrow, for the PM planner's Upcoming jobs. */
+  vantageSchedule: 'vantage-schedule',
+  /** Nightly: caches county and centroid per customer postcode district from postcodes.io. */
+  postcodeLookup: 'postcode-lookup',
   replenishEvaluate: 'replenish-evaluate',
   /** Nightly: checks Discovered devices and fills the DRMS registration approval queue. */
   drmsRegistrationScan: 'drms-registration-scan',

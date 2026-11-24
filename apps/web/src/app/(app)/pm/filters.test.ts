@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PmResult, PmRow, PmStatus } from '@mps/db/queries';
 import { inDefaultView } from '@mps/db/queries';
-import { applyPmView, countPm, dueKinds, inPmView, parsePmFilters, type PmFilters } from './filters';
+import { applyPmView, canAddToPlan, countPm, dueKinds, inPmView, parsePmFilters, type PmFilters } from './filters';
 
 const NOW = new Date('2026-11-18T12:00:00Z');
 
@@ -10,6 +10,11 @@ const row = (status: PmStatus, over: Partial<PmResult> = {}, id = 1): PmRow => (
   drmsEquipmentId: null,
   customerName: 'Acme',
   town: null,
+  customerId: null,
+  district: null,
+  county: null,
+  otherDealer: { dealer: null, source: null, region: null },
+  plan: { whenInArea: false, priority: false, boardColumn: null },
   serial: 'A1',
   model: 'C300i',
   family: 'TN-328',
@@ -74,6 +79,12 @@ describe('parsePmFilters', () => {
       family: 3,
       overdue: 'pages',
     });
+  });
+
+  it('accepts the When in area and Other dealer tabs', () => {
+    expect(parsePmFilters(new URLSearchParams('?view=other-dealer')).view).toBe('other-dealer');
+    expect(parsePmFilters({ view: 'when-in-area' }).view).toBe('when-in-area');
+    expect(parsePmFilters({ view: 'other_dealer' }).view).toBe('due');
   });
 
   it('takes the first of repeated params', () => {
@@ -197,6 +208,76 @@ describe('countPm', () => {
       ],
       NOW,
     );
-    expect(c).toEqual({ due: 4, booked: 1, dismissed: 1, all: 7, overdue: 2, overdueByPages: 1, overdueByTime: 1, dueByPages: 2, dueByTime: 1 });
+    expect(c).toEqual({
+      due: 4,
+      'when-in-area': 0,
+      booked: 1,
+      dismissed: 1,
+      'other-dealer': 0,
+      all: 7,
+      overdue: 2,
+      overdueByPages: 1,
+      overdueByTime: 1,
+      dueByPages: 2,
+      dueByTime: 1,
+    });
+  });
+});
+
+describe('planner tabs', () => {
+  const MJ = { dealer: 'MJ Flood', source: 'region' as const, region: 'ireland' as const };
+  const wia = (r: PmRow): PmRow => ({ ...r, plan: { ...r.plan, whenInArea: true } });
+  const other = (r: PmRow): PmRow => ({ ...r, otherDealer: MJ });
+  const rows: PmRow[] = [
+    row('overdue', { reason: 'pages' }, 1),
+    wia(row('overdue', { reason: 'time_cap', timeCapDate: new Date('2025-05-18T12:00:00Z') }, 2)),
+    wia(row('ok', {}, 3)),
+    wia({ ...row('booked', {}, 4), view: 'booked' }),
+    other(row('overdue', {}, 5)),
+    other({ ...row('booked', {}, 6), view: 'booked' }),
+    other({ ...row('overdue', {}, 7), view: 'dismissed' }),
+    other(row('ok', {}, 8)),
+    { ...row('overdue', {}, 9), view: 'dismissed' },
+  ];
+  const ids = (rs: PmRow[]) => rs.map((r) => r.vantageEquipmentId);
+  const tab = (view: PmFilters['view']) => ids(applyPmView(rows, { view, status: 'all', overdue: 'all' }, NOW));
+
+  it('Due excludes a When-in-area machine and other-dealer machines', () => {
+    expect(tab('due')).toEqual([1]);
+  });
+
+  it('When in area lists flagged machines only while still due, overdue ones included', () => {
+    expect(tab('when-in-area')).toEqual([2]);
+  });
+
+  it('Other dealer lists other-dealer machines in every state; no other tab shows them', () => {
+    expect(tab('other-dealer')).toEqual([5, 6, 7, 8]);
+    expect(tab('booked')).toEqual([4]);
+    expect(tab('dismissed')).toEqual([9]);
+    expect(tab('all')).toEqual([1, 2, 3, 4, 9]);
+  });
+
+  it('the status filter still narrows the new tabs', () => {
+    expect(ids(applyPmView(rows, { view: 'other-dealer', status: 'ok', overdue: 'all' }, NOW))).toEqual([8]);
+  });
+
+  it('Add to plan is offered on Due and When in area rows only', () => {
+    expect(rows.filter((r) => canAddToPlan(r, NOW)).map((r) => r.vantageEquipmentId)).toEqual([1, 2]);
+  });
+
+  it('countPm counts each tab; the overdue split stays within Due', () => {
+    expect(countPm(rows, NOW)).toEqual({
+      due: 1,
+      'when-in-area': 1,
+      booked: 1,
+      dismissed: 1,
+      'other-dealer': 4,
+      all: 5,
+      overdue: 1,
+      overdueByPages: 1,
+      overdueByTime: 0,
+      dueByPages: 1,
+      dueByTime: 0,
+    });
   });
 });

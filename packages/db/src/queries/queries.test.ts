@@ -13,12 +13,13 @@ import {
   drmsEquipment,
   linkIssues,
   siteStockShelves,
+  syncRuns,
   vantageEquipment,
   vantageSalesOrderLines,
   vantageSalesOrders,
 } from '../schema';
 import { createTestDb, seedDemoFixture, type DemoFixture, type TestDb } from '../testing';
-import { listUsers, listCounterNames, listSyncRuns, getAppStateValue } from './admin';
+import { listUsers, listCounterNames, listSyncRuns, getAppStateValue, lastGoodSyncRun } from './admin';
 import { countAlerts, listAlerts } from './alerts';
 import { getCounterHistory, getDevice, getLatestCounters, listDeviceAlarms, listDeviceOrders } from './device';
 import { listDeviceFilterOptions, listDevices } from './devices';
@@ -967,6 +968,19 @@ describe('queries', () => {
       const rows = await listSyncRuns(t.db);
       expect(rows).toHaveLength(2);
       expect(rows.map((r) => r.job).sort()).toEqual(['drms-pull', 'vantage-pull']);
+    });
+
+    it('lastGoodSyncRun returns the latest success or partial run of one job, else null', async () => {
+      expect(await lastGoodSyncRun(t.db, 'vantage-schedule')).toBeNull();
+      const at = (h: number) => new Date(FIXED_NOW.getTime() - h * 3_600_000);
+      await t.db.insert(syncRuns).values([
+        { job: 'vantage-schedule', startedAt: at(5), finishedAt: at(5), status: 'success' },
+        { job: 'vantage-schedule', startedAt: at(3), finishedAt: at(3), status: 'partial' },
+        { job: 'vantage-schedule', startedAt: at(2), finishedAt: at(2), status: 'failed' },
+        { job: 'vantage-schedule', startedAt: at(1), status: 'running' },
+        { job: 'vantage-pull', startedAt: at(0.5), finishedAt: at(0.5), status: 'success' },
+      ]);
+      expect(await lastGoodSyncRun(t.db, 'vantage-schedule')).toMatchObject({ job: 'vantage-schedule', status: 'partial', startedAt: at(3) });
     });
 
     it('getAppStateValue re-exports getAppState behaviour', async () => {

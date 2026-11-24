@@ -1,4 +1,4 @@
-import { getPmSettings, listPmDue } from '@mps/db/queries';
+import { getPmSettings, listPmDue, overdueMonths, type BoardColumnStored } from '@mps/db/queries';
 import { dismissReasonLabel, reasonText, statusLabel, visitReferences } from '@/components/pm-status';
 import { requireUser } from '@/lib/auth';
 import { toCsv } from '@/lib/csv';
@@ -38,9 +38,16 @@ const HEADERS = [
   'Snooze until (UK time)',
   'Serviced outside Vantage on (UK time)',
   'Booked — no visit seen',
+  'Priority',
+  'When in area',
+  'Overdue (months)',
+  'On plan',
+  'Other dealer',
   'DRMS id',
   'Vantage equipment id',
 ];
+
+const BOARD_LABEL: Record<BoardColumnStored, string> = { to_plan: 'To plan', asked: 'Asked engineer', done: 'Done' };
 
 const isoDay = (d: Date | null): string => formatIsoDateTime(d).slice(0, 10);
 
@@ -54,8 +61,8 @@ export async function GET(request: Request) {
   const db = getDb();
   const now = new Date();
   const [all, settings] = await Promise.all([
-    // view passed explicitly: the DB only defaults it for the old `status: 'default'` filter.
-    listPmDue(db, now, { view: filters.view, customer: filters.customer, family: filters.family, q: filters.q }),
+    // Every row of every dealer, like the page: the tab (incl. When in area / Other dealer) is applied by applyPmView.
+    listPmDue(db, now, { view: 'all', dealer: 'all', customer: filters.customer, family: filters.family, q: filters.q }),
     getPmSettings(db),
   ]);
   const rows = applyPmView(all, filters, now, settings);
@@ -97,6 +104,11 @@ export async function GET(request: Request) {
         isoDay(a?.snoozeUntil ?? null),
         isoDay(a?.servicedOn ?? null),
         r.bookedOverdue ? 'yes' : '',
+        r.plan.priority ? 'yes' : '',
+        r.plan.whenInArea ? 'yes' : '',
+        overdueMonths(r, now),
+        r.plan.boardColumn ? BOARD_LABEL[r.plan.boardColumn] : '',
+        r.otherDealer.dealer,
         r.drmsEquipmentId,
         r.vantageEquipmentId,
       ];

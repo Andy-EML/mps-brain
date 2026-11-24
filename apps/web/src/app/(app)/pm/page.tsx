@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Download, Info } from 'lucide-react';
 import { cn } from 'cn';
-import { PM_SORT_KEYS, getPmSettings, listFamilies, listPmDue, londonDay, type PmRow, type PmSettings } from '@mps/db/queries';
+import { PM_SORT_KEYS, getPmSettings, listFamilies, listPmDue, londonDay, overdueMonths, type PmRow, type PmSettings } from '@mps/db/queries';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
@@ -20,20 +20,29 @@ import { hrefWith } from '@/lib/href';
 import { PM_DEFAULT_ROWS, pmKeep } from '@/lib/list-keep';
 import { lastPageOf, listHref, parseListState, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
 import { pmErrorMessage } from '@/lib/pm-action-form';
-import { PM_STATUSES, applyPmView, countPm, inPmView, parsePmFilters, type PmFilters, type PmViewFilter } from './filters';
+import { PM_STATUSES, applyPmView, canAddToPlan, countPm, parsePmFilters, tabOf, type PmFilters, type PmViewFilter } from './filters';
 
 export const metadata = { title: 'PM due · MPS Dashboard' };
 
 const LIST_KEY = 'pm';
 const DEFAULT_ROWS = PM_DEFAULT_ROWS;
-/** Columns in the collapsed row (`PmRow`). */
-const COLUMNS = 7;
+/** Columns in the collapsed row (`PmRow`), the narrow Plan cell included. */
+const COLUMNS = 8;
 
 const HEAD = 'px-4 py-2.5 text-left text-[11px] font-medium tracking-wider text-muted-foreground uppercase whitespace-nowrap';
 const CONTROL =
   'h-9 rounded-lg border border-input bg-card px-2 text-[13px] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none';
 
-const VIEW_LABEL: Record<PmViewFilter, string> = { due: 'Due', booked: 'Booked', dismissed: 'Dismissed', all: 'All' };
+const VIEW_LABEL: Record<PmViewFilter, string> = {
+  due: 'Due',
+  'when-in-area': 'When in area',
+  booked: 'Booked',
+  dismissed: 'Dismissed',
+  'other-dealer': 'Other dealer',
+  all: 'All',
+};
+/** Tab order on the page. */
+const TABS = ['due', 'when-in-area', 'booked', 'dismissed', 'other-dealer', 'all'] as const satisfies readonly PmViewFilter[];
 
 /** The URL params for a set of filters, defaults left off. */
 function filterParams(f: PmFilters): Record<string, string | number | undefined> {
@@ -51,10 +60,11 @@ const first = (v: string | string[] | undefined): string | undefined => (Array.i
 
 /**
  * `/pm`: machines on an active contract with their meter-driven preventive-maintenance state, as
- * accordion rows in four tabs (Due, Booked, Dismissed, All). Mark booked / Dismiss / Undo are
- * recorded in this app only — nothing is written to Vantage. Every row is loaded once (customer,
- * family and search applied) so the tabs can count them; the tab, status and overdue reason are
- * applied here.
+ * accordion rows in six tabs (Due, When in area, Booked, Dismissed, Other dealer, All). Mark booked /
+ * Dismiss / Undo and the planner flags (Priority, When in area, Add to plan, Mark as ours) are
+ * recorded in this app only — nothing is written to Vantage. Every row of every dealer is loaded once
+ * (customer, family and search applied) so the tabs can count them; the tab, status and overdue
+ * reason are applied here.
  */
 export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
   // First statement: the (app) layout's own requireUser() does not gate this page, because Next
@@ -77,8 +87,15 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
   const db = getDb();
   const now = new Date();
   const [all, settings, families] = await Promise.all([
-    // view 'all' explicitly: the tabs are counted and applied here (inPmView mirrors the DB rule).
-    listPmDue(db, now, { view: 'all', customer: filters.customer, family: filters.family, q: filters.q, sort: sortSpec(state) }),
+    // view and dealer 'all' explicitly: the tabs (incl. Other dealer) are counted and applied here.
+    listPmDue(db, now, {
+      view: 'all',
+      dealer: 'all',
+      customer: filters.customer,
+      family: filters.family,
+      q: filters.q,
+      sort: sortSpec(state),
+    }),
     getPmSettings(db),
     listFamilies(db),
   ]);
@@ -105,7 +122,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
       ? movedTo(all, rows, openId, filters, now, settings, state.rows, listParams)
       : null;
 
-  const tabs: FilterTab[] = (['due', 'booked', 'dismissed', 'all'] as const).map((v) => ({
+  const tabs: FilterTab[] = TABS.map((v) => ({
     value: v,
     label: <TabLabel label={VIEW_LABEL[v]} count={counts[v]} />,
   }));
@@ -139,6 +156,12 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
               }}
               className="w-[280px]"
             />
+            <Link
+              href="/pm/planner"
+              className="flex h-10 items-center rounded-lg border border-line bg-card px-3.5 text-sm font-medium transition-colors hover:bg-muted"
+            >
+              PM planner →
+            </Link>
             {/* A plain link, not next/link: the response is a file download, not a page. */}
             <a
               href={hrefWith('/pm/export', base)}
@@ -278,6 +301,9 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
                   <SortHeader label="Pages since / %" sortKey="pct" align="right" className={HEAD} {...sorting} />
                   <SortHeader label="Last counted visit" sortKey="lastVisit" className={HEAD} {...sorting} />
                   <SortHeader label="Est. due" sortKey="due" className={HEAD} {...sorting} />
+                  <th scope="col" className={cn(HEAD, 'w-px pr-3 pl-1')}>
+                    {filters.view === 'other-dealer' ? 'Dealer' : 'Plan'}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -292,6 +318,9 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
                     qualifyingMinutes={settings.qualifyingMinutes}
                     timeCapMonths={settings.timeCapMonths}
                     columns={COLUMNS}
+                    overdueMonths={overdueMonths(r, now)}
+                    otherDealerTab={filters.view === 'other-dealer'}
+                    canAddToPlan={canAddToPlan(r, now)}
                   />
                 ))}
               </tbody>
@@ -333,7 +362,7 @@ function movedTo(
   let list = rows;
   let keep: Record<string, string | number | undefined> = { ...filterParams(f), ...listParams };
   if (!list.some((r) => r.vantageEquipmentId === openId)) {
-    view = (['due', 'booked', 'dismissed'] as const).find((v) => inPmView(row, v, now)) ?? 'all';
+    view = tabOf(row, now);
     keep = { ...keep, view: view === 'due' ? undefined : view, status: undefined, overdue: undefined };
     list = applyPmView(all, { view, status: 'all', overdue: 'all' }, now, settings);
   }

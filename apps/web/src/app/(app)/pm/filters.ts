@@ -1,13 +1,14 @@
-import { DEFAULT_PM_SETTINGS, inPmView, type PmRow, type PmSettings, type PmStatus, type PmView } from '@mps/db/queries';
+import { DEFAULT_PM_SETTINGS, inPmView, type PmRow, type PmSettings, type PmStatus } from '@mps/db/queries';
 // Relative, not `@/`: vitest has no path alias.
 import { overdueKind } from '../../../components/pm-status';
 
 /**
  * The `/pm` page's search params, shared with its CSV export. `view` is the tab — Due (the
- * default), Booked, Dismissed or All; `status` narrows within it to one PM status (`all` = any).
+ * default), When in area, Booked, Dismissed, Other dealer or All; `status` narrows within it to one
+ * PM status (`all` = any).
  */
 
-export const PM_VIEWS = ['due', 'booked', 'dismissed', 'all'] as const satisfies readonly (PmView | 'all')[];
+export const PM_VIEWS = ['due', 'booked', 'dismissed', 'when-in-area', 'other-dealer', 'all'] as const;
 export const PM_STATUSES = ['overdue', 'due_soon', 'held', 'booked', 'unknown', 'ok'] as const satisfies readonly PmStatus[];
 export const OVERDUE_FILTERS = ['all', 'pages', 'time'] as const;
 
@@ -55,6 +56,33 @@ export function parsePmFilters(params: Params): PmFilters {
 // The tab rule lives in @mps/db (`inPmView`, also used by `listPmDue`); re-exported for the page.
 export { inPmView };
 
+/** Machines another dealer services for PM: only the Other dealer tab shows them. */
+const isOther = (r: PmRow): boolean => r.otherDealer.dealer !== null;
+
+/**
+ * Whether a row belongs to a `/pm` tab. Rows are loaded with `dealer: 'all'`. Due is ours, needing
+ * PM (`inPmView` due) and not set to When in area; When in area is ours, flagged and still due (it
+ * never drops back to Due on its own); Booked, Dismissed and All are ours as `inPmView` says; Other
+ * dealer is every other-dealer machine whatever its state.
+ */
+export function inPmTab(r: PmRow, view: PmViewFilter, now: Date): boolean {
+  if (view === 'other-dealer') return isOther(r);
+  if (isOther(r)) return false;
+  if (view === 'due') return !r.plan.whenInArea && inPmView(r, 'due', now);
+  if (view === 'when-in-area') return r.plan.whenInArea && inPmView(r, 'due', now);
+  return inPmView(r, view, now);
+}
+
+/** Add to plan is offered on Due and When in area rows only (not Booked, Dismissed or other-dealer ones). */
+export function canAddToPlan(r: PmRow, now: Date): boolean {
+  return inPmTab(r, 'due', now) || inPmTab(r, 'when-in-area', now);
+}
+
+/** The tab a row is found in when it is not in the current one (All when no narrower tab has it). */
+export function tabOf(r: PmRow, now: Date): PmViewFilter {
+  return (['due', 'when-in-area', 'booked', 'dismissed', 'other-dealer'] as const).find((v) => inPmTab(r, v, now)) ?? 'all';
+}
+
 export type DueKind = 'pages' | 'time';
 export type DueSoonSettings = Pick<PmSettings, 'dueSoonPct' | 'dueSoonDays'>;
 const DAY_MS = 86_400_000;
@@ -97,7 +125,7 @@ export function applyPmView(
   soon: DueSoonSettings = DEFAULT_PM_SETTINGS,
 ): PmRow[] {
   return rows.filter((r) => {
-    if (!inPmView(r, f.view, now)) return false;
+    if (!inPmTab(r, f.view, now)) return false;
     if (f.status !== 'all' && r.result.status !== f.status) return false;
     if (f.overdue !== 'all' && f.view === 'due' && !dueKinds(r, now, soon).includes(f.overdue)) return false;
     return true;
@@ -111,9 +139,27 @@ export type PmCounts = Record<
 
 /** Tab counts over rows already loaded (customer/family/search applied); the overdue and due-by-reason splits are within Due. */
 export function countPm(rows: PmRow[], now: Date, soon: DueSoonSettings = DEFAULT_PM_SETTINGS): PmCounts {
-  const c: PmCounts = { due: 0, booked: 0, dismissed: 0, all: rows.length, overdue: 0, overdueByPages: 0, overdueByTime: 0, dueByPages: 0, dueByTime: 0 };
+  const c: PmCounts = {
+    due: 0,
+    'when-in-area': 0,
+    booked: 0,
+    dismissed: 0,
+    'other-dealer': 0,
+    all: 0,
+    overdue: 0,
+    overdueByPages: 0,
+    overdueByTime: 0,
+    dueByPages: 0,
+    dueByTime: 0,
+  };
   for (const r of rows) {
-    if (inPmView(r, 'due', now)) {
+    if (isOther(r)) {
+      c['other-dealer'] += 1;
+      continue;
+    }
+    c.all += 1;
+    if (inPmTab(r, 'when-in-area', now)) c['when-in-area'] += 1;
+    else if (inPmTab(r, 'due', now)) {
       c.due += 1;
       const kinds = dueKinds(r, now, soon);
       if (kinds.includes('pages')) c.dueByPages += 1;

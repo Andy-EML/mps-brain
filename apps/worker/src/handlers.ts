@@ -12,6 +12,9 @@ import { runLinkRun } from './jobs/link-run';
 import { runReplenishEvaluate } from './jobs/replenish-evaluate';
 import { runVantageContracts } from './jobs/vantage-contracts';
 import { runVantageMeters } from './jobs/vantage-meters';
+import { runPostcodeLookup } from './jobs/postcode-lookup';
+import { runVantageEngineers } from './jobs/vantage-engineers';
+import { runVantageSchedule } from './jobs/vantage-schedule';
 import { runVantageWork } from './jobs/vantage-work';
 import { runVantageOrders } from './jobs/vantage-orders';
 import { runVantagePull } from './jobs/vantage-pull';
@@ -29,6 +32,8 @@ export interface HandlerDeps {
   queueReplenish: () => Promise<unknown>;
   now?: () => Date;
   offlineAlertHours?: number;
+  /** postcodes.io base URL (env `POSTCODES_BASE_URL`); defaults to the public API. */
+  postcodesBaseUrl?: string;
   /** DRMS registration settings (env `AUTO_REGISTER_*`); the defaults match the env defaults. */
   registration?: { excludeRegex: RegExp; pauseSeconds: number; maxPerRun: number; budgetMs?: number };
 }
@@ -78,6 +83,16 @@ export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobDa
     },
     [QUEUES.vantageWork]: async () => {
       await withSyncRun(db, QUEUES.vantageWork, () => runVantageWork({ db, vantage, now }));
+    },
+    [QUEUES.vantageEngineers]: async () => {
+      await withSyncRun(db, QUEUES.vantageEngineers, () => runVantageEngineers({ db, vantage, now }));
+    },
+    [QUEUES.vantageSchedule]: async () => {
+      await withSyncRun(db, QUEUES.vantageSchedule, () => runVantageSchedule({ db, vantage, now }));
+    },
+    [QUEUES.postcodeLookup]: async () => {
+      // The only external call besides Vantage and DRMS: GET postcodes.io/outcodes/{district}.
+      await withSyncRun(db, QUEUES.postcodeLookup, () => runPostcodeLookup({ db, baseUrl: deps.postcodesBaseUrl, now }));
     },
     [QUEUES.replenishEvaluate]: async () => {
       await withSyncRun(db, QUEUES.replenishEvaluate, () => runReplenishEvaluate({ db, now }));

@@ -64,7 +64,7 @@ export default async function AdminJobsPage() {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-[15px] font-medium">Run a job now</h2>
           <RunAllJobsButton
-            confirm={`Run all? This queues ${RUN_ALL_QUEUES.length} jobs that call the live DRMS and Vantage APIs, including the counter snapshot, the slowest job. Link run and replenishment check follow on their own. The registration sender is not included.`}
+            confirm={`Run all? This queues ${RUN_ALL_QUEUES.length} jobs that call the live DRMS, Vantage and postcodes.io APIs, including the counter snapshot, the slowest job. Link run and replenishment check follow on their own. The registration sender is not included.`}
           />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">

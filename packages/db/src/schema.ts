@@ -205,6 +205,56 @@ export const vantageWorkVisits = pgTable(
   (t) => [index('vantage_work_visits_equipment_start_idx').on(t.vantageEquipmentId, t.workStart)],
 );
 
+/** Vantage `Engineer` (id, name, active flag) for the PM planner. Replaced wholesale each night. */
+export const vantageEngineers = pgTable('vantage_engineers', {
+  vantageId: integer('vantage_id').primaryKey(),
+  name: text('name'),
+  isActive: boolean('is_active').notNull().default(true),
+  raw: jsonb('raw').notNull(),
+  syncedAt: ts('synced_at').notNull().defaultNow(),
+});
+
+/**
+ * Scheduled `WorkUnit`s for today and tomorrow (London days), refreshed intraday by `vantage-schedule`.
+ * Holds calls with no machine too (`vantage_equipment_id` null). The whole table is replaced each run.
+ */
+export const vantageScheduledUnits = pgTable(
+  'vantage_scheduled_units',
+  {
+    workUnitId: integer('work_unit_id').primaryKey(),
+    workId: integer('work_id').notNull(),
+    workReference: text('work_reference'),
+    engineerId: integer('engineer_id'),
+    customerId: integer('customer_id'),
+    vantageEquipmentId: integer('vantage_equipment_id'),
+    scheduledStart: ts('scheduled_start').notNull(),
+    categoryId: integer('category_id'),
+    categoryName: text('category_name'),
+    categoryType: text('category_type'),
+    workStart: ts('work_start'),
+    /** `Work.CompletedDate`. */
+    completedAt: ts('completed_at'),
+    raw: jsonb('raw').notNull(),
+    syncedAt: ts('synced_at').notNull().defaultNow(),
+  },
+  (t) => [index('vantage_scheduled_units_start_idx').on(t.scheduledStart)],
+);
+
+/** postcodes.io cache per postcode district (outward code). `not_found` rows stop a daily re-ask. */
+export const postcodeDistricts = pgTable(
+  'postcode_districts',
+  {
+    district: text('district').primaryKey(),
+    county: text('county'),
+    adminDistrict: text('admin_district'),
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
+    status: text('status', { enum: ['ok', 'not_found'] }).notNull(),
+    lookedUpAt: ts('looked_up_at').notNull().defaultNow(),
+  },
+  () => [check('postcode_districts_status', sql`status in ('ok', 'not_found')`)],
+);
+
 export const drmsEquipment = pgTable(
   'drms_equipment',
   {
@@ -483,13 +533,27 @@ export const replenishmentSettings = pgTable(
  * replenishment for its devices. Keyed by Vantage customer id (a site or a head office); a flagged
  * head office covers its sites. A row with `self_managed = false` means "turned off", never an override.
  */
-export const customerFlags = pgTable('customer_flags', {
-  vantageCustomerId: integer('vantage_customer_id').primaryKey(),
-  selfManaged: boolean('self_managed').notNull().default(false),
-  selfManagedNote: text('self_managed_note'),
-  updatedBy: integer('updated_by').references(() => users.id),
-  updatedAt: ts('updated_at').notNull().defaultNow(),
-});
+export const customerFlags = pgTable(
+  'customer_flags',
+  {
+    vantageCustomerId: integer('vantage_customer_id').primaryKey(),
+    selfManaged: boolean('self_managed').notNull().default(false),
+    selfManagedNote: text('self_managed_note'),
+    /** PM only: `dealer` (another dealer services this site, named in `other_dealer_name`), `ours` (undo the region rule), or null (no manual flag; the region rule decides). */
+    otherDealerOverride: text('other_dealer_override'),
+    otherDealerName: text('other_dealer_name'),
+    updatedBy: integer('updated_by').references(() => users.id),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  () => [
+    check(
+      'customer_flags_other_dealer',
+      sql`(other_dealer_override is null and other_dealer_name is null)
+       or (other_dealer_override = 'ours' and other_dealer_name is null)
+       or (other_dealer_override = 'dealer' and other_dealer_name is not null)`,
+    ),
+  ],
+);
 
 /**
  * A person's note on a PM-due machine: `booked` (a PM is arranged) or `dismissed` (snoozed, or serviced
@@ -516,6 +580,35 @@ export const pmActions = pgTable(
     clearedReason: text('cleared_reason'),
   },
   (t) => [uniqueIndex('pm_actions_open_equipment_idx').on(t.vantageEquipmentId).where(sql`${t.clearedAt} is null`)],
+);
+
+/**
+ * Per-machine PM planner state (one row per Vantage equipment): the *When in area* and *Priority*
+ * flags and the stored board column. Booked is derived (open `pm_actions` booked row or a Vantage PM
+ * job), so `board_column` holds only `to_plan` / `asked` / `done`, or null (not on the board). A row
+ * with no flag and no column is deleted.
+ */
+export const pmPlan = pgTable(
+  'pm_plan',
+  {
+    vantageEquipmentId: integer('vantage_equipment_id').primaryKey(),
+    whenInArea: boolean('when_in_area').notNull().default(false),
+    priority: boolean('priority').notNull().default(false),
+    /** `to_plan` | `asked` | `done`, or null when the machine is not on the board. */
+    boardColumn: text('board_column'),
+    boardNote: text('board_note'),
+    addedAt: ts('added_at'),
+    askedAt: ts('asked_at'),
+    doneAt: ts('done_at'),
+    /** `visit` (a qualifying visit landed) | `manual`. */
+    doneReason: text('done_reason'),
+    updatedBy: integer('updated_by').references(() => users.id),
+    updatedAt: ts('updated_at').notNull().defaultNow(),
+  },
+  () => [
+    check('pm_plan_board_column', sql`board_column is null or board_column in ('to_plan', 'asked', 'done')`),
+    check('pm_plan_done_reason', sql`done_reason is null or done_reason in ('visit', 'manual')`),
+  ],
 );
 
 /** Who changed what. One row per write — a bulk edit of 400 devices is one row listing 400 ids. */

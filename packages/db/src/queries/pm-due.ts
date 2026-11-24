@@ -356,3 +356,24 @@ export function computePm(args: {
     return result('due_soon', null);
   return result('ok', null);
 }
+
+/**
+ * Whole calendar months a machine is overdue: since the earlier of its time cap and estimated due
+ * date, counting only a date already passed. Null unless the status is `overdue`, or when neither
+ * date has passed (an overdue machine with no date to count from). Pure; shared by `/pm` and the
+ * planner for the "overdue 18m" badge.
+ */
+export function overdueMonths(
+  r: { result: Pick<PmResult, 'status' | 'timeCapDate' | 'estDueDate'> },
+  now: Date,
+): number | null {
+  if (r.result.status !== 'overdue') return null;
+  const passed = [r.result.timeCapDate, r.result.estDueDate].filter((d): d is Date => d !== null && d.getTime() <= now.getTime());
+  if (passed.length === 0) return null;
+  const from = new Date(Math.min(...passed.map((d) => d.getTime())));
+  let months = (now.getUTCFullYear() - from.getUTCFullYear()) * 12 + (now.getUTCMonth() - from.getUTCMonth());
+  // Not a whole month yet when the day (and time) of the month has not come round.
+  const rest = (d: Date) => d.getTime() - Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+  if (rest(now) < rest(from)) months -= 1;
+  return Math.max(0, months);
+}

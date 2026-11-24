@@ -164,7 +164,7 @@ function VisitTable({ row, qualifyingMinutes }: { row: PmRow; qualifyingMinutes:
                     </span>
                   ) : null}
                 </td>
-                <td className={cn(CELL, 'whitespace-nowrap', !counted && 'text-muted-foreground')}>
+                <td className={cn(CELL, 'min-w-[9rem]', !counted && 'text-muted-foreground')}>
                   {verdictText(verdict, qualifyingMinutes, visit.matchedKeywords)}
                 </td>
               </tr>

@@ -1,13 +1,21 @@
 'use client';
 
-import { useState, type MouseEvent } from 'react';
+import { useRef, useState, type MouseEvent } from 'react';
 import { useFormStatus } from 'react-dom';
 import Link from 'next/link';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Ellipsis, Star } from 'lucide-react';
 // Types only from @mps/db: its values would pull the database client into the browser bundle.
 import type { DismissReason, PmRow as PmRowData } from '@mps/db/queries';
 import { cn } from 'cn';
-import { dismissPmAction, markPmBookedAction, undoPmActionAction } from '@/app/(app)/pm/actions';
+import {
+  addToPlanAction,
+  dismissPmAction,
+  markOursAction,
+  markPmBookedAction,
+  togglePriorityAction,
+  toggleWhenInAreaAction,
+  undoPmActionAction,
+} from '@/app/(app)/pm/actions';
 import { PmDetail } from '@/components/pm-detail';
 import {
   DEFAULT_SNOOZE_OPTION,
@@ -26,9 +34,10 @@ import {
 import { CopyText } from '@/components/copy-text';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { deviceHref } from '@/lib/device-origin';
-import { formatDate } from '@/lib/format';
+import { formatDate, machineActionLabel } from '@/lib/format';
 
 const CELL = 'px-4 py-3 align-top text-[13px]';
 const FIELD_LABEL = 'mb-1 block text-[12px] text-muted-foreground';
@@ -50,6 +59,12 @@ export interface PmRowProps {
   timeCapMonths: number;
   /** Columns in the collapsed row, for the panel's colSpan. */
   columns: number;
+  /** Whole months overdue (`overdueMonths`, worked out on the server), or null when not overdue. */
+  overdueMonths: number | null;
+  /** The Other dealer tab: the Plan cell offers *Mark as ours* instead of the planner controls. */
+  otherDealerTab: boolean;
+  /** The row is in the Due or When in area tab, so its menu offers *Add to plan* (`canAddToPlan`). */
+  canAddToPlan: boolean;
 }
 
 /**
@@ -59,7 +74,19 @@ export interface PmRowProps {
  * Clicking anywhere on the summary toggles it; the chevron button is the keyboard way in. The
  * panel renders on first open and stays mounted, so collapsing keeps a half-filled form.
  */
-export function PmRow({ row: r, back, initiallyOpen, error, today, qualifyingMinutes, timeCapMonths, columns }: PmRowProps) {
+export function PmRow({
+  row: r,
+  back,
+  initiallyOpen,
+  error,
+  today,
+  qualifyingMinutes,
+  timeCapMonths,
+  columns,
+  overdueMonths,
+  otherDealerTab,
+  canAddToPlan,
+}: PmRowProps) {
   const [open, setOpen] = useState(initiallyOpen);
   const [rendered, setRendered] = useState(initiallyOpen);
   const panelId = `pm-panel-${r.vantageEquipmentId}`;
@@ -74,6 +101,8 @@ export function PmRow({ row: r, back, initiallyOpen, error, today, qualifyingMin
   }
 
   function onRowClick(e: MouseEvent<HTMLTableRowElement>) {
+    // React bubbles clicks from portals (the Plan menu) through the row: only clicks inside it count.
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if ((e.target as Element).closest(OWN_CLICK)) return;
     if (window.getSelection()?.toString()) return;
     toggle();
@@ -115,6 +144,7 @@ export function PmRow({ row: r, back, initiallyOpen, error, today, qualifyingMin
         <td className={CELL}>{r.model ?? '—'}</td>
         <td className={CELL}>
           <span className="flex flex-wrap items-center gap-1.5">
+            {r.plan.whenInArea ? <WhenInAreaBadge overdueMonths={overdueMonths} /> : null}
             {r.bookedOverdue ? (
               <ToneBadge tone="critical" className="px-2 py-0.5 text-[12px]">
                 Booked — no visit seen
@@ -146,6 +176,9 @@ export function PmRow({ row: r, back, initiallyOpen, error, today, qualifyingMin
             <span className="block text-[12px] text-muted-foreground">Time cap {formatDate(res.timeCapDate)}</span>
           ) : null}
         </td>
+        <td className={cn(CELL, 'w-px pr-3 pl-1 whitespace-nowrap')}>
+          {otherDealerTab ? <MarkOurs row={r} back={back} /> : <PlanCell row={r} back={back} canAddToPlan={canAddToPlan} />}
+        </td>
       </tr>
       <tr id={panelId} hidden={!open} className="border-b border-line/70 bg-muted/30">
         <td colSpan={columns} className="px-4 pt-1 pb-4">
@@ -155,6 +188,116 @@ export function PmRow({ row: r, back, initiallyOpen, error, today, qualifyingMin
         </td>
       </tr>
     </>
+  );
+}
+
+/** When in area flag on a row: red with the months overdue, muted while the machine is not yet overdue. */
+function WhenInAreaBadge({ overdueMonths }: { overdueMonths: number | null }) {
+  if (overdueMonths === null) {
+    return (
+      <ToneBadge tone="muted" className="px-2 py-0.5 text-[12px]">
+        When in area
+      </ToneBadge>
+    );
+  }
+  return (
+    <ToneBadge tone="critical" className="px-2 py-0.5 text-[12px]">
+      When in area · overdue {overdueMonths < 1 ? '<1m' : `${overdueMonths}m`}
+    </ToneBadge>
+  );
+}
+
+/** Hidden fields every planner form posts: the machine and the list URL to come back to. */
+function PlanFields({ id, back }: { id: number; back: string }) {
+  return (
+    <>
+      <input type="hidden" name="vantageEquipmentId" value={id} />
+      <input type="hidden" name="return" value={back} />
+    </>
+  );
+}
+
+/**
+ * The narrow Plan cell: a Priority star (a toggle, `aria-pressed`) and a small menu with *Add to plan*
+ * (Due and When-in-area rows only; a disabled "On plan" once the machine is on the board) and *When in
+ * area* / *Back to Due*. The menu is the shared dropdown (portalled and positioned, so the table's
+ * scroll box never clips it; closes on outside click, Escape and on choosing an item). Each item
+ * submits a hidden form that stays in the row, so closing the menu never unmounts a pending action.
+ */
+function PlanCell({ row: r, back, canAddToPlan }: { row: PmRowData; back: string; canAddToPlan: boolean }) {
+  const priority = r.plan.priority;
+  const onBoard = r.plan.boardColumn !== null;
+  const addForm = useRef<HTMLFormElement>(null);
+  const areaForm = useRef<HTMLFormElement>(null);
+  return (
+    <div className="flex items-center gap-0.5">
+      <form action={togglePriorityAction}>
+        <PlanFields id={r.vantageEquipmentId} back={back} />
+        <input type="hidden" name="on" value={priority ? 'false' : 'true'} />
+        <StarButton pressed={priority} label={machineActionLabel('Priority', r.customerName, r.serial)} />
+      </form>
+      {canAddToPlan ? (
+        <form ref={addForm} action={addToPlanAction} hidden>
+          <PlanFields id={r.vantageEquipmentId} back={back} />
+        </form>
+      ) : null}
+      <form ref={areaForm} action={toggleWhenInAreaAction} hidden>
+        <PlanFields id={r.vantageEquipmentId} back={back} />
+        <input type="hidden" name="on" value={r.plan.whenInArea ? 'false' : 'true'} />
+      </form>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          aria-label={machineActionLabel('Plan actions', r.customerName, r.serial)}
+          title="Plan actions"
+          className="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:outline-none"
+        >
+          <Ellipsis aria-hidden className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          {canAddToPlan ? (
+            <DropdownMenuItem disabled={onBoard} onClick={() => addForm.current?.requestSubmit()} className="text-[13px]">
+              {onBoard ? 'On plan' : 'Add to plan'}
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem onClick={() => areaForm.current?.requestSubmit()} className="text-[13px]">
+            {r.plan.whenInArea ? 'Back to Due' : 'When in area'}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+function StarButton({ pressed, label }: { pressed: boolean; label: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      aria-pressed={pressed}
+      aria-label={label}
+      title={pressed ? 'Priority — click to clear' : 'Mark as priority'}
+      disabled={pending}
+      className={cn(
+        'flex size-8 items-center justify-center rounded-md hover:bg-muted focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:outline-none',
+        pressed ? 'text-warn' : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      <Star aria-hidden className={cn('size-4', pressed && 'fill-current')} />
+    </button>
+  );
+}
+
+/** Other dealer tab: who services the site, and *Mark as ours* (the whole site comes back to our lists). */
+function MarkOurs({ row: r, back }: { row: PmRowData; back: string }) {
+  return (
+    <form action={markOursAction} className="flex flex-col items-end gap-1">
+      <PlanFields id={r.vantageEquipmentId} back={back} />
+      {r.customerId !== null ? <input type="hidden" name="vantageCustomerId" value={r.customerId} /> : null}
+      <span className="text-[12px] text-muted-foreground">{r.otherDealer.dealer ?? 'Other dealer'}</span>
+      <SubmitButton variant="outline" pendingText="Saving…">
+        Mark as ours
+      </SubmitButton>
+    </form>
   );
 }
 

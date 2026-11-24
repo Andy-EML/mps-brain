@@ -18,9 +18,11 @@ import { createTestDb, type TestDb } from '../testing';
 import { loadCombinedMeters } from './meter-history';
 import { DEFAULT_PM_SETTINGS, type PmStatus } from './pm-due';
 import { SettingsError } from './settings';
+import { setOtherDealer } from './other-dealer';
 import { dismissPm, markPmBooked, undoPmAction } from './pm-actions';
-import { pmActions } from '../schema';
-import { getEquipmentPm, getPmSettings, inPmView, listPmDue, listWorkCategories, savePmSettings, setFamilyPmInterval, type PmRow } from './pm-queries';
+import { addToPlan, setPriority, setWhenInArea } from './pm-plan';
+import { pmActions, users } from '../schema';
+import { getEquipmentPm, getPmSettings, inPmView, listPmDue, listPmForEquipment, listWorkCategories, savePmSettings, setFamilyPmInterval, type PmRow } from './pm-queries';
 
 const d = (iso: string) => new Date(`${iso}T09:00:00Z`);
 const NOW = d('2026-11-18');
@@ -31,6 +33,11 @@ describe('inPmView', () => {
     drmsEquipmentId: null,
     customerName: 'Acme',
     town: null,
+    customerId: null,
+    district: null,
+    county: null,
+    otherDealer: { dealer: null, source: null, region: null },
+    plan: { whenInArea: false, priority: false, boardColumn: null },
     serial: 'A1',
     model: 'C300i',
     family: null,
@@ -246,6 +253,61 @@ describe('pm queries', () => {
     expect((await listPmDue(t.db, NOW, { view: 'all', q: 'leeds' })).map((r) => r.vantageEquipmentId)).toEqual([1]);
   });
 
+  describe('other dealer', () => {
+    // 1: English site, 2: Irish site (Eircode), 3: no customer
+    async function seed() {
+      await t.db.insert(vantageCustomers).values([
+        { vantageId: 7, name: 'Farnborough Ltd', raw: { Town: 'Farnborough', PostCode: 'gu14 7pr', County: 'Hampshire' } },
+        { vantageId: 8, name: 'Dublin Ltd', raw: { PostCode: 'D04 EK2K' } },
+      ]);
+      await t.db.insert(vantageEquipment).values([
+        { vantageId: 1, customerName: 'Farnborough Ltd', vantageCustomerId: 7, serial: 'S1', raw: { Item: { IsMetered: true, NominalCode: '4000' } } },
+        { vantageId: 2, customerName: 'Dublin Ltd', vantageCustomerId: 8, serial: 'S2', raw: { Item: { IsMetered: true, NominalCode: '4000' } } },
+        { vantageId: 3, customerName: 'Loose', serial: 'S3', raw: { Item: { IsMetered: true, NominalCode: '4000' } } },
+      ]);
+      for (const id of [1, 2, 3]) await contract(id);
+    }
+    const ids = (rows: { vantageEquipmentId: number }[]) => rows.map((r) => r.vantageEquipmentId);
+
+    it('carries the customer id, district, county and the region-rule dealer on each row', async () => {
+      await seed();
+      const rows = await listPmDue(t.db, NOW, { dealer: 'all' });
+      const by = Object.fromEntries(rows.map((r) => [r.vantageEquipmentId, r]));
+      expect(by[1]).toMatchObject({ customerId: 7, district: 'GU14', county: 'Hampshire', otherDealer: { dealer: null, source: null, region: null }, plan: { whenInArea: false, priority: false } });
+      expect(by[2]).toMatchObject({ customerId: 8, district: null, county: null, otherDealer: { dealer: 'MJ Flood', source: 'region', region: 'ireland' } });
+      expect(by[3]).toMatchObject({ customerId: null, district: null, otherDealer: { dealer: null } });
+    });
+
+    it('the default list drops an other-dealer site; other keeps only it; all keeps both', async () => {
+      await seed();
+      expect(ids(await listPmDue(t.db, NOW))).toEqual([1, 3]);
+      expect(ids(await listPmDue(t.db, NOW, { dealer: 'ours' }))).toEqual([1, 3]);
+      const other = await listPmDue(t.db, NOW, { dealer: 'other' });
+      expect(ids(other)).toEqual([2]);
+      expect(other[0]!.otherDealer.dealer).toBe('MJ Flood');
+      expect(ids(await listPmDue(t.db, NOW, { dealer: 'all' }))).toEqual([1, 2, 3]);
+      expect(ids(await listPmDue(t.db, NOW, { status: 'default' }))).toEqual([1, 3]);
+    });
+
+    it('a site flagged ours is back in the default list; a flagged dealer leaves it', async () => {
+      await seed();
+      await t.db.insert(users).values({ username: 'op', passwordHash: 'x' });
+      const [u] = await t.db.select({ id: users.id }).from(users);
+      await setOtherDealer(t.db, { vantageCustomerId: 8, mode: 'ours', userId: u!.id });
+      await setOtherDealer(t.db, { vantageCustomerId: 7, mode: 'dealer', name: 'Acme Print', userId: u!.id });
+      expect(ids(await listPmDue(t.db, NOW))).toEqual([2, 3]);
+      const other = await listPmDue(t.db, NOW, { dealer: 'other' });
+      expect(ids(other)).toEqual([1]);
+      expect(other[0]!.otherDealer).toEqual({ dealer: 'Acme Print', source: 'site', region: null });
+    });
+
+    it('getEquipmentPm and listPmForEquipment still return an other-dealer machine, with its dealer', async () => {
+      await seed();
+      expect((await getEquipmentPm(t.db, 2, NOW))?.otherDealer.dealer).toBe('MJ Flood');
+      expect((await listPmForEquipment(t.db, [2], NOW)).get(2)?.otherDealer.dealer).toBe('MJ Flood');
+    });
+  });
+
   it('default filter drops ok and booked', async () => {
     await savePmSettings(t.db, { ...DEFAULT_PM_SETTINGS, pmCategoryIds: [7] }, null);
     for (const id of [1, 2, 3, 4]) {
@@ -429,6 +491,61 @@ describe('pm queries', () => {
     }
     // 3 has no visit: overdue, no pct
     expect((await listPmDue(t.db, NOW)).map((r) => r.vantageEquipmentId)).toEqual([3, 2, 1]);
+  });
+
+  describe('plan flags', () => {
+    let userId: number;
+    beforeEach(async () => {
+      const [u] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning({ id: users.id });
+      userId = u!.id;
+    });
+
+    it('rows carry their pm_plan flags and board column; machines with no row get the empty plan', async () => {
+      for (const id of [1, 2, 3]) {
+        await machine(id);
+        await contract(id);
+      }
+      await setPriority(t.db, { vantageEquipmentId: 1, on: true, userId, now: NOW });
+      await setWhenInArea(t.db, { vantageEquipmentId: 2, on: true, userId, now: NOW });
+      const by = Object.fromEntries((await listPmDue(t.db, NOW)).map((r) => [r.vantageEquipmentId, r.plan]));
+      expect(by[1]).toEqual({ whenInArea: false, priority: true, boardColumn: 'to_plan' });
+      expect(by[2]).toEqual({ whenInArea: true, priority: false, boardColumn: null });
+      expect(by[3]).toEqual({ whenInArea: false, priority: false, boardColumn: null });
+      await addToPlan(t.db, { vantageEquipmentIds: [3], userId, now: NOW });
+      expect((await getEquipmentPm(t.db, 3, NOW))!.plan).toEqual({ whenInArea: false, priority: false, boardColumn: 'to_plan' });
+    });
+
+    it('the default order puts a priority machine first; an explicit sort ignores priority', async () => {
+      for (const id of [1, 2, 3]) {
+        await machine(id, `Cust ${id}`);
+        await contract(id);
+      }
+      for (const [id, last] of [[1, 60_000], [2, 70_000]] as const) {
+        await reading(id, '2026-01-05', 1000);
+        await reading(id, '2026-11-10', last);
+        await visit(id, '2026-01-10');
+      }
+      // 3 is overdue (no visit); 1 is the least used of the three.
+      expect((await listPmDue(t.db, NOW)).map((r) => r.vantageEquipmentId)).toEqual([3, 2, 1]);
+      await setPriority(t.db, { vantageEquipmentId: 1, on: true, userId, now: NOW });
+      expect((await listPmDue(t.db, NOW)).map((r) => r.vantageEquipmentId)).toEqual([1, 3, 2]);
+      expect((await listPmDue(t.db, NOW, { sort: { key: 'customer', dir: 'asc' } })).map((r) => r.vantageEquipmentId)).toEqual([1, 2, 3]);
+      expect((await listPmDue(t.db, NOW, { sort: { key: 'customer', dir: 'desc' } })).map((r) => r.vantageEquipmentId)).toEqual([3, 2, 1]);
+    });
+  });
+
+  it('listPmForEquipment returns the same PmRow as getEquipmentPm for each id and omits ids with no active contract', async () => {
+    await machine(1);
+    await contract(1);
+    await machine(2);
+    await contract(2);
+    await machine(3); // no contract
+    await reading(2, '2026-11-10', 5000);
+    const map = await listPmForEquipment(t.db, [1, 2, 3, 99], NOW);
+    expect([...map.keys()].sort()).toEqual([1, 2]);
+    expect(map.get(1)).toEqual(await getEquipmentPm(t.db, 1, NOW));
+    expect(map.get(2)).toEqual(await getEquipmentPm(t.db, 2, NOW));
+    expect((await listPmForEquipment(t.db, [], NOW)).size).toBe(0);
   });
 
   it('listWorkCategories counts visits per category', async () => {

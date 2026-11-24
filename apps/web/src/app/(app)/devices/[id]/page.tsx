@@ -351,7 +351,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
       />
 
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="grid min-w-0 gap-4">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
           <Card
             title="Toner levels"
             meta={readAt ? `Read ${formatRelative(readAt, now)}` : 'No reading yet'}

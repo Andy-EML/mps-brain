@@ -197,3 +197,23 @@ describe('safeReturnPath allowedPaths', () => {
     expect(safeReturnPath('//evil.com/devices/abc', ['/orders'], [/^\/devices\/[a-z]+$/])).toBeNull();
   });
 });
+
+describe('PM planner origin', () => {
+  it('keeps the planner URL as back and resolves it', () => {
+    const href = deviceHref('d1', 'pm-planner', '/pm/planner?x=1');
+    expect(href).toBe('/devices/d1?from=pm-planner&back=%2Fpm%2Fplanner%3Fx%3D1');
+    const url = new URL(href, 'http://x');
+    expect(resolveDeviceOrigin(url.searchParams.get('from'), url.searchParams.get('back'))).toEqual({
+      key: 'pm-planner',
+      label: 'PM planner',
+      href: '/pm/planner?x=1',
+    });
+    expect(resolveDeviceOrigin('pm-planner', undefined)).toEqual({ key: 'pm-planner', label: 'PM planner', href: '/pm/planner' });
+  });
+
+  it('does not take the planner as back for PM due, nor PM due as back for the planner', () => {
+    expect(resolveDeviceOrigin('pm', '/pm/planner').href).toBe('/pm');
+    expect(resolveDeviceOrigin('pm-planner', '/pm?view=all').href).toBe('/pm/planner');
+    expect(deviceHref('d1', 'pm', '/pm/planner')).toBe('/devices/d1?from=pm');
+  });
+});

@@ -2,6 +2,7 @@ import {
   Bell,
   Boxes,
   Building2,
+  CalendarRange,
   ClipboardCheck,
   LayoutGrid,
   Link2Off,
@@ -50,7 +51,9 @@ export function AppSidebar({
         <NavLink href="/devices" label="Devices" icon={<Printer />} />
         <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
         <NavLink href="/site-stock" label="Site stock" icon={<Boxes />} />
-        <NavLink href="/pm" label="PM due" icon={<Wrench />} />
+        {/* exact: /pm/planner has its own link. */}
+        <NavLink href="/pm" label="PM due" icon={<Wrench />} exact />
+        <NavLink href="/pm/planner" label="PM planner" icon={<CalendarRange />} />
         {/* "Needs reconnecting" truncated beside its badge; the page keeps the full name as its title. */}
         <NavLink
           href="/reconnect"

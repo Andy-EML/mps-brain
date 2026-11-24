@@ -1,7 +1,7 @@
 import { normaliseSerial } from '@mps/core';
 import { drmsEquipment, vantageEquipment, type Db } from '@mps/db';
 import type { DrmsEquipment } from '@mps/drms';
-import type { ListOptions, MeterReadingListOptions, SalesOrderListOptions, VantageRecord, WorkUnitListOptions } from '@mps/vantage';
+import type { ListOptions, MeterReadingListOptions, SalesOrderListOptions, ScheduledWorkUnitListOptions, VantageRecord, WorkUnitListOptions } from '@mps/vantage';
 
 /** A `listSalesOrders` stub that records its options, or throws the error it was handed. */
 export function fakeVantageOrders(orders: VantageRecord[] | Error) {
@@ -62,6 +62,33 @@ export function fakeVantageWork(units: VantageRecord[] | Error) {
         calls.push(opts);
         if (units instanceof Error) throw units;
         return units;
+      },
+    },
+  };
+}
+
+/** A `listScheduledWorkUnits` stub that records its options, or throws the error it was handed. */
+export function fakeVantageSchedule(units: VantageRecord[] | Error) {
+  const calls: ScheduledWorkUnitListOptions[] = [];
+  return {
+    calls,
+    client: {
+      async listScheduledWorkUnits(opts: ScheduledWorkUnitListOptions) {
+        calls.push(opts);
+        if (units instanceof Error) throw units;
+        return units;
+      },
+    },
+  };
+}
+
+/** A `listEngineers` stub that throws the error it was handed. */
+export function fakeVantageEngineers(rows: VantageRecord[] | Error) {
+  return {
+    client: {
+      async listEngineers() {
+        if (rows instanceof Error) throw rows;
+        return rows;
       },
     },
   };

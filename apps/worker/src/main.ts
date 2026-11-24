@@ -47,6 +47,9 @@ async function main(): Promise<void> {
   await boss.schedule(QUEUES.vantageMeters, env.METERS_CRON, {}, { tz });
   await boss.schedule(QUEUES.vantageContracts, env.CONTRACTS_CRON, {}, { tz });
   await boss.schedule(QUEUES.vantageWork, env.WORK_CRON, {}, { tz });
+  await boss.schedule(QUEUES.vantageSchedule, env.SCHEDULE_CRON, {}, { tz });
+  await boss.schedule(QUEUES.vantageEngineers, env.ENGINEERS_CRON, {}, { tz });
+  await boss.schedule(QUEUES.postcodeLookup, env.POSTCODE_CRON, {}, { tz });
   // After the 02:00 Vantage pull and its link run.
   await boss.schedule(QUEUES.drmsRegistrationScan, '30 3 * * *', {}, { tz });
   // Sweeps up approved registrations the web app's wake-up missed (and polls unfinished ones).
@@ -61,6 +64,7 @@ async function main(): Promise<void> {
     queueLinkRun: () => boss.send(QUEUES.linkRun, {}, { startAfter: 120 }),
     queueReplenish: () => boss.send(QUEUES.replenishEvaluate, {}, { startAfter: 30 }),
     offlineAlertHours: env.OFFLINE_ALERT_HOURS,
+    postcodesBaseUrl: env.POSTCODES_BASE_URL,
     registration: {
       excludeRegex: new RegExp(env.AUTO_REGISTER_EXCLUDE, 'i'),
       pauseSeconds: env.AUTO_REGISTER_PAUSE_SECONDS,

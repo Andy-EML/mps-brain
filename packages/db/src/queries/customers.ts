@@ -1,3 +1,4 @@
+import { regionOf, resolveOtherDealer, type OtherDealerFlag } from '@mps/core';
 import { and, asc, count, countDistinct, eq, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import {
@@ -13,6 +14,8 @@ import {
 } from '../schema';
 import { getSelfManaged, headOfficeIdSql, selfManagedSourceSql, type SelfManagedInfo, type SelfManagedSource } from './customer-flags';
 import type { DeviceOrderLineRow, DeviceOrderRow } from './device';
+import { loadDealerResolver, type OtherDealerInfo } from './other-dealer';
+import { getPlannerSettings } from './pm-planner-settings';
 import {
   deviceListConditions,
   deviceListOrder,
@@ -86,6 +89,8 @@ export interface CustomerRow {
   selfManaged: SelfManagedSource | null;
   /** Deleted in Vantage; such a customer is only listed when its own self-managed flag is on. */
   deleted: boolean;
+  /** Who services the site for PM (`loadDealerResolver`): `dealer` null = us. PM only. */
+  otherDealer: OtherDealerInfo;
 }
 
 const townSql = sql<string | null>`nullif(btrim(${vantageCustomers.raw}->>'Town'), '')`;
@@ -145,9 +150,15 @@ const ownFlagOn = sql`exists (
  * queries plus one (id, head office) pair list, folded in memory, so a head office's row can
  * include its sites' without a query per row.
  */
-async function loadCustomerRows(
+export async function loadCustomerRows(
   db: Db,
-  o: { search?: string; headOfficeId?: number; includeDeletedFlagged?: boolean } = {},
+  o: {
+    search?: string;
+    headOfficeId?: number;
+    includeDeletedFlagged?: boolean;
+    /** An already-loaded `loadDealerResolver`, so a caller that has one does not load it twice. */
+    dealerOf?: (vantageCustomerId: number | null) => OtherDealerInfo;
+  } = {},
 ): Promise<CustomerRow[]> {
   const headOffice = headOfficeIdSql();
   const search = o.search?.trim();
@@ -157,7 +168,7 @@ async function loadCustomerRows(
     pattern ? or(ilike(vantageCustomers.name, pattern), ilike(vantageCustomers.reference, pattern), ilike(townSql, pattern)) : undefined,
     o.headOfficeId !== undefined ? sql`${headOffice} = ${o.headOfficeId}` : undefined,
   ];
-  const [base, siteLinks, stats] = await Promise.all([
+  const [base, siteLinks, stats, dealerOf] = await Promise.all([
     db
       .select({
         vantageId: vantageCustomers.vantageId,
@@ -175,6 +186,7 @@ async function loadCustomerRows(
       .from(vantageCustomers)
       .where(and(isNull(vantageCustomers.deletedDate), isNotNull(headOffice))),
     ownStats(db),
+    o.dealerOf ?? loadDealerResolver(db),
   ]);
   const sitesOf = new Map<number, number[]>();
   for (const l of siteLinks) {
@@ -197,6 +209,7 @@ async function loadCustomerRows(
       sites: sites.length,
       selfManaged: b.selfManaged,
       deleted: b.deleted,
+      otherDealer: dealerOf(b.vantageId),
     };
   });
 }
@@ -258,6 +271,14 @@ export interface CustomerDetail {
   deleted: boolean;
   headOffice: { vantageId: number; name: string | null } | null;
   selfManaged: SelfManagedInfo;
+  /** Who services this customer for PM, after site > head office > region precedence. */
+  otherDealer: OtherDealerInfo;
+  /** What `otherDealer` would be without this customer's own flag (head office, else region): the control's "Default". */
+  otherDealerDefault: OtherDealerInfo;
+  /** This customer's own manual other-dealer state; null = none (head office / region decide). */
+  ownOverride: 'ours' | 'dealer' | null;
+  /** The dealer name on this customer's own `dealer` flag. */
+  ownDealerName: string | null;
   sites: CustomerRow[];
 }
 
@@ -274,6 +295,7 @@ export async function getCustomer(db: Db, vantageId: number): Promise<CustomerDe
       reference: vantageCustomers.reference,
       town: townSql,
       postCode: sql<string | null>`nullif(btrim(${vantageCustomers.raw}->>'PostCode'), '')`,
+      county: sql<string | null>`${vantageCustomers.raw}->>'County'`,
       isOnStop: vantageCustomers.isOnStop,
       deleted: sql<boolean>`${vantageCustomers.deletedDate} is not null`,
     })
@@ -288,8 +310,40 @@ export async function getCustomer(db: Db, vantageId: number): Promise<CustomerDe
       ),
     );
   if (!c) return null;
-  const [selfManaged, sites] = await Promise.all([getSelfManaged(db, vantageId), loadCustomerRows(db, { headOfficeId: vantageId })]);
-  return { ...c, headOffice: selfManaged.headOffice, selfManaged, sites };
+  const { county, ...detail } = c;
+  const [selfManaged, dealerOf, settings] = await Promise.all([
+    getSelfManaged(db, vantageId),
+    loadDealerResolver(db),
+    getPlannerSettings(db),
+  ]);
+  const sites = await loadCustomerRows(db, { headOfficeId: vantageId, dealerOf });
+  const headOfficeId = selfManaged.headOffice?.vantageId ?? null;
+  const flagRows = await db
+    .select({ id: customerFlags.vantageCustomerId, override: customerFlags.otherDealerOverride, name: customerFlags.otherDealerName })
+    .from(customerFlags)
+    .where(inArray(customerFlags.vantageCustomerId, headOfficeId === null ? [vantageId] : [vantageId, headOfficeId]));
+  const flagOf = (id: number | null): OtherDealerFlag | null => {
+    const f = flagRows.find((r) => r.id === id);
+    return f && (f.override === 'dealer' || f.override === 'ours') ? { override: f.override, name: f.name } : null;
+  };
+  const own = flagOf(vantageId);
+  // The same resolver with the own flag left out: what "Default" on the control would give.
+  const otherDealerDefault = resolveOtherDealer({
+    own: null,
+    headOffice: flagOf(headOfficeId),
+    region: regionOf({ postCode: c.postCode, county }),
+    regionDealers: settings.regionDealers,
+  });
+  return {
+    ...detail,
+    headOffice: selfManaged.headOffice,
+    selfManaged,
+    otherDealer: dealerOf(vantageId),
+    otherDealerDefault,
+    ownOverride: own?.override ?? null,
+    ownDealerName: own?.override === 'dealer' ? own.name : null,
+    sites,
+  };
 }
 
 /**

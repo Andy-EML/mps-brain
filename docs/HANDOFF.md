@@ -10,6 +10,13 @@
 > shelf; a partly matched order stays *In progress*. *Mark ordered*, *Back to review* and *Delete*
 > remain for queued orders. Vantage is read-only.
 
+> **Update 2026-11-23: PM planner (`/pm/planner`).** New migrations `0021`-`0023`. New worker
+> jobs: `vantage-schedule` (`*/30 6-19`, engineers' calls today/tomorrow), `vantage-engineers`
+> (nightly, engineer names) and `postcode-lookup` (nightly, 100 districts per run). New external
+> read-only dependency: **postcodes.io** (outward codes only; the worker must reach
+> `api.postcodes.io`). After the first deploy, press *Run now* on `postcode-lookup` on `/admin/jobs`
+> repeatedly until every district is cached. Nothing new is written to Vantage or DRMS.
+
 **Read this section first, then `CLAUDE.md`, then the current spec. The 2026-09-18 sections below
 (Foundation) are kept only for the detail; where they disagree, this one wins.**
 

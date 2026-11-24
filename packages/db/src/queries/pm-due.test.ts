@@ -3,6 +3,7 @@ import {
   computePm,
   DEFAULT_PM_SETTINGS,
   groupVisits,
+  overdueMonths,
   unitMinutes,
   visitVerdict,
   type PmSettings,
@@ -363,5 +364,39 @@ describe('visit display length', () => {
     const b = unit({ start: new Date(start.getTime() + 1000), hours: 0.25, categoryType: 'Booking' });
     expect(groupVisits([a, b], S, NOW)[0]!.displayMinutes).toBe(45);
     expect(groupVisits([unit({ start })], S, NOW)[0]!.displayMinutes).toBeNull();
+  });
+});
+
+describe('overdueMonths', () => {
+  const res = (status: 'overdue' | 'ok' | 'due_soon', o: { timeCapDate?: Date | null; estDueDate?: Date | null } = {}) => ({
+    result: { status, timeCapDate: o.timeCapDate ?? null, estDueDate: o.estDueDate ?? null },
+  });
+  const monthsAgo = (n: number) => {
+    const x = new Date(NOW);
+    x.setUTCMonth(x.getUTCMonth() - n);
+    return x;
+  };
+
+  it('counts whole months since the time cap when overdue', () => {
+    expect(overdueMonths(res('overdue', { timeCapDate: monthsAgo(18) }), NOW)).toBe(18);
+    expect(overdueMonths(res('overdue', { timeCapDate: new Date(monthsAgo(18).getTime() + DAY) }), NOW)).toBe(17);
+  });
+
+  it('is null unless the status is overdue', () => {
+    expect(overdueMonths(res('ok', { timeCapDate: monthsAgo(18) }), NOW)).toBeNull();
+    expect(overdueMonths(res('due_soon', { estDueDate: monthsAgo(2) }), NOW)).toBeNull();
+  });
+
+  it('uses the estimated due date for a pages-overdue machine, and the earlier of the two', () => {
+    expect(overdueMonths(res('overdue', { estDueDate: monthsAgo(2) }), NOW)).toBe(2);
+    expect(overdueMonths(res('overdue', { estDueDate: monthsAgo(2), timeCapDate: monthsAgo(5) }), NOW)).toBe(5);
+    // A date still in the future is ignored.
+    expect(overdueMonths(res('overdue', { estDueDate: monthsAgo(2), timeCapDate: daysAgo(-30) }), NOW)).toBe(2);
+    expect(overdueMonths(res('overdue', { estDueDate: daysAgo(3) }), NOW)).toBe(0);
+  });
+
+  it('is null when there is no date to count from', () => {
+    expect(overdueMonths(res('overdue'), NOW)).toBeNull();
+    expect(overdueMonths(res('overdue', { timeCapDate: daysAgo(-10) }), NOW)).toBeNull();
   });
 });

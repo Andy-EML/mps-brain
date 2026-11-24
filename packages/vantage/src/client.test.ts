@@ -256,5 +256,36 @@ describe('Vantage client', () => {
       await client.listWorkUnits({ from });
       expect(calls[2]!.url.searchParams.get('$filter')).not.toContain('modifieddate');
     });
+
+    it('listScheduledWorkUnits filters scheduledstartdate by [from, to), GET only, with api-version', async () => {
+      const { client, calls } = make(({ url }) => (ok(url) ? session('t', '2026-09-17T10:30:00Z') : json({ value: [{ Id: 9, EngineerId: 4 }] })));
+      const from = new Date('2026-03-30T23:00:00Z');
+      const to = new Date('2026-04-02T23:00:00Z');
+      expect(await client.listScheduledWorkUnits({ from, to })).toEqual([{ Id: 9, EngineerId: 4 }]);
+      const get = calls[1]!;
+      expect(get.method).toBe('GET');
+      expect(get.url.pathname).toBe('/WorkUnit');
+      expect(get.headers['api-version']).toBe('1.22');
+      const f = get.url.searchParams.get('$filter')!;
+      expect(f).toContain(`(scheduledstartdate ge ${from.toISOString()} and scheduledstartdate lt ${to.toISOString()})`);
+      // WorkUnit has no DeletedDate: the client must not add `deleteddate eq null`.
+      expect(f).not.toContain('deleteddate');
+      expect(get.url.searchParams.get('$expand')).toContain('Work($select=Id,Reference,EquipmentId,CustomerId,CompletedDate,DeletedDate)');
+      expect(get.url.searchParams.get('$expand')).toContain('Category($select=Id,Name;$expand=Type($select=Id,Name))');
+      expect(calls.filter((c) => c.url.pathname !== '/application/loginsingle').every((c) => c.method === 'GET')).toBe(true);
+    });
+
+    it('listEngineers pages Engineer by key and guards deleted rows', async () => {
+      const pages = [[{ Id: 1, Name: 'A' }, { Id: 2, Name: 'B' }], [{ Id: 3, Name: 'C' }]];
+      let n = 0;
+      const { client, calls } = make(({ url }) => (ok(url) ? session('t', '2026-09-17T10:30:00Z') : json({ value: pages[n++] ?? [] })));
+      const out = await client.listEngineers();
+      expect(out.map((r) => r.Id)).toEqual([1, 2, 3]);
+      const gets = calls.filter((c) => c.url.pathname === '/Engineer');
+      expect(gets).toHaveLength(2);
+      expect(gets.every((c) => c.method === 'GET' && c.headers['api-version'] === '1.22')).toBe(true);
+      expect(gets[0]!.url.searchParams.get('$filter')).toContain('deleteddate eq null');
+      expect(gets[1]!.url.searchParams.get('$filter')).toContain('Id gt 2');
+    });
   });
 });

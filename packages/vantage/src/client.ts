@@ -71,6 +71,13 @@ export interface WorkUnitListOptions {
  */
 const odataDate = (d: Date) => d.toISOString().slice(0, 10);
 
+export interface ScheduledWorkUnitListOptions {
+  /** Inclusive floor on `ScheduledStartDate`. */
+  from: Date;
+  /** Exclusive ceiling on `ScheduledStartDate`. */
+  to: Date;
+}
+
 export type VantageRecord = Record<string, unknown>;
 
 const REISSUE_WINDOW_MS = 5 * 60_000;
@@ -234,6 +241,20 @@ export function createVantageClient(opts: VantageClientOptions) {
       if (o.since) filter.push(`modifieddate gt ${o.since.toISOString()}`);
       return odataList('WorkUnit', { filter, includeDeleted: true, expand: WORK_UNIT_EXPAND });
     },
+    /**
+     * Read-only: work units scheduled in [from, to). `WorkUnit.EngineerId` (checked live,
+     * 2026-11-23: present on every scheduled unit; `Work` has no engineer field) comes with the
+     * unit itself, so the expand is the same as `listWorkUnits`. No `DeletedDate` on `WorkUnit`:
+     * callers drop units whose `Work.DeletedDate` is set.
+     */
+    listScheduledWorkUnits: (o: ScheduledWorkUnitListOptions) =>
+      odataList('WorkUnit', {
+        filter: [`scheduledstartdate ge ${o.from.toISOString()} and scheduledstartdate lt ${o.to.toISOString()}`],
+        includeDeleted: true,
+        expand: WORK_UNIT_EXPAND,
+      }),
+    /** Read-only: live engineers (`Id`, `Name`, `IsActive`). */
+    listEngineers: () => odataList('Engineer'),
     /** Read-only: the dozen `MeterType`s with their class (Mono/Colour), deleted ones included. */
     listMeterTypes: () => odataList('MeterType', { includeDeleted: true, expand: 'Class($select=Id,Name)' }),
     /**

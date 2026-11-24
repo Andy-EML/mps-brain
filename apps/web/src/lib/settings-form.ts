@@ -85,6 +85,8 @@ const SETTINGS_ERRORS: Record<SettingsErrorCode | 'too_many', string> = {
   no_devices: 'No devices were selected, so nothing was changed.',
   invalid_pm_setting: 'A PM setting is out of range — use whole numbers of at least 1, and a due-soon percentage from 50 to 100.',
   invalid_pm_action: 'That PM action is not valid — pick a snooze of 30, 90 or 180 days, and add a note when the reason is Other.',
+  invalid_planner_setting: 'A planner setting is out of range or invalid — check the distances, retention days, dealer names and patch districts (such as GU14).',
+  invalid_other_dealer: 'Enter the other dealer’s name (up to 60 characters).',
   too_many: 'That is too many devices to pick one by one — use “Select all matching” instead.',
 };
 

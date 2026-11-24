@@ -136,18 +136,18 @@ export interface JobCard {
   /** True when the job calls DRMS or Vantage — those runs ask for confirmation first. */
   external: boolean;
   /** The API an external job calls, when its queue name does not say (default: from the prefix). */
-  api?: 'Vantage' | 'DRMS';
+  api?: 'Vantage' | 'DRMS' | 'postcodes.io';
   /** A page where the job's results are worked on. */
   link?: { href: string; label: string };
 }
 
 /** Which live API "Run now" warns about for an external job. */
-export function apiName(card: JobCard): 'Vantage' | 'DRMS' {
+export function apiName(card: JobCard): 'Vantage' | 'DRMS' | 'postcodes.io' {
   return card.api ?? (card.queue.startsWith('vantage') ? 'Vantage' : 'DRMS');
 }
 
 /**
- * The nine queues, in the order a person would think about them: the two pulls that bring data
+ * The queues, in the order a person would think about them: the two pulls that bring data
  * in, the linker that joins them up, the two DRMS collections and the sales-order pull, the
  * replenishment evaluation those three feed, then the DRMS registration scan and sender.
  */
@@ -224,6 +224,31 @@ export const JOB_CARDS: readonly JobCard[] = [
     external: true,
   },
   {
+    queue: QUEUES.vantageEngineers,
+    title: 'Vantage engineers',
+    description:
+      'Fetches the engineers (name and whether they are active) from Vantage, so the PM planner can show the booked calls of each engineer. Replaces the previous copy every run. Read-only.',
+    schedule: 'Daily at 03:15 (worker default; ENGINEERS_CRON overrides it)',
+    external: true,
+  },
+  {
+    queue: QUEUES.vantageSchedule,
+    title: 'Vantage schedule',
+    description:
+      'Fetches the field calls booked for today and tomorrow from Vantage, so the PM planner can suggest nearby PMs for each engineer. Replaces the previous copy every run. Read-only.',
+    schedule: 'Every 30 minutes, 06:00 to 19:30 (worker default; SCHEDULE_CRON overrides it)',
+    external: true,
+  },
+  {
+    queue: QUEUES.postcodeLookup,
+    title: 'Postcode areas',
+    description:
+      'Looks up the county and centre point of each customer postcode district on postcodes.io (public, read-only; only the district, such as GU14, is sent, never a customer name), so the PM planner can group machines by area. Asks about each district once.',
+    schedule: 'Daily at 03:40 (worker default; POSTCODE_CRON overrides it)',
+    external: true,
+    api: 'postcodes.io',
+  },
+  {
     queue: QUEUES.replenishEvaluate,
     title: 'Replenishment check',
     description: 'Turns low toner and DRMS consumable alarms into order proposals for review. Postgres only — it never orders anything.',
@@ -266,6 +291,9 @@ export const RUN_ALL_QUEUES: readonly QueueName[] = [
   QUEUES.vantageMeters,
   QUEUES.vantageContracts,
   QUEUES.vantageWork,
+  QUEUES.vantageEngineers,
+  QUEUES.vantageSchedule,
+  QUEUES.postcodeLookup,
   QUEUES.drmsRegistrationScan,
 ];
 

@@ -7,12 +7,14 @@ import {
   hiddenDevices,
   replenishmentProposals,
   siteStockShelves,
+  users,
   vantageCustomers,
   vantageEquipment,
   vantageSalesOrderLines,
   vantageSalesOrders,
 } from '../schema';
 import { createTestDb, type TestDb } from '../testing';
+import { setOtherDealer } from './other-dealer';
 import { getCustomer, listCustomerDevices, listCustomerOrders, listCustomerShelves, listCustomers, searchVantageCustomers } from './customers';
 
 describe('searchVantageCustomers', () => {
@@ -184,6 +186,7 @@ describe('customer read queries', () => {
         sites: 2,
         selfManaged: 'site',
         deleted: false,
+        otherDealer: { dealer: null, source: null, region: null },
       },
     ]);
   });
@@ -191,7 +194,7 @@ describe('customer read queries', () => {
   it('a site row counts its own visible machines, pending, shelves; hidden devices excluded', async () => {
     const { rows } = await listCustomers(t.db, { tab: 'all', search: 'acme' });
     expect(rows).toEqual([
-      { vantageId: 4, name: 'Acme Printing', reference: 'ACM01', town: 'Howden', machines: 1, pending: 1, shelves: 1, sites: 0, selfManaged: null, deleted: false },
+      { vantageId: 4, name: 'Acme Printing', reference: 'ACM01', town: 'Howden', machines: 1, pending: 1, shelves: 1, sites: 0, selfManaged: null, deleted: false, otherDealer: { dealer: null, source: null, region: null } },
     ]);
   });
 
@@ -298,5 +301,89 @@ describe('customer read queries', () => {
     expect(shelves.map((s) => s.vantageCustomerId)).toEqual([4, 3]);
     expect(await listCustomerShelves(t.db, [1])).toEqual([]);
     expect(await listCustomerShelves(t.db, [])).toEqual([]);
+  });
+});
+
+describe('customers: other dealer', () => {
+  let t: TestDb;
+  let userId: number;
+  beforeEach(async () => {
+    t = await createTestDb();
+    await t.db.insert(vantageCustomers).values([
+      { vantageId: 1, name: 'Dublin Print', reference: 'DUB01', raw: { PostCode: 'D04 EK2K' } },
+      { vantageId: 2, name: 'Cork Office', reference: 'COR01', raw: { PostCode: 'T12 X70A' } },
+      { vantageId: 3, name: 'Farnborough Ltd', reference: 'FAR01', raw: { PostCode: 'GU14 7PR' } },
+      { vantageId: 10, name: 'Group HQ', reference: 'GRP00', raw: { PostCode: 'GU11 1AA' } },
+      { vantageId: 11, name: 'Group Glasgow', reference: 'GRP01', raw: { PostCode: 'G1 1AA', HeadOfficeId: 10 } },
+      { vantageId: 12, name: 'Group Aldershot', reference: 'GRP02', raw: { PostCode: 'GU12 4AA', HeadOfficeId: 10 } },
+    ]);
+    const [u] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning({ id: users.id });
+    userId = u!.id;
+  });
+  afterEach(() => t.close());
+
+  const rowOf = async (id: number) => (await listCustomers(t.db, { tab: 'all', limit: 100 })).rows.find((r) => r.vantageId === id)!;
+
+  it('list rows carry the resolved dealer: an Irish site by region, an English one ours', async () => {
+    expect((await rowOf(1)).otherDealer).toEqual({ dealer: 'MJ Flood', source: 'region', region: 'ireland' });
+    expect((await rowOf(11)).otherDealer).toEqual({ dealer: 'CMYK', source: 'region', region: 'scotland' });
+    expect((await rowOf(3)).otherDealer).toEqual({ dealer: null, source: null, region: null });
+  });
+
+  it('a site with a manual "ours" row shows no dealer', async () => {
+    await setOtherDealer(t.db, { vantageCustomerId: 2, mode: 'ours', userId });
+    expect((await rowOf(2)).otherDealer).toMatchObject({ dealer: null, source: 'site' });
+    expect((await rowOf(1)).otherDealer.dealer).toBe('MJ Flood');
+  });
+
+  it('a head-office dealer covers its sites, except one set to ours', async () => {
+    await setOtherDealer(t.db, { vantageCustomerId: 10, mode: 'dealer', name: 'Acme Print', userId });
+    await setOtherDealer(t.db, { vantageCustomerId: 11, mode: 'ours', userId });
+    expect((await rowOf(10)).otherDealer).toMatchObject({ dealer: 'Acme Print', source: 'site' });
+    expect((await rowOf(12)).otherDealer).toMatchObject({ dealer: 'Acme Print', source: 'head_office' });
+    expect((await rowOf(11)).otherDealer).toMatchObject({ dealer: null, source: 'site' });
+    const ho = await getCustomer(t.db, 10);
+    expect(ho!.sites.map((s) => [s.vantageId, s.otherDealer.dealer])).toEqual([
+      [12, 'Acme Print'],
+      [11, null],
+    ]);
+  });
+
+  it('getCustomer returns ownOverride, the own name, the resolved dealer and the default beneath', async () => {
+    const plain = await getCustomer(t.db, 1);
+    expect(plain).toMatchObject({
+      ownOverride: null,
+      ownDealerName: null,
+      otherDealer: { dealer: 'MJ Flood', source: 'region' },
+      otherDealerDefault: { dealer: 'MJ Flood', source: 'region' },
+    });
+
+    await setOtherDealer(t.db, { vantageCustomerId: 1, mode: 'ours', userId });
+    expect(await getCustomer(t.db, 1)).toMatchObject({
+      ownOverride: 'ours',
+      ownDealerName: null,
+      otherDealer: { dealer: null, source: 'site' },
+      otherDealerDefault: { dealer: 'MJ Flood', source: 'region' },
+    });
+
+    await setOtherDealer(t.db, { vantageCustomerId: 3, mode: 'dealer', name: 'Acme Print', userId });
+    expect(await getCustomer(t.db, 3)).toMatchObject({
+      ownOverride: 'dealer',
+      ownDealerName: 'Acme Print',
+      otherDealer: { dealer: 'Acme Print', source: 'site' },
+      otherDealerDefault: { dealer: null, source: null },
+    });
+
+    await setOtherDealer(t.db, { vantageCustomerId: 10, mode: 'dealer', name: 'HQ Dealer', userId });
+    expect(await getCustomer(t.db, 12)).toMatchObject({
+      ownOverride: null,
+      otherDealer: { dealer: 'HQ Dealer', source: 'head_office' },
+      otherDealerDefault: { dealer: 'HQ Dealer', source: 'head_office' },
+    });
+  });
+
+  it('a self-managed-only flag row is no other-dealer override', async () => {
+    await t.db.insert(customerFlags).values({ vantageCustomerId: 3, selfManaged: true });
+    expect(await getCustomer(t.db, 3)).toMatchObject({ ownOverride: null, otherDealer: { dealer: null } });
   });
 });
