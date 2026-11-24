@@ -48,12 +48,20 @@ export function AppSidebar({
       <nav aria-label="Main" className="flex flex-col gap-0.5 px-3">
         <NavLink href="/" label="Fleet overview" icon={<LayoutGrid />} exact />
         <NavLink href="/customers" label="Customers" icon={<Building2 />} />
-        <NavLink href="/devices" label="Devices" icon={<Printer />} />
-        <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
-        <NavLink href="/site-stock" label="Site stock" icon={<Boxes />} />
+        <NavLink href="/pm/planner" label="PM planner" icon={<CalendarRange />} />
         {/* exact: /pm/planner has its own link. */}
         <NavLink href="/pm" label="PM due" icon={<Wrench />} exact />
-        <NavLink href="/pm/planner" label="PM planner" icon={<CalendarRange />} />
+        <NavLink href="/orders" label="Toner orders" icon={<ShoppingCart />} count={awaitingReview} tone="warn" />
+        <NavLink href="/devices" label="Devices" icon={<Printer />} />
+        <NavLink href="/site-stock" label="Site stock" icon={<Boxes />} />
+        <NavLink href="/alerts" label="Alerts" icon={<Bell />} count={openAlerts} tone="critical" />
+        <NavLink
+          href="/registrations"
+          label="DRMS registrations"
+          icon={<ClipboardCheck />}
+          count={awaitingRegistration}
+          tone="warn"
+        />
         {/* "Needs reconnecting" truncated beside its badge; the page keeps the full name as its title. */}
         <NavLink
           href="/reconnect"
@@ -63,14 +71,6 @@ export function AppSidebar({
           count={newlySilent}
           tone="warn"
         />
-        <NavLink
-          href="/registrations"
-          label="DRMS registrations"
-          icon={<ClipboardCheck />}
-          count={awaitingRegistration}
-          tone="warn"
-        />
-        <NavLink href="/alerts" label="Alerts" icon={<Bell />} count={openAlerts} tone="critical" />
         <NavLink href="/issues" label="Link issues" icon={<Link2Off />} count={openIssues} tone="warn" />
         <NavLink href="/settings/replenishment" section="/settings" label="Settings" icon={<SlidersHorizontal />} />
         {role === 'admin' ? <NavLink href="/admin" label="Admin" icon={<Settings />} /> : null}
