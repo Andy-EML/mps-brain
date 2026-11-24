@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ROWS_OPTIONS, rowsCookieName } from '@/lib/list-state';
+import { rowsCookieName } from '@/lib/list-state';
 
 export interface RowsPickerProps {
   listKey: string;
@@ -26,11 +26,14 @@ export function RowsPicker({ listKey, value, hrefFor }: RowsPickerProps) {
       }}
       className="h-8 rounded-lg border border-line bg-transparent px-2 text-sm"
     >
-      {ROWS_OPTIONS.map((n) => (
-        <option key={n} value={n}>
-          {n}
-        </option>
-      ))}
+      {Object.keys(hrefFor)
+        .map(Number)
+        .sort((a, b) => a - b)
+        .map((n) => (
+          <option key={n} value={n}>
+            {n}
+          </option>
+        ))}
     </select>
   );
 }

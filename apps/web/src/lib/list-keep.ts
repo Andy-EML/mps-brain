@@ -4,7 +4,7 @@ import type { QueueSortKey, QueueTab } from '@mps/db/queries';
  * Default page sizes for the Task 5 lists (today's page size, or 50 for lists that were not paged
  * before), and the params each accordion list keeps on its pager and sort links.
  */
-export const PM_DEFAULT_ROWS = 100;
+export const PM_DEFAULT_ROWS = 50;
 export const RECONNECT_DEFAULT_ROWS = 50;
 export const REGISTRATIONS_DEFAULT_ROWS = 100;
 export const ALERTS_DEFAULT_ROWS = 50;

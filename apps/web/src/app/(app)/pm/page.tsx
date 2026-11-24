@@ -18,7 +18,7 @@ import { getDb } from '@/lib/db';
 import { formatNumber } from '@/lib/format';
 import { hrefWith } from '@/lib/href';
 import { PM_DEFAULT_ROWS, pmKeep } from '@/lib/list-keep';
-import { lastPageOf, listHref, parseListState, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
+import { lastPageOf, listHref, parseListState, PM_ROWS_OPTIONS, rowsCookieName, sortSpec, stateParams } from '@/lib/list-state';
 import { pmErrorMessage } from '@/lib/pm-action-form';
 import { PM_STATUSES, applyPmView, canAddToPlan, countPm, parsePmFilters, tabOf, type PmFilters, type PmViewFilter } from './filters';
 
@@ -78,6 +78,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
     defaultRows: DEFAULT_ROWS,
     sortKeys: PM_SORT_KEYS,
     cookieRows: cookieStore.get(rowsCookieName(LIST_KEY))?.value,
+    rowsOptions: PM_ROWS_OPTIONS,
   });
   const page = state.page;
   const openRaw = first(params.open);
@@ -115,7 +116,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
   // Sort and page size survive a change of tab, filter or search; the page does not.
   const listParams = stateParams(state, { defaultRows: DEFAULT_ROWS });
   const sorting = { basePath: '/pm', keep, state, defaultRows: DEFAULT_ROWS };
-  const controls = { ...sorting, total: rows.length, listKey: LIST_KEY, noun: 'machine' };
+  const controls = { ...sorting, total: rows.length, listKey: LIST_KEY, noun: 'machine', rowsOptions: PM_ROWS_OPTIONS };
 
   // This view's own URL without the open row (the actions add it): forms post it back, the device
   // page's Back link returns to it.

@@ -6,6 +6,7 @@ import {
   nextSort,
   pageWindow,
   parseListState,
+  PM_ROWS_OPTIONS,
   rowsCookieName,
   sortSpec,
   stateParams,
@@ -31,6 +32,30 @@ describe('parseListState rows', () => {
   it('invalid cookie falls back to default', () => {
     expect(parse({}, '7').rows).toBe(50);
     expect(parse({}, 'x').rows).toBe(50);
+  });
+});
+
+describe('parseListState rowsOptions', () => {
+  const pm = (q: Record<string, string>, cookieRows?: string) =>
+    parseListState((n) => q[n], {
+      listKey: 'pm',
+      defaultRows: 50,
+      sortKeys: KEYS,
+      cookieRows,
+      rowsOptions: PM_ROWS_OPTIONS,
+    });
+  it('pm rows 100 falls back to 50 (URL and cookie paths)', () => {
+    expect(pm({ rows: '100' }).rows).toBe(50);
+    expect(pm({}, '100').rows).toBe(50);
+    expect(pm({ rows: '200' }, '200').rows).toBe(50);
+  });
+  it('pm still honours 10, 20 and 50', () => {
+    expect(pm({ rows: '10' }).rows).toBe(10);
+    expect(pm({}, '20').rows).toBe(20);
+  });
+  it('other lists still allow 200', () => {
+    expect(parse({ rows: '200' }).rows).toBe(200);
+    expect(parse({}, '100').rows).toBe(100);
   });
 });
 

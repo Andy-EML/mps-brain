@@ -18,6 +18,8 @@ export interface ListControlsProps {
   nounPlural?: string;
   listKey: string;
   defaultRows: number;
+  /** Page sizes offered; defaults to every size. */
+  rowsOptions?: readonly number[];
   /** Which copy this is — lists render one above and one below — so the two navs have distinct names. */
   position?: 'top' | 'bottom';
   className?: string;
@@ -37,6 +39,7 @@ export function ListControls({
   nounPlural,
   listKey,
   defaultRows,
+  rowsOptions = ROWS_OPTIONS,
   position = 'top',
   className,
 }: ListControlsProps) {
@@ -46,7 +49,7 @@ export function ListControls({
   const last = Math.min(total, page * state.rows);
   const href = (p: number) => listHref(basePath, keep, state, { page: p }, { defaultRows });
   const hrefFor: Record<number, string> = {};
-  for (const n of ROWS_OPTIONS) hrefFor[n] = listHref(basePath, keep, state, { rows: n }, { defaultRows });
+  for (const n of rowsOptions) hrefFor[n] = listHref(basePath, keep, state, { rows: n }, { defaultRows });
 
   const step = (label: string, target: number, enabled: boolean, icon: ReactNode) =>
     enabled ? (

@@ -1,6 +1,8 @@
 import { hrefWith } from './href';
 
 export const ROWS_OPTIONS = [10, 20, 50, 100, 200] as const;
+/** The PM due list caps at 50 rows a page. */
+export const PM_ROWS_OPTIONS = [10, 20, 50] as const;
 export type SortDir = 'asc' | 'desc';
 export interface ListState<K extends string> {
   page: number;
@@ -16,20 +18,28 @@ export function rowsCookieName(listKey: string): string {
   return `lc_rows_${listKey}`;
 }
 
-function validRows(raw: string | undefined): number | null {
+function validRows(raw: string | undefined, options: readonly number[]): number | null {
   if (raw === undefined) return null;
   const n = Number(raw);
-  return (ROWS_OPTIONS as readonly number[]).includes(n) ? n : null;
+  return options.includes(n) ? n : null;
 }
 
 /** Read list state from URL params; every invalid value falls back silently. */
 export function parseListState<K extends string>(
   get: (name: string) => string | undefined,
-  opts: { listKey: string; defaultRows: number; sortKeys: readonly K[]; cookieRows?: string | undefined },
+  opts: {
+    listKey: string;
+    defaultRows: number;
+    sortKeys: readonly K[];
+    cookieRows?: string | undefined;
+    /** Allowed page sizes; anything else (URL or cookie) falls back to `defaultRows`. */
+    rowsOptions?: readonly number[];
+  },
 ): ListState<K> {
   const pageNum = Math.floor(Number(get('page')));
   const page = pageNum >= 1 ? Math.min(pageNum, MAX_PAGE) : 1;
-  const rows = validRows(get('rows')) ?? validRows(opts.cookieRows) ?? opts.defaultRows;
+  const options = opts.rowsOptions ?? ROWS_OPTIONS;
+  const rows = validRows(get('rows'), options) ?? validRows(opts.cookieRows, options) ?? opts.defaultRows;
   const rawSort = get('sort');
   const sort = rawSort !== undefined ? (opts.sortKeys.find((k) => k === rawSort) ?? null) : null;
   const dir: SortDir = get('dir') === 'desc' ? 'desc' : 'asc';
