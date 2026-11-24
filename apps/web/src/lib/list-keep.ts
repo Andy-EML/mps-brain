@@ -1,4 +1,5 @@
 import type { QueueSortKey, QueueTab } from '@mps/db/queries';
+import type { QueryParams } from './href';
 
 /**
  * Default page sizes for the Task 5 lists (today's page size, or 50 for lists that were not paged
@@ -12,7 +13,7 @@ export const SITE_STOCK_DEFAULT_ROWS = 50;
 export const ORDERS_DEFAULT_ROWS = 50;
 export const TONER_YIELD_DEFAULT_ROWS = 50;
 
-type Params = Record<string, string | number | null | undefined>;
+type Params = QueryParams;
 
 /** PM due: the filters plus the open accordion row, so paging or sorting keeps it open. */
 export function pmKeep(filters: Params, openId: number | null): Params {

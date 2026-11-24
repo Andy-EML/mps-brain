@@ -13,7 +13,7 @@ export interface SearchInputProps {
    * so anything that must survive a search (the active filter tab) has to ride along as a hidden
    * field. `page` deliberately does not — a new search starts at page 1.
    */
-  hiddenParams?: Record<string, string | undefined>;
+  hiddenParams?: Record<string, string | readonly string[] | undefined>;
   className?: string;
 }
 
@@ -29,12 +29,15 @@ export function clearSearchHref(action: string, hiddenParams?: SearchInputProps[
  * A plain GET form, so search needs no client JavaScript and the result is a real, shareable URL.
  */
 export function SearchInput({ action, defaultValue, placeholder = 'Search device or customer', hiddenParams, className }: SearchInputProps) {
-  const hidden = Object.entries(hiddenParams ?? {}).filter(([, v]) => v != null && v !== '');
+  // A list repeats its param (`town=a&town=b`): one hidden field per value.
+  const hidden = Object.entries(hiddenParams ?? {}).flatMap(([key, v]) =>
+    (v == null ? [] : typeof v === 'string' ? [v] : [...v]).filter((x) => x !== '').map((x) => [key, x] as const),
+  );
 
   return (
     <form action={action} method="get" role="search" className={cn('relative', className)}>
       {hidden.map(([key, value]) => (
-        <input key={key} type="hidden" name={key} value={value} />
+        <input key={`${key}=${value}`} type="hidden" name={key} value={value} />
       ))}
       <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
       <input

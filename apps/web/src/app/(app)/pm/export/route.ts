@@ -4,7 +4,7 @@ import { requireUser } from '@/lib/auth';
 import { toCsv } from '@/lib/csv';
 import { getDb } from '@/lib/db';
 import { formatIsoDateTime } from '@/lib/format';
-import { applyPmView, parsePmFilters } from '../filters';
+import { parsePmFilters, selectPmRows } from '../filters';
 
 export const dynamic = 'force-dynamic';
 
@@ -51,7 +51,7 @@ const BOARD_LABEL: Record<BoardColumnStored, string> = { to_plan: 'To plan', ask
 
 const isoDay = (d: Date | null): string => formatIsoDateTime(d).slice(0, 10);
 
-/** The "PM due" tab the operator is looking at (same view, status, filters and search), every row. */
+/** The "PM due" tab the operator is looking at (same view, due reason, facets and search), every row. */
 export async function GET(request: Request) {
   // Route handlers sit outside the (app) layout, so the session check is this handler's own.
   // `requireUser` redirects to /login when signed out, exactly as it does for a page.
@@ -61,11 +61,12 @@ export async function GET(request: Request) {
   const db = getDb();
   const now = new Date();
   const [all, settings] = await Promise.all([
-    // Every row of every dealer, like the page: the tab (incl. When in area / Other dealer) is applied by applyPmView.
-    listPmDue(db, now, { view: 'all', dealer: 'all', customer: filters.customer, family: filters.family, q: filters.q }),
+    // Every row of every dealer, like the page: the tab (incl. When in area / Other dealer) and the
+    // facets (customer and family among them) are applied by selectPmRows.
+    listPmDue(db, now, { view: 'all', dealer: 'all', q: filters.q }),
     getPmSettings(db),
   ]);
-  const rows = applyPmView(all, filters, now, settings);
+  const rows = selectPmRows(all, filters, now, settings);
 
   const csv = toCsv(
     HEADERS,

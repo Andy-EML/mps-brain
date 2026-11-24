@@ -1,4 +1,4 @@
-import { hrefWith } from './href';
+import { hrefWith, type QueryParams } from './href';
 
 export const ROWS_OPTIONS = [10, 20, 50, 100, 200] as const;
 /** The PM due list caps at 50 rows a page. */
@@ -49,7 +49,7 @@ export function parseListState<K extends string>(
 /** URL for this list with state overrides; drops page when rows/sort change; omits defaults. */
 export function listHref<K extends string>(
   basePath: string,
-  keep: Record<string, string | number | null | undefined>,
+  keep: QueryParams,
   state: ListState<K>,
   change: Partial<ListState<K>>,
   opts: { defaultRows: number },

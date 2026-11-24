@@ -1,13 +1,14 @@
 import Link from 'next/link';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { cn } from 'cn';
+import type { QueryParams } from '@/lib/href';
 import { listHref, nextSort, type ListState } from '@/lib/list-state';
 
 export interface SortHeaderProps {
   label: string;
   sortKey: string;
   basePath: string;
-  keep: Record<string, string | number | null | undefined>;
+  keep: QueryParams;
   state: ListState<string>;
   defaultRows: number;
   align?: 'left' | 'right';
@@ -52,7 +53,7 @@ export function SortHeader({
 /** What a table needs to render its sortable headers: the list's URL, kept params and state. */
 export interface SortContext {
   basePath: string;
-  keep: Record<string, string | number | null | undefined>;
+  keep: QueryParams;
   state: ListState<string>;
   defaultRows: number;
 }

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { cn } from 'cn';
-import { hrefWith } from '@/lib/href';
+import { hrefWith, type QueryParams } from '@/lib/href';
 
 export interface FilterTab {
   value: string;
@@ -15,7 +15,7 @@ export interface FilterTabsProps {
   current: string;
   tabs: readonly FilterTab[];
   /** Other params to keep as you switch tab (the search term). */
-  params?: Record<string, string | number | null | undefined>;
+  params?: QueryParams;
   /** The tab that needs no query param, because it is what a bare URL already shows. */
   defaultValue?: string;
   /** The nav's accessible name. */

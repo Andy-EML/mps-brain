@@ -1,17 +1,22 @@
 import { DEFAULT_PM_SETTINGS, inPmView, type PmRow, type PmSettings, type PmStatus } from '@mps/db/queries';
 // Relative, not `@/`: vitest has no path alias.
 import { PM_STATUSES } from '../../../lib/pm-statuses';
+import { applyPmFacets, parsePmFacets, type PmFacetSelection } from '../../../lib/pm-facets';
 import { overdueKind } from '../../../components/pm-status';
 
 /**
  * The `/pm` page's search params, shared with its CSV export. `view` is the tab — Due (the
- * default), When in area, Booked, Dismissed, Other dealer or All; `status` narrows within it to one
- * PM status (`all` = any).
+ * default), When in area, Booked, Dismissed, Other dealer or All; the side-panel facets (town,
+ * county, status, family, customer — repeatable) narrow within it. Old single-value `status`,
+ * `family` and `customer` links are read as one-value facets.
  */
 
 export const PM_VIEWS = ['due', 'booked', 'dismissed', 'when-in-area', 'other-dealer', 'all'] as const;
 export { PM_STATUSES };
 export const OVERDUE_FILTERS = ['all', 'pages', 'time'] as const;
+/** Town group order: worst first (the default) or A–Z. */
+export const TOWN_SORTS = ['worst', 'az'] as const;
+export type TownSort = (typeof TOWN_SORTS)[number];
 
 export type PmViewFilter = (typeof PM_VIEWS)[number];
 export type PmStatusFilter = PmStatus | 'all';
@@ -19,12 +24,13 @@ export type OverdueFilter = (typeof OVERDUE_FILTERS)[number];
 
 export interface PmFilters {
   view: PmViewFilter;
-  status: PmStatusFilter;
-  customer: string | undefined;
-  family: number | undefined;
   q: string | undefined;
   /** Narrows overdue rows by reason; other statuses are left alone. */
   overdue: OverdueFilter;
+  /** Side-panel facets: OR within one, AND across them. */
+  facets: PmFacetSelection;
+  /** `townSort=az` orders the town groups by name. */
+  townSort: TownSort;
 }
 
 type Params = URLSearchParams | Record<string, string | string[] | undefined>;
@@ -39,18 +45,14 @@ const text = (v: string | undefined): string | undefined => v?.trim() || undefin
 
 export function parsePmFilters(params: Params): PmFilters {
   const view = get(params, 'view');
-  const status = get(params, 'status');
-  const familyRaw = get(params, 'family')?.trim();
-  const family = familyRaw && /^\d+$/.test(familyRaw) ? Number(familyRaw) : undefined;
   const overdue = get(params, 'overdue');
   return {
     view: PM_VIEWS.includes(view as PmViewFilter) ? (view as PmViewFilter) : 'due',
-    status: PM_STATUSES.includes(status as PmStatus) ? (status as PmStatus) : 'all',
-    customer: text(get(params, 'customer')),
-    family,
     // The shared SearchInput submits `search`; `q` is accepted too.
     q: text(get(params, 'search')) ?? text(get(params, 'q')),
     overdue: OVERDUE_FILTERS.includes(overdue as OverdueFilter) ? (overdue as OverdueFilter) : 'all',
+    facets: parsePmFacets(params),
+    townSort: get(params, 'townSort') === 'az' ? 'az' : 'worst',
   };
 }
 
@@ -116,21 +118,32 @@ export function dueKinds(r: PmRow, now: Date, soon: DueSoonSettings = DEFAULT_PM
 }
 
 /**
- * The rows a view + status + due-reason selection shows, in the order given. The reason
- * (`overdue` param: pages / time) narrows the Due tab only.
+ * The rows a view + due-reason selection shows (and one status, when given), in the order given.
+ * The reason (`overdue` param: pages / time) narrows the Due tab only. The page's facets are
+ * applied after this (`selectPmRows`), so their counts can be worked out from these rows.
  */
 export function applyPmView(
   rows: PmRow[],
-  f: Pick<PmFilters, 'view' | 'status' | 'overdue'>,
+  f: Pick<PmFilters, 'view' | 'overdue'> & { status?: PmStatusFilter },
   now: Date,
   soon: DueSoonSettings = DEFAULT_PM_SETTINGS,
 ): PmRow[] {
   return rows.filter((r) => {
     if (!inPmTab(r, f.view, now)) return false;
-    if (f.status !== 'all' && r.result.status !== f.status) return false;
+    if (f.status !== undefined && f.status !== 'all' && r.result.status !== f.status) return false;
     if (f.overdue !== 'all' && f.view === 'due' && !dueKinds(r, now, soon).includes(f.overdue)) return false;
     return true;
   });
+}
+
+/** The rows the page lists and the CSV exports: tab, due reason, then every facet. */
+export function selectPmRows(
+  rows: PmRow[],
+  f: Pick<PmFilters, 'view' | 'overdue' | 'facets'>,
+  now: Date,
+  soon: DueSoonSettings = DEFAULT_PM_SETTINGS,
+): PmRow[] {
+  return applyPmFacets(applyPmView(rows, f, now, soon), f.facets);
 }
 
 export type PmCounts = Record<
@@ -138,7 +151,7 @@ export type PmCounts = Record<
   number
 >;
 
-/** Tab counts over rows already loaded (customer/family/search applied); the overdue and due-by-reason splits are within Due. */
+/** Tab counts over rows already loaded (search applied, facets not); the overdue and due-by-reason splits are within Due. */
 export function countPm(rows: PmRow[], now: Date, soon: DueSoonSettings = DEFAULT_PM_SETTINGS): PmCounts {
   const c: PmCounts = {
     due: 0,

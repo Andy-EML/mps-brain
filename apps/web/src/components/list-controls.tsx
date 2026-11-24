@@ -4,12 +4,13 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-r
 import { cn } from 'cn';
 import { formatNumber, pluralise } from '@/lib/format';
 import { ROWS_OPTIONS, listHref, pageWindow, type ListState } from '@/lib/list-state';
+import type { QueryParams } from '@/lib/href';
 import { RowsPicker } from '@/components/rows-picker';
 
 export interface ListControlsProps {
   basePath: string;
   /** Params to keep on every link (search, filter, open row). */
-  keep: Record<string, string | number | null | undefined>;
+  keep: QueryParams;
   state: ListState<string>;
   total: number;
   /** Singular noun for the count line; pluralised for you. */

@@ -29,6 +29,17 @@ describe('PM list links keep the open row', () => {
     }
   });
 
+  it('keeps repeated facet params on page, sort and rows links', () => {
+    const k = pmKeep({ town: ['newbury', 'reading'], status: ['overdue'], county: [], townSort: 'az' }, null);
+    for (const change of [{ page: 2 }, { sort: 'serial', dir: 'asc' as const }, { rows: 10 }]) {
+      const q = new URL(listHref('/pm', k, state, change, { defaultRows: PM_DEFAULT_ROWS }), 'http://x').searchParams;
+      expect(q.getAll('town')).toEqual(['newbury', 'reading']);
+      expect(q.getAll('status')).toEqual(['overdue']);
+      expect(q.has('county')).toBe(false);
+      expect(q.get('townSort')).toBe('az');
+    }
+  });
+
   it('leaves open off when no row is open', () => {
     expect(listHref('/pm', pmKeep({ view: undefined }, null), state, { page: 1 }, { defaultRows: PM_DEFAULT_ROWS })).toBe(
       '/pm?sort=pct&dir=desc&rows=20',

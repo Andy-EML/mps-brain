@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { PmResult, PmRow, PmStatus } from '@mps/db/queries';
 import { inDefaultView } from '@mps/db/queries';
-import { applyPmView, canAddToPlan, countPm, dueKinds, inPmView, parsePmFilters, type PmFilters } from './filters';
+import {
+  applyPmView,
+  canAddToPlan,
+  countPm,
+  dueKinds,
+  inPmView,
+  parsePmFilters,
+  selectPmRows,
+  type PmFilters,
+  type PmStatusFilter,
+} from './filters';
 
 const NOW = new Date('2026-11-18T12:00:00Z');
 
@@ -55,19 +65,27 @@ describe('parsePmFilters', () => {
     expect(parsePmFilters(new URLSearchParams('view=booked')).view).toBe('booked');
   });
 
-  it('defaults to the Due view, any status, with nothing else set', () => {
-    expect(parsePmFilters({})).toEqual({ view: 'due', status: 'all', customer: undefined, family: undefined, q: undefined, overdue: 'all' });
+  const noFacets = { town: [], county: [], status: [], family: [], customer: [] };
+
+  it('defaults to the Due view with nothing else set', () => {
+    expect(parsePmFilters({})).toEqual({ view: 'due', q: undefined, overdue: 'all', facets: noFacets, townSort: 'worst' });
   });
 
-  it('reads status, customer, family, search and overdue reason', () => {
+  it('reads old single-value status, customer and family links as one-value facets', () => {
     expect(parsePmFilters({ status: 'overdue', customer: ' Acme ', family: '7', search: ' c300 ', overdue: 'time' })).toEqual({
       view: 'due',
-      status: 'overdue',
-      customer: 'Acme',
-      family: 7,
       q: 'c300',
       overdue: 'time',
+      facets: { ...noFacets, status: ['overdue'], customer: ['Acme'], family: ['7'] },
+      townSort: 'worst',
     });
+  });
+
+  it('reads repeated facet params and the town sort', () => {
+    const f = parsePmFilters(new URLSearchParams('town=newbury&town=Reading&county=Berkshire&status=overdue&status=due_soon&townSort=az'));
+    expect(f.facets).toEqual({ ...noFacets, town: ['newbury', 'Reading'], county: ['Berkshire'], status: ['overdue', 'due_soon'] });
+    expect(f.townSort).toBe('az');
+    expect(parsePmFilters({ townSort: 'bogus' }).townSort).toBe('worst');
   });
 
   it('accepts q as the search param too', () => {
@@ -77,9 +95,8 @@ describe('parsePmFilters', () => {
   it('reads URLSearchParams the same way', () => {
     expect(parsePmFilters(new URLSearchParams('view=all&status=ok&family=3&overdue=pages'))).toMatchObject({
       view: 'all',
-      status: 'ok',
-      family: 3,
       overdue: 'pages',
+      facets: { status: ['ok'], family: ['3'] },
     });
   });
 
@@ -89,21 +106,40 @@ describe('parsePmFilters', () => {
     expect(parsePmFilters({ view: 'other_dealer' }).view).toBe('due');
   });
 
-  it('takes the first of repeated params', () => {
-    expect(parsePmFilters({ status: ['held', 'ok'] }).status).toBe('held');
+  it('takes the first of a repeated view', () => {
+    expect(parsePmFilters({ view: ['booked', 'all'] }).view).toBe('booked');
   });
 
   it('ignores junk', () => {
     expect(parsePmFilters({ status: 'bogus', family: 'x', overdue: 'never', customer: '  ' })).toEqual({
       view: 'due',
-      status: 'all',
-      customer: undefined,
-      family: undefined,
       q: undefined,
       overdue: 'all',
+      facets: noFacets,
+      townSort: 'worst',
     });
-    expect(parsePmFilters({ family: '-2' }).family).toBeUndefined();
-    expect(parsePmFilters({ family: '2.5' }).family).toBeUndefined();
+    expect(parsePmFilters({ family: '-2' }).facets.family).toEqual([]);
+    expect(parsePmFilters({ family: '2.5' }).facets.family).toEqual([]);
+  });
+});
+
+/** The page's list and the CSV export both go through selectPmRows. */
+describe('selectPmRows (page and export)', () => {
+  const at = (id: number, town: string | null, status: PmStatus = 'overdue'): PmRow => ({ ...row(status, { reason: 'pages' }, id), town });
+  const rows = [at(1, 'Newbury'), at(2, 'Reading'), at(3, ' newbury '), at(4, null), at(5, 'Reading', 'ok')];
+  const ids = (rs: PmRow[]) => rs.map((r) => r.vantageEquipmentId);
+
+  it('filters the tab by town from the URL, any spelling', () => {
+    expect(ids(selectPmRows(rows, parsePmFilters(new URLSearchParams('town=Newbury')), NOW))).toEqual([1, 3]);
+  });
+
+  it('ORs towns and ANDs other facets, inside the tab', () => {
+    expect(ids(selectPmRows(rows, parsePmFilters(new URLSearchParams('town=newbury&town=reading')), NOW))).toEqual([1, 2, 3]);
+    expect(ids(selectPmRows(rows, parsePmFilters(new URLSearchParams('view=all&town=reading&status=ok')), NOW))).toEqual([5]);
+  });
+
+  it('is the tab alone with no facets', () => {
+    expect(ids(selectPmRows(rows, parsePmFilters({}), NOW))).toEqual([1, 2, 3, 4]);
   });
 });
 
@@ -152,7 +188,7 @@ describe('applyPmView', () => {
     { ...row('booked', {}, 7), view: 'booked' as const },
   ];
   const ids = (rs: PmRow[]) => rs.map((r) => r.vantageEquipmentId);
-  const f = (over: Partial<Pick<PmFilters, 'view' | 'status' | 'overdue'>>) => ({ view: 'due' as const, status: 'all' as const, overdue: 'all' as const, ...over });
+  const f = (over: Partial<Pick<PmFilters, 'view' | 'overdue'> & { status: PmStatusFilter }>) => ({ view: 'due' as const, status: 'all' as const, overdue: 'all' as const, ...over });
 
   it('filters by view then status, keeping order', () => {
     expect(ids(applyPmView(rows, f({}), NOW))).toEqual([1, 2, 3, 4]);
