@@ -91,6 +91,7 @@ export async function setOtherDealerAction(formData: FormData): Promise<OtherDea
   // the PM lists the site leaves or rejoins.
   revalidatePath('/customers');
   revalidatePath('/customers/[id]', 'page');
+  revalidatePath('/devices/[id]', 'page');
   revalidatePath('/pm');
   revalidatePath('/pm/planner');
   return { ok: true };

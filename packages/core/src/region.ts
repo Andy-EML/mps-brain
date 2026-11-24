@@ -3,7 +3,7 @@
  * used by PM due, the planner and Customers: never re-express it in SQL or a component.
  */
 
-export type DealerRegion = 'ireland' | 'scotland';
+export type DealerRegion = 'ireland' | 'scotland' | 'channel_islands';
 
 const norm = (s: string | null | undefined): string => (s ?? '').replace(/\s+/g, '').toUpperCase();
 
@@ -40,8 +40,12 @@ const IRISH_COUNTIES = [
 /** `Co.`/`Co `/`County` only counts when an Irish county follows, so `Co. Durham` is England. */
 const IRISH_COUNTY = new RegExp(`^(?:co\\.?|county)\\s*(?:${IRISH_COUNTIES.join('|')})\\b`, 'i');
 
+const CHANNEL_ISLANDS_AREAS = new Set(['GY', 'JE']);
+/** Channel Islands county text (Vantage holds `Channel Isles` for Guernsey and Jersey sites that have no postcode). */
+const CHANNEL_ISLANDS_COUNTY = /\b(?:channel\s+is(?:les?|lands?)|guernsey|jersey|alderney|sark)\b/i;
+
 /**
- * 'ireland' (Republic by Eircode or county, Northern Ireland by BT), 'scotland', or null (ours).
+ * 'ireland' (Republic by Eircode or county, Northern Ireland by BT), 'scotland', 'channel_islands' (GY, JE or county), or null (ours).
  * A recognised postcode always decides; the county is only read when there is no usable postcode.
  */
 export function regionOf(a: { postCode: string | null | undefined; county: string | null | undefined }): DealerRegion | null {
@@ -49,11 +53,13 @@ export function regionOf(a: { postCode: string | null | undefined; county: strin
   const area = postcodeArea(a.postCode);
   if (area !== null) {
     if (area === 'BT') return 'ireland';
+    if (CHANNEL_ISLANDS_AREAS.has(area)) return 'channel_islands';
     return SCOTTISH_AREAS.has(area) ? 'scotland' : null;
   }
   const county = (a.county ?? '').trim();
   if (county === '') return null;
-  return IRISH_COUNTY.test(county) || /\bdublin\b/i.test(county) ? 'ireland' : null;
+  if (IRISH_COUNTY.test(county) || /\bdublin\b/i.test(county)) return 'ireland';
+  return CHANNEL_ISLANDS_COUNTY.test(county) ? 'channel_islands' : null;
 }
 
 export type OtherDealerOverride = 'dealer' | 'ours';

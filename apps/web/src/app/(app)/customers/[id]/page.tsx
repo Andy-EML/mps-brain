@@ -163,7 +163,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
     listFamilies(db),
     getPlannerSettings(db),
   ]);
-  const dealerSuggestions = [...new Set([planner.regionDealers.ireland, planner.regionDealers.scotland].filter((d): d is string => !!d))];
+  const dealerSuggestions = [...new Set(Object.values(planner.regionDealers).filter((d): d is string => !!d))];
   const settings = settingsRows.find((r) => r.vantageCustomerId === id);
 
   // Errors from the reused actions.

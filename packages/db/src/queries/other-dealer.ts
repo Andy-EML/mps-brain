@@ -1,5 +1,5 @@
 import { regionOf, resolveOtherDealer, type OtherDealerFlag, type OtherDealerResolution } from '@mps/core';
-import { sql } from 'drizzle-orm';
+import { and, inArray, isNull, or, eq, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import { customerFlags, vantageCustomers } from '../schema';
 import { headOfficeIdSql } from './customer-flags';
@@ -49,6 +49,74 @@ export async function loadDealerResolver(db: Db): Promise<(vantageCustomerId: nu
     );
   }
   return (id) => (id === null ? OURS : (byId.get(id) ?? OURS));
+}
+
+/** What the *PM by* control (customer page, device page) needs for one site. */
+export interface OtherDealerControlData {
+  customerName: string;
+  /** The site's own manual state; null = none (head office / region decide). */
+  ownOverride: 'ours' | 'dealer' | null;
+  ownDealerName: string | null;
+  /** Who services it now. */
+  effective: OtherDealerInfo;
+  /** What "Default" gives: the head office flag, else the region rule. */
+  defaultInfo: OtherDealerInfo;
+  /** The region dealers from the planner settings, for the dealer-name suggestions. */
+  suggestions: string[];
+  isHeadOffice: boolean;
+}
+
+/**
+ * The *PM by* control's props for one Vantage customer, without loading every site (the customer
+ * page's `getCustomer` does that). Null when the customer does not exist, or is deleted in Vantage
+ * and has no `customer_flags` row (as `getCustomer`).
+ */
+export async function getOtherDealerControl(db: Db, vantageCustomerId: number): Promise<OtherDealerControlData | null> {
+  const [c] = await db
+    .select({
+      name: vantageCustomers.name,
+      postCode: sql<string | null>`nullif(btrim(${vantageCustomers.raw}->>'PostCode'), '')`,
+      county: sql<string | null>`${vantageCustomers.raw}->>'County'`,
+      headOffice: headOfficeIdSql(),
+    })
+    .from(vantageCustomers)
+    .where(
+      and(
+        eq(vantageCustomers.vantageId, vantageCustomerId),
+        or(
+          isNull(vantageCustomers.deletedDate),
+          sql`exists (select 1 from ${customerFlags} where ${customerFlags.vantageCustomerId} = ${vantageCustomerId})`,
+        ),
+      ),
+    );
+  if (!c) return null;
+  const [flagRows, [sites], settings] = await Promise.all([
+    db
+      .select({ id: customerFlags.vantageCustomerId, override: customerFlags.otherDealerOverride, name: customerFlags.otherDealerName })
+      .from(customerFlags)
+      .where(inArray(customerFlags.vantageCustomerId, c.headOffice === null ? [vantageCustomerId] : [vantageCustomerId, c.headOffice])),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(vantageCustomers)
+      .where(and(isNull(vantageCustomers.deletedDate), sql`${headOfficeIdSql()} = ${vantageCustomerId}`)),
+    getPlannerSettings(db),
+  ]);
+  const flagOf = (id: number | null): OtherDealerFlag | null => {
+    const f = flagRows.find((r) => r.id === id);
+    return f && (f.override === 'dealer' || f.override === 'ours') ? { override: f.override, name: f.name } : null;
+  };
+  const own = flagOf(vantageCustomerId);
+  const region = regionOf({ postCode: c.postCode, county: c.county });
+  const common = { region, regionDealers: settings.regionDealers };
+  return {
+    customerName: c.name ?? `Customer ${vantageCustomerId}`,
+    ownOverride: own?.override ?? null,
+    ownDealerName: own?.override === 'dealer' ? own.name : null,
+    effective: resolveOtherDealer({ own, headOffice: flagOf(c.headOffice), ...common }),
+    defaultInfo: resolveOtherDealer({ own: null, headOffice: flagOf(c.headOffice), ...common }),
+    suggestions: [...new Set(Object.values(settings.regionDealers).filter((d): d is string => !!d))],
+    isHeadOffice: (sites?.n ?? 0) > 0,
+  };
 }
 
 /**

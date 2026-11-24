@@ -16,9 +16,10 @@ const NUMBERS: { name: NumberName; label: string; unit: string; help: string }[]
 ];
 
 /** The region dealer fields; a blank name means we service that region ourselves. */
-const DEALERS: { name: 'irelandDealer' | 'scotlandDealer'; label: string; help: string }[] = [
+const DEALERS: { name: 'irelandDealer' | 'scotlandDealer' | 'channelIslandsDealer'; label: string; help: string }[] = [
   { name: 'irelandDealer', label: 'Ireland dealer', help: 'Republic of Ireland (Eircode or Irish county) and Northern Ireland (BT postcodes).' },
   { name: 'scotlandDealer', label: 'Scotland dealer', help: 'Scottish postcode areas (AB, DD, DG, EH, FK, G, HS, IV, KA, KW, KY, ML, PA, PH, TD, ZE).' },
+  { name: 'channelIslandsDealer', label: 'Channel Islands dealer', help: 'Guernsey and Jersey postcodes (GY, JE), or county Channel Isles / Guernsey / Jersey / Alderney / Sark.' },
 ];
 
 const IDLE: PlannerFormState = { status: 'idle' };

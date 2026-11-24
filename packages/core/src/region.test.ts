@@ -29,6 +29,23 @@ describe('regionOf', () => {
   it.each(['Co. Durham', 'County Durham', 'Hampshire', '', 'Down', 'Cork'])('no postcode + county "%s" is not Ireland', (c) => {
     expect(pc(null, c)).toBeNull();
   });
+  it.each(['GY1 1AA', 'GY9 3AB', 'JE2 3AB', 'je11aa'])('Channel Islands %s is channel_islands', (p) => {
+    expect(pc(p)).toBe('channel_islands');
+  });
+  it.each(['Channel Isles', 'Channel Islands', 'channel island', 'Guernsey', 'Jersey', 'Alderney', 'Sark', 'St Peter Port, Guernsey'])(
+    'no postcode + county "%s" is channel_islands',
+    (c) => {
+      expect(pc(null, c)).toBe('channel_islands');
+      expect(pc('', c)).toBe('channel_islands');
+    },
+  );
+  it.each(['Jerseyville', 'Sarkozy', 'Guernseyish'])('county "%s" is not matched inside a longer word', (c) => {
+    expect(pc(null, c)).toBeNull();
+  });
+  it('a recognised postcode wins over a Channel Islands county', () => {
+    expect(pc('GU14 7PR', 'Jersey')).toBeNull();
+    expect(pc('GY1 1AA', 'Hampshire')).toBe('channel_islands');
+  });
   it('no postcode and no county is ours', () => {
     expect(pc(null, null)).toBeNull();
     expect(pc(undefined, undefined)).toBeNull();
@@ -74,7 +91,7 @@ describe('postcode helpers', () => {
 });
 
 describe('resolveOtherDealer', () => {
-  const dealers = { ireland: 'MJ Flood', scotland: 'CMYK' };
+  const dealers = { ireland: 'MJ Flood', scotland: 'CMYK', channel_islands: 'Sigma' };
   const flag = (override: OtherDealerFlag['override'], name: string | null = null): OtherDealerFlag => ({ override, name });
   const resolve = (o: Partial<Parameters<typeof resolveOtherDealer>[0]>) =>
     resolveOtherDealer({ own: null, headOffice: null, region: null, regionDealers: { ...dealers }, ...o });
@@ -85,9 +102,10 @@ describe('resolveOtherDealer', () => {
   it('the region rule names the regional dealer', () => {
     expect(resolve({ region: 'ireland' })).toEqual({ dealer: 'MJ Flood', source: 'region', region: 'ireland' });
     expect(resolve({ region: 'scotland' })).toEqual({ dealer: 'CMYK', source: 'region', region: 'scotland' });
+    expect(resolve({ region: 'channel_islands' })).toEqual({ dealer: 'Sigma', source: 'region', region: 'channel_islands' });
   });
   it('a blank region dealer resolves to ours', () => {
-    expect(resolve({ region: 'ireland', regionDealers: { ireland: null, scotland: 'CMYK' } }).dealer).toBeNull();
+    expect(resolve({ region: 'ireland', regionDealers: { ireland: null, scotland: 'CMYK', channel_islands: 'Sigma' } }).dealer).toBeNull();
   });
   it('a site dealer beats a head-office ours', () => {
     expect(resolve({ own: flag('dealer', 'Acme'), headOffice: flag('ours') })).toEqual({ dealer: 'Acme', source: 'site', region: null });

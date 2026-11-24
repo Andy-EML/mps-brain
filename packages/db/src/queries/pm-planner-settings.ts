@@ -20,7 +20,7 @@ export interface PlannerSettings {
 }
 
 export const DEFAULT_PLANNER_SETTINGS: PlannerSettings = {
-  regionDealers: { ireland: 'MJ Flood', scotland: 'CMYK' },
+  regionDealers: { ireland: 'MJ Flood', scotland: 'CMYK', channel_islands: 'Sigma' },
   nearMiles: 10,
   doneRetentionDays: 14,
   askedStaleDays: 7,
@@ -66,6 +66,7 @@ export async function savePlannerSettings(db: Db, s: PlannerSettings, userId: nu
   const regionDealers: Record<DealerRegion, string | null> = {
     ireland: dealerName('Ireland dealer', s.regionDealers?.ireland),
     scotland: dealerName('Scotland dealer', s.regionDealers?.scotland),
+    channel_islands: dealerName('Channel Islands dealer', s.regionDealers?.channel_islands),
   };
   if (!Array.isArray(s.patches)) bad('Patches must be a list.');
   const names = new Set<string>();

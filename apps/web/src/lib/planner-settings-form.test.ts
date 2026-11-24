@@ -21,6 +21,7 @@ function codeOf(fn: () => unknown): string | undefined {
 const VALID = {
   irelandDealer: ' MJ Flood ',
   scotlandDealer: 'CMYK',
+  channelIslandsDealer: ' Sigma ',
   nearMiles: '10',
   doneRetentionDays: '14',
   askedStaleDays: '7',
@@ -75,7 +76,7 @@ describe('parsePatches', () => {
 describe('parsePlannerSettingsForm', () => {
   it('reads a valid form', () => {
     expect(parsePlannerSettingsForm(form(VALID))).toEqual({
-      regionDealers: { ireland: 'MJ Flood', scotland: 'CMYK' },
+      regionDealers: { ireland: 'MJ Flood', scotland: 'CMYK', channel_islands: 'Sigma' },
       nearMiles: 10,
       doneRetentionDays: 14,
       askedStaleDays: 7,
@@ -84,9 +85,9 @@ describe('parsePlannerSettingsForm', () => {
   });
 
   it('maps blank dealer names to null', () => {
-    const s = parsePlannerSettingsForm(form({ ...VALID, irelandDealer: '   ', scotlandDealer: '' }));
-    expect(s.regionDealers).toEqual({ ireland: null, scotland: null });
-    expect(parsePlannerSettingsForm(form({ nearMiles: '5', doneRetentionDays: '1', askedStaleDays: '1' })).regionDealers).toEqual({ ireland: null, scotland: null });
+    const s = parsePlannerSettingsForm(form({ ...VALID, irelandDealer: '   ', scotlandDealer: '', channelIslandsDealer: ' ' }));
+    expect(s.regionDealers).toEqual({ ireland: null, scotland: null, channel_islands: null });
+    expect(parsePlannerSettingsForm(form({ nearMiles: '5', doneRetentionDays: '1', askedStaleDays: '1' })).regionDealers).toEqual({ ireland: null, scotland: null, channel_islands: null });
   });
 
   it('rejects non-numeric miles and days', () => {
@@ -107,6 +108,7 @@ describe('planner form values', () => {
     expect(plannerFormValues(form({ irelandDealer: ' MJ Flood ', nearMiles: 'ten', patches: 'North: GU14,\nbad line' }))).toEqual({
       irelandDealer: ' MJ Flood ',
       scotlandDealer: '',
+      channelIslandsDealer: '',
       nearMiles: 'ten',
       doneRetentionDays: '',
       askedStaleDays: '',
@@ -116,7 +118,7 @@ describe('planner form values', () => {
 
   it('plannerSettingsToValues shows stored settings as the form does, and parses back to them', () => {
     const settings = {
-      regionDealers: { ireland: 'MJ Flood', scotland: null },
+      regionDealers: { ireland: 'MJ Flood', scotland: null, channel_islands: 'Sigma' },
       nearMiles: 12,
       doneRetentionDays: 14,
       askedStaleDays: 7,
@@ -126,6 +128,7 @@ describe('planner form values', () => {
     expect(values).toEqual({
       irelandDealer: 'MJ Flood',
       scotlandDealer: '',
+      channelIslandsDealer: 'Sigma',
       nearMiles: '12',
       doneRetentionDays: '14',
       askedStaleDays: '7',

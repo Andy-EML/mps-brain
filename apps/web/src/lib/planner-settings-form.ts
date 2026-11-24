@@ -3,7 +3,7 @@ import type { PlannerFormValues } from './planner-settings-state';
 
 /**
  * The *Planner and other dealers* card on `/settings/pm`. It posts `irelandDealer`,
- * `scotlandDealer`, `nearMiles`, `doneRetentionDays`, `askedStaleDays` and `patches` (one patch per
+ * `scotlandDealer`, `channelIslandsDealer`, `nearMiles`, `doneRetentionDays`, `askedStaleDays` and `patches` (one patch per
  * line, `Name: GU14, GU11`). Pure; throws `SettingsError('invalid_planner_setting')`, the code
  * `savePlannerSettings` uses, so the action handles both alike. `savePlannerSettings` checks the
  * ranges, lengths and duplicate districts again — this only turns strings into values.
@@ -59,7 +59,7 @@ export function formatPatches(p: PmPatch[]): string {
 export function parsePlannerSettingsForm(fd: FormData): PlannerSettings {
   const dealer = (name: string): string | null => text(fd, name) || null;
   return {
-    regionDealers: { ireland: dealer('irelandDealer'), scotland: dealer('scotlandDealer') },
+    regionDealers: { ireland: dealer('irelandDealer'), scotland: dealer('scotlandDealer'), channel_islands: dealer('channelIslandsDealer') },
     nearMiles: whole(fd, 'nearMiles', 'Near distance'),
     doneRetentionDays: whole(fd, 'doneRetentionDays', 'Done retention'),
     askedStaleDays: whole(fd, 'askedStaleDays', 'Asked-engineer warning'),
@@ -72,6 +72,7 @@ export function plannerSettingsToValues(s: PlannerSettings): PlannerFormValues {
   return {
     irelandDealer: s.regionDealers.ireland ?? '',
     scotlandDealer: s.regionDealers.scotland ?? '',
+    channelIslandsDealer: s.regionDealers.channel_islands ?? '',
     nearMiles: String(s.nearMiles),
     doneRetentionDays: String(s.doneRetentionDays),
     askedStaleDays: String(s.askedStaleDays),

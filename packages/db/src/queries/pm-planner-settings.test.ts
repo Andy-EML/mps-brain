@@ -24,7 +24,7 @@ describe('planner settings', () => {
 
   it('has the agreed defaults', () => {
     expect(DEFAULT_PLANNER_SETTINGS).toEqual({
-      regionDealers: { ireland: 'MJ Flood', scotland: 'CMYK' },
+      regionDealers: { ireland: 'MJ Flood', scotland: 'CMYK', channel_islands: 'Sigma' },
       nearMiles: 10,
       doneRetentionDays: 14,
       askedStaleDays: 7,
@@ -40,7 +40,7 @@ describe('planner settings', () => {
     await savePlannerSettings(
       t.db,
       base({
-        regionDealers: { ireland: '  Acme  ', scotland: '   ' },
+        regionDealers: { ireland: '  Acme  ', scotland: '   ', channel_islands: ' Sigma Ltd ' },
         nearMiles: 25,
         doneRetentionDays: 30,
         askedStaleDays: 3,
@@ -49,7 +49,7 @@ describe('planner settings', () => {
       null,
     );
     expect(await getPlannerSettings(t.db)).toEqual({
-      regionDealers: { ireland: 'Acme', scotland: null },
+      regionDealers: { ireland: 'Acme', scotland: null, channel_islands: 'Sigma Ltd' },
       nearMiles: 25,
       doneRetentionDays: 30,
       askedStaleDays: 3,
@@ -61,6 +61,12 @@ describe('planner settings', () => {
     const { setAppState } = await import('../app-state');
     await setAppState(t.db, 'pm_planner_settings', { nearMiles: 12 });
     expect(await getPlannerSettings(t.db)).toEqual({ ...DEFAULT_PLANNER_SETTINGS, nearMiles: 12 });
+  });
+
+  it('gives a saved row without channel_islands the Sigma default, keeping the saved dealers', async () => {
+    const { setAppState } = await import('../app-state');
+    await setAppState(t.db, 'pm_planner_settings', { regionDealers: { ireland: 'Acme', scotland: null } });
+    expect((await getPlannerSettings(t.db)).regionDealers).toEqual({ ireland: 'Acme', scotland: null, channel_islands: 'Sigma' });
   });
 
   it('writes an audit row with the user id', async () => {
@@ -80,7 +86,8 @@ describe('planner settings', () => {
   });
 
   it('rejects a dealer name over 60 characters', async () => {
-    await rejects(base({ regionDealers: { ireland: 'x'.repeat(61), scotland: null } }));
+    await rejects(base({ regionDealers: { ireland: 'x'.repeat(61), scotland: null, channel_islands: null } }));
+    await rejects(base({ regionDealers: { ireland: null, scotland: null, channel_islands: 'x'.repeat(61) } }));
   });
   it('rejects a patch with no name, a long name, or a duplicate name (any case)', async () => {
     await rejects(base({ patches: [{ name: '  ', districts: ['GU14'] }] }));

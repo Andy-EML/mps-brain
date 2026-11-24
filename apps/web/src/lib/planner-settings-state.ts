@@ -7,13 +7,14 @@
 export interface PlannerFormValues {
   irelandDealer: string;
   scotlandDealer: string;
+  channelIslandsDealer: string;
   nearMiles: string;
   doneRetentionDays: string;
   askedStaleDays: string;
   patches: string;
 }
 
-export const PLANNER_FIELDS = ['irelandDealer', 'scotlandDealer', 'nearMiles', 'doneRetentionDays', 'askedStaleDays', 'patches'] as const;
+export const PLANNER_FIELDS = ['irelandDealer', 'scotlandDealer', 'channelIslandsDealer', 'nearMiles', 'doneRetentionDays', 'askedStaleDays', 'patches'] as const;
 
 /**
  * `idle` before any save; `saved` with the stored (cleaned) values; `error` with our own message
@@ -33,6 +34,7 @@ export function plannerFormValues(fd: FormData): PlannerFormValues {
   return {
     irelandDealer: get('irelandDealer'),
     scotlandDealer: get('scotlandDealer'),
+    channelIslandsDealer: get('channelIslandsDealer'),
     nearMiles: get('nearMiles'),
     doneRetentionDays: get('doneRetentionDays'),
     askedStaleDays: get('askedStaleDays'),

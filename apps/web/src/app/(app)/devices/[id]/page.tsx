@@ -10,6 +10,7 @@ import {
   getDeviceYield,
   getEquipmentPm,
   getHiddenDevice,
+  getOtherDealerControl,
   getPmSettings,
   getYieldCheckForProposals,
   listAlerts,
@@ -30,6 +31,7 @@ import { CounterTable } from '@/components/counter-table';
 import { DetailCard, DetailRow } from '@/components/detail-card';
 import { HideDeviceDialog, UnhideDeviceButton } from '@/components/hide-device';
 import { counterHistoryRows, groupAlarms, meterChannels, rawString } from '@/components/device-detail';
+import { OtherDealerControl } from '@/components/other-dealer-control';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
 import { PmCard } from '@/components/pm-card';
@@ -221,7 +223,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const shelfOffer = shelfLink ? null : await getDeviceShelfOffer(db, id);
   // Toner yield: the card below, and the "Last ordered … · N pages since" line on each live proposal.
   // Preventive maintenance hangs off the Vantage equipment too; an unlinked device has none.
-  const [tonerYield, yieldCheckMap, pm, pmSettings] = await Promise.all([
+  const [tonerYield, yieldCheckMap, pm, pmSettings, dealerControl] = await Promise.all([
     getDeviceYield(db, id),
     getYieldCheckForProposals(
       db,
@@ -229,6 +231,8 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
     ),
     vantageEquipmentId == null ? Promise.resolve(null) : getEquipmentPm(db, vantageEquipmentId),
     getPmSettings(db),
+    // Who services the device's site for PM; none for a device with no Vantage customer.
+    detail.device.vantageCustomerId == null ? Promise.resolve(null) : getOtherDealerControl(db, detail.device.vantageCustomerId),
   ]);
   const yieldChecks: YieldChecks = Object.fromEntries(yieldCheckMap);
   const orderRefs: Record<number, string | null> = Object.fromEntries(orders.orders.map((o) => [o.vantageId, o.reference]));
@@ -346,7 +350,25 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
         }
         subtitle={subtitle}
         actions={
-          hidden ? null : <HideDeviceDialog drmsId={device.drmsId} name={name} from={fromParam} back={backParam} />
+          dealerControl || !hidden ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {dealerControl && device.vantageCustomerId != null ? (
+                <OtherDealerControl
+                  // Remounts from the saved state after a save.
+                  key={`${dealerControl.ownOverride}|${dealerControl.ownDealerName}`}
+                  vantageCustomerId={device.vantageCustomerId}
+                  customerName={dealerControl.customerName}
+                  ownOverride={dealerControl.ownOverride}
+                  ownDealerName={dealerControl.ownDealerName}
+                  effective={dealerControl.effective}
+                  defaultInfo={dealerControl.defaultInfo}
+                  suggestions={dealerControl.suggestions}
+                  isHeadOffice={dealerControl.isHeadOffice}
+                />
+              ) : null}
+              {hidden ? null : <HideDeviceDialog drmsId={device.drmsId} name={name} from={fromParam} back={backParam} />}
+            </div>
+          ) : null
         }
       />
 
