@@ -59,6 +59,13 @@ export function parseMapIds(raw: unknown): number[] {
   return [...new Set(raw as number[])];
 }
 
+/** Validates the popup's Priority toggle: one machine id (as `parseMapIds`) and a boolean. */
+export function parsePriorityInput(id: unknown, on: unknown): { vantageEquipmentId: number; on: boolean } {
+  if (typeof on !== 'boolean') throw new Error('bad priority');
+  const [vantageEquipmentId] = parseMapIds([id]);
+  return { vantageEquipmentId, on };
+}
+
 const SKIP_COPY: Record<MapSkipReason, string> = {
   not_on_map: 'no longer due',
   booked: 'already booked',

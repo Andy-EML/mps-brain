@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapPin, MapPlanResult } from '@mps/db/queries';
-import { MAP_IDS_MAX, boardColumnText, farFromCall, mapResultText, parseMapIds, pinDueText, pinTone, selectInBox, unlocatedText } from './planner-map';
+import { MAP_IDS_MAX, boardColumnText, farFromCall, mapResultText, parseMapIds, parsePriorityInput, pinDueText, pinTone, selectInBox, unlocatedText } from './planner-map';
 
 function pin(over: Partial<MapPin> = {}): MapPin {
   return {
@@ -74,5 +74,18 @@ describe('pinDueText / boardColumnText / unlocatedText', () => {
     expect(unlocatedText(0)).toBeNull();
     expect(unlocatedText(1)).toBe('1 machine has no location');
     expect(unlocatedText(12)).toBe('12 machines have no location');
+  });
+});
+
+describe('parsePriorityInput', () => {
+  it('accepts an id and a boolean', () => {
+    expect(parsePriorityInput(7, true)).toEqual({ vantageEquipmentId: 7, on: true });
+    expect(parsePriorityInput(7, false)).toEqual({ vantageEquipmentId: 7, on: false });
+  });
+  it('rejects bad ids and non-boolean on', () => {
+    expect(() => parsePriorityInput(0, true)).toThrow();
+    expect(() => parsePriorityInput('7', true)).toThrow();
+    expect(() => parsePriorityInput(1.5, true)).toThrow();
+    expect(() => parsePriorityInput(7, 'true')).toThrow();
   });
 });

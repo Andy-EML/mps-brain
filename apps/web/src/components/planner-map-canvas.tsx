@@ -32,6 +32,9 @@ export interface MapCall {
   label: string;
 }
 
+/** A single-machine action from a pin's popup. */
+export type PinAction = { kind: 'add'; id: number } | { kind: 'priority'; id: number; on: boolean };
+
 export interface PlannerMapCanvasProps {
   pins: MapPin[];
   /** DRMS device id per Vantage equipment id, for the popup's device link. */
@@ -39,13 +42,14 @@ export interface PlannerMapCanvasProps {
   selected: ReadonlySet<number>;
   calls: MapCall[];
   pickedCallId: number | null;
-  /** Pan to this call; `n` changes on every pick from the side panel so a second click pans again. */
+  /** Fly to this call (its ring in view); `n` changes on every pick so picking it again flies again. */
   focus: { at: LatLng; n: number } | null;
   nearMiles: number;
   /** "Select area" is on: a plain drag draws a box. Shift+drag always does. */
   boxMode: boolean;
   onBox: (box: Box) => void;
   onPickCall: (workUnitId: number) => void;
+  onPinAction: (action: PinAction) => void;
 }
 
 const TONE_CLASS: Record<PinTone, string> = {
@@ -96,7 +100,16 @@ function popupHtml(p: MapPin, drmsId: string | undefined): string {
   if (drmsId) links.push(`<a href="${esc(deviceHref(drmsId, 'pm-planner', BACK))}">Device page</a>`);
   if (p.customerId !== null) links.push(`<a href="${esc(customerHref(p.customerId))}">Customer page</a>`);
   if (links.length) lines.push(links.join(' · '));
-  return `<div class="text-[13px] leading-snug">${lines.join('<br>')}</div>`;
+  const id = p.vantageEquipmentId;
+  const btn = 'inline-flex h-7 items-center gap-1 rounded-md border border-line bg-card px-2 text-[12px] font-medium hover:bg-muted disabled:opacity-60 disabled:hover:bg-card';
+  const onPlan = p.boardColumn !== null;
+  const actions =
+    `<div class="mt-2 flex flex-wrap gap-1.5">` +
+    `<button type="button" class="${btn}" data-map-act="add" data-id="${id}"${onPlan ? ' disabled' : ''}>${onPlan ? 'On plan' : 'Add to plan'}</button>` +
+    `<button type="button" class="${btn}" data-map-act="priority" data-id="${id}" data-on="${p.priority ? 'false' : 'true'}" aria-pressed="${p.priority}">` +
+    `<span class="${p.priority ? 'text-critical' : 'text-muted-foreground'}" aria-hidden="true">${p.priority ? '★' : '☆'}</span> Priority</button>` +
+    `</div>`;
+  return `<div class="text-[13px] leading-snug">${lines.join('<br>')}${actions}</div>`;
 }
 
 /** Clustered PM pins. Rebuilt when the pins change; only icons change when the selection does. */
@@ -166,8 +179,11 @@ function CallLayer({ calls, pickedCallId, focus, nearMiles, onPickCall }: Pick<P
     };
   }, [map, calls, pickedCallId, nearMiles]);
 
+  const miles = useRef(nearMiles);
+  miles.current = nearMiles;
   useEffect(() => {
-    if (focus) map.panTo([focus.at.lat, focus.at.lng]);
+    // The whole ring in view (its square, with a little room round it). Only a new pick flies.
+    if (focus) map.flyToBounds(L.latLng(focus.at.lat, focus.at.lng).toBounds(miles.current * METRES_PER_MILE * 2.2), { duration: 0.6 });
   }, [map, focus]);
 
   return null;
@@ -237,6 +253,34 @@ function BoxSelect({ boxMode, onBox }: Pick<PlannerMapCanvasProps, 'boxMode' | '
   return null;
 }
 
+/**
+ * The popups' Add to plan / Priority buttons. Leaflet stops clicks inside a popup from bubbling,
+ * so one capture-phase listener on the map container picks them up by their data attributes.
+ */
+function PopupActions({ onPinAction }: Pick<PlannerMapCanvasProps, 'onPinAction'>) {
+  const map = useMap();
+  const onAction = useRef(onPinAction);
+  onAction.current = onPinAction;
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const click = (e: MouseEvent) => {
+      const el = e.target instanceof Element ? e.target.closest<HTMLButtonElement>('button[data-map-act]') : null;
+      if (!el || el.disabled) return;
+      const id = Number(el.dataset.id);
+      if (!Number.isSafeInteger(id) || id <= 0) return;
+      e.preventDefault();
+      el.disabled = true;
+      if (el.dataset.mapAct === 'add') onAction.current({ kind: 'add', id });
+      else if (el.dataset.mapAct === 'priority') onAction.current({ kind: 'priority', id, on: el.dataset.on === 'true' });
+    };
+    container.addEventListener('click', click, true);
+    return () => container.removeEventListener('click', click, true);
+  }, [map]);
+
+  return null;
+}
+
 export function PlannerMapCanvas(props: PlannerMapCanvasProps) {
   return (
     <MapContainer center={START} zoom={6} boxZoom={false} className="size-full" aria-label="PM map">
@@ -250,6 +294,7 @@ export function PlannerMapCanvas(props: PlannerMapCanvasProps) {
         onPickCall={props.onPickCall}
       />
       <BoxSelect boxMode={props.boxMode} onBox={props.onBox} />
+      <PopupActions onPinAction={props.onPinAction} />
     </MapContainer>
   );
 }

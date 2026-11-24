@@ -1,10 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { SettingsError, planFromMap } from '@mps/db/queries';
+import { SettingsError, planFromMap, setPriority } from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { mapResultText, parseMapIds } from '@/lib/planner-map';
+import { mapResultText, parseMapIds, parsePriorityInput } from '@/lib/planner-map';
 
 /**
  * The PM map's bulk actions: add the selected machines to the plan, or ask an engineer about them
@@ -34,4 +34,20 @@ export async function mapAddToPlanAction(ids: number[]): Promise<MapActionResult
 
 export async function mapAskEngineerAction(ids: number[], workUnitId: number): Promise<MapActionResult> {
   return run(ids, 'ask', workUnitId);
+}
+
+/** The map popup's Priority star for one machine. */
+export async function mapSetPriorityAction(id: number, on: boolean): Promise<MapActionResult> {
+  const user = await requireUser();
+  try {
+    const p = parsePriorityInput(id, on);
+    await setPriority(getDb(), { vantageEquipmentId: p.vantageEquipmentId, on: p.on, userId: user.userId });
+    revalidatePath('/pm/planner');
+    revalidatePath('/pm');
+    return { ok: true, text: p.on ? 'Priority set' : 'Priority cleared' };
+  } catch (err) {
+    if (err instanceof SettingsError) return { ok: false, error: err.message };
+    console.error('[pm-map] priority failed', err);
+    return { ok: false, error: "Couldn't save — try again" };
+  }
 }

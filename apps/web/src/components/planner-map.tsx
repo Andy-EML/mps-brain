@@ -6,8 +6,8 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { LatLng, MapPin, UpcomingCall, UpcomingEngineer } from '@mps/db/queries';
 import { cn } from 'cn';
-import { mapAddToPlanAction, mapAskEngineerAction } from '@/app/(app)/pm/planner/map-actions';
-import type { MapCall } from '@/components/planner-map-canvas';
+import { mapAddToPlanAction, mapAskEngineerAction, mapSetPriorityAction, type MapActionResult } from '@/app/(app)/pm/planner/map-actions';
+import type { MapCall, PinAction } from '@/components/planner-map-canvas';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formatDayMonth } from '@/lib/format';
@@ -28,7 +28,7 @@ export interface PlannerMapProps {
   tomorrow: string;
   nearMiles: number;
   /** DRMS device id per Vantage equipment id, for the popups' device links. */
-  deviceIds?: Record<number, string>;
+  deviceIds: Record<number, string>;
 }
 
 type Day = 'today' | 'tomorrow';
@@ -36,6 +36,8 @@ type Mode = 'add' | 'ask';
 interface DayCall extends UpcomingCall {
   engineerName: string;
 }
+
+const SAVE_FAILED = "Couldn't save — try again";
 
 const dayLabel = (date: string) => formatDayMonth(new Date(`${date}T12:00:00Z`));
 // Same as `callTimeText` in lib/planner-upcoming (not imported: that module pulls in @mps/db values).
@@ -48,7 +50,7 @@ const callTimeText = (start: Date) => timeFormat.format(start);
  * client state; after an action it clears, a toast says what happened and the page data refreshes
  * while the map keeps its view. Recorded in this app only.
  */
-export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMiles, deviceIds = {} }: PlannerMapProps) {
+export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMiles, deviceIds }: PlannerMapProps) {
   const router = useRouter();
   const [day, setDay] = useState<Day>('today');
   const [pickedCallId, setPickedCallId] = useState<number | null>(null);
@@ -89,11 +91,46 @@ export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMi
     },
     [pins],
   );
-  const onPickCall = useCallback((id: number) => setPickedCallId(id), []);
-  const pickFromPanel = (c: DayCall) => {
+  const pickCall = useCallback((c: { workUnitId: number; at: LatLng | null }) => {
     setPickedCallId(c.workUnitId);
-    if (c.at) setFocus((f) => ({ at: c.at as LatLng, n: (f?.n ?? 0) + 1 }));
-  };
+    const at = c.at;
+    if (at) setFocus((f) => ({ at, n: (f?.n ?? 0) + 1 }));
+  }, []);
+  const onPickCall = useCallback(
+    (id: number) => {
+      const c = mapCalls.find((x) => x.workUnitId === id);
+      if (c) pickCall(c);
+    },
+    [mapCalls, pickCall],
+  );
+
+  /** Runs a map action: toast the result and refresh the page data (the map keeps its view). */
+  const save = useCallback(
+    async (call: () => Promise<MapActionResult>): Promise<boolean> => {
+      let r: MapActionResult;
+      try {
+        r = await call();
+      } catch {
+        toast.error(SAVE_FAILED);
+        return false;
+      }
+      if (!r.ok) {
+        toast.error(r.error);
+        return false;
+      }
+      toast.success(r.text);
+      router.refresh();
+      return true;
+    },
+    [router],
+  );
+  const onPinAction = useCallback(
+    (a: PinAction) =>
+      startTransition(async () => {
+        await save(() => (a.kind === 'add' ? mapAddToPlanAction([a.id]) : mapSetPriorityAction(a.id, a.on)));
+      }),
+    [save],
+  );
 
   const count = selectedPins.length;
   const tooMany = count > MAP_IDS_MAX;
@@ -102,16 +139,10 @@ export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMi
     const ids = selectedPins.map((p) => p.vantageEquipmentId);
     const call = picked;
     setConfirm(null);
+    if (mode === 'ask' && !call) return;
     startTransition(async () => {
-      const r = mode === 'add' ? await mapAddToPlanAction(ids) : call ? await mapAskEngineerAction(ids, call.workUnitId) : null;
-      if (!r) return;
-      if (r.ok) {
-        toast.success(r.text);
-        setSelected([]);
-        router.refresh();
-      } else {
-        toast.error(r.error);
-      }
+      const ok = await save(() => (mode === 'add' || !call ? mapAddToPlanAction(ids) : mapAskEngineerAction(ids, call.workUnitId)));
+      if (ok) setSelected([]);
     });
   };
 
@@ -151,6 +182,7 @@ export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMi
             boxMode={boxMode}
             onBox={onBox}
             onPickCall={onPickCall}
+            onPinAction={onPinAction}
           />
         </div>
         <p className="mt-2 text-[12px] text-muted-foreground">
@@ -245,7 +277,7 @@ export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMi
                           <button
                             type="button"
                             aria-pressed={isPicked}
-                            onClick={() => pickFromPanel({ ...c, engineerName: e.name })}
+                            onClick={() => pickCall(c)}
                             className={cn(
                               'flex w-full items-baseline gap-2 rounded-md px-2 py-1 text-left text-[13px] transition-colors',
                               isPicked ? 'bg-brand-soft ring-1 ring-brand' : 'hover:bg-muted',
