@@ -26,11 +26,11 @@ import { pmErrorMessage } from '@/lib/pm-action-form';
 import {
   PM_FACETS,
   applyPmFacets,
+  facetKey,
   facetOptions,
   groupByTown,
   pageTownGroups,
   townHeader,
-  townKey,
   type PmFacet,
   type PmFacetSelection,
 } from '@/lib/pm-facets';
@@ -54,7 +54,9 @@ const DEFAULT_ROWS = PM_DEFAULT_ROWS;
 /** Columns in the collapsed row (`PmRow`), the narrow Plan cell included. */
 const COLUMNS = 8;
 
-const HEAD = 'px-4 py-2.5 text-left text-[11px] font-medium tracking-wider text-muted-foreground uppercase whitespace-nowrap';
+/** Header cell; the two long labels may wrap to two lines so the row fits without sideways scroll. */
+const HEAD_WRAP = 'px-2 py-2.5 text-left text-[11px] font-medium tracking-wider text-muted-foreground uppercase';
+const HEAD = `${HEAD_WRAP} whitespace-nowrap`;
 
 const FACET_TITLE: Record<PmFacet, string> = {
   town: 'Town',
@@ -188,7 +190,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
   const clearAllHref = hrefWith('/pm', { ...view, ...NO_FACETS });
   const chips: PmFilterChip[] = PM_FACETS.flatMap((f) =>
     filters.facets[f].map((v) => {
-      const match = f === 'town' ? townKey(v) : v;
+      const match = facetKey(f, v);
       const label =
         facetGroups.find((g) => g.facet === f)?.options.find((o) => o.value === match)?.label ?? labels[f]?.get(v) ?? v;
       return {
@@ -339,15 +341,15 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
             </p>
           ) : (
             <div className="w-full overflow-x-auto">
-              <table className="w-full min-w-[1000px] border-collapse">
+              <table className="w-full min-w-[880px] border-collapse">
                 <thead>
                   <tr className="border-b border-line">
-                    <SortHeader label="Customer" sortKey="customer" className={HEAD} {...sorting} />
+                    <SortHeader label="Customer" sortKey="customer" className={cn(HEAD, 'pl-4')} {...sorting} />
                     <SortHeader label="Serial" sortKey="serial" className={HEAD} {...sorting} />
                     <SortHeader label="Model" sortKey="model" className={HEAD} {...sorting} />
                     <SortHeader label="Status" sortKey="status" className={HEAD} {...sorting} />
-                    <SortHeader label="Pages since / %" sortKey="pct" align="right" className={HEAD} {...sorting} />
-                    <SortHeader label="Last counted visit" sortKey="lastVisit" className={HEAD} {...sorting} />
+                    <SortHeader label="Pages since / %" sortKey="pct" align="right" className={HEAD_WRAP} {...sorting} />
+                    <SortHeader label="Last counted visit" sortKey="lastVisit" className={HEAD_WRAP} {...sorting} />
                     <SortHeader label="Est. due" sortKey="due" className={HEAD} {...sorting} />
                     <th scope="col" className={cn(HEAD, 'w-px pr-3 pl-1')}>
                       {filters.view === 'other-dealer' ? 'Dealer' : 'Plan'}

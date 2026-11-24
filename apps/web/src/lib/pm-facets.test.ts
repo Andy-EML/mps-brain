@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { PmRow, PmStatus } from '@mps/db/queries';
 import {
   applyPmFacets,
+  facetKey,
   facetOptions,
   groupByTown,
   pageTownGroups,
@@ -144,5 +145,40 @@ describe('facets', () => {
     expect(parsePmFacets({ town: ['A', ' ', 'A'], family: '7' }).town).toEqual(['A']);
     expect(parsePmFacets({ family: '7' }).family).toEqual(['7']);
     expect(parsePmFacets({}).county).toEqual([]);
+  });
+  it('town values dedupe by townKey', () => {
+    expect(parsePmFacets(new URLSearchParams('town=Newbury&town=newbury&town=%20NEWBURY%20')).town).toEqual(['Newbury']);
+  });
+});
+
+describe('customer facet (case-insensitive)', () => {
+  const rs = [
+    row(1, { customerName: 'ACME Ltd' }),
+    row(2, { customerName: 'Acme Ltd' }),
+    row(3, { customerName: 'Acme Ltd' }),
+    row(4, { customerName: 'Acme Holdings' }),
+    row(5, { customerName: 'Other' }),
+  ];
+  const ids = (sel: PmFacetSelection) => applyPmFacets(rs, sel).map((r) => r.vantageEquipmentId);
+  it('mixed-case link value matches exactly, not by substring', () => {
+    expect(ids({ ...empty(), customer: ['acme LTD'] })).toEqual([1, 2, 3]);
+  });
+  it('value matching no row exactly falls back to substring', () => {
+    expect(ids({ ...empty(), customer: ['acme'] })).toEqual([1, 2, 3, 4]);
+    expect(ids({ ...empty(), customer: ['nobody'] })).toEqual([]);
+  });
+  it('label is the most common spelling; value is the folded key', () => {
+    const opts = facetOptions(rs, empty(), 'customer');
+    const acme = opts.find((o) => o.value === 'acme ltd')!;
+    expect(acme.label).toBe('Acme Ltd');
+    expect(acme.count).toBe(3);
+    const ticked = facetOptions(rs, { ...empty(), customer: ['ACME LTD'] }, 'customer');
+    expect(ticked.find((o) => o.value === 'acme ltd')!.checked).toBe(true);
+  });
+  it('parse dedupes case variants and facetKey folds', () => {
+    expect(parsePmFacets(new URLSearchParams('customer=Acme%20Ltd&customer=acme%20%20ltd')).customer).toEqual(['Acme Ltd']);
+    expect(facetKey('customer', ' Acme  LTD ')).toBe('acme ltd');
+    expect(facetKey('town', ' NewBury')).toBe('newbury');
+    expect(facetKey('county', 'Berkshire')).toBe('Berkshire');
   });
 });

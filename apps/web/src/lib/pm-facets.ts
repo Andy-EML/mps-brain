@@ -16,11 +16,20 @@ function all(params: Params, key: string): string[] {
   return v === undefined ? [] : Array.isArray(v) ? v : [v];
 }
 
-/** All values per facet key: trimmed, non-empty, de-duplicated; junk status/family values dropped. */
+/**
+ * All values per facet key: trimmed, non-empty, de-duplicated by their match key (so `town=Newbury&town=newbury`
+ * is one value; the first spelling is kept); junk status/family values dropped.
+ */
 export function parsePmFacets(params: Params): PmFacetSelection {
   const out = {} as PmFacetSelection;
   for (const f of PM_FACETS) {
-    const vals = [...new Set(all(params, f).map((v) => (f === 'customer' ? tidy(v) : v.trim())).filter(Boolean))];
+    const byKey = new Map<string, string>();
+    for (const raw of all(params, f)) {
+      const v = f === 'customer' ? tidy(raw) : raw.trim();
+      const k = facetKey(f, v);
+      if (v && k && !byKey.has(k)) byKey.set(k, v);
+    }
+    const vals = [...byKey.values()];
     out[f] =
       f === 'status'
         ? vals.filter((v) => (PM_STATUSES as readonly string[]).includes(v))
@@ -51,17 +60,34 @@ export function facetValue(r: PmRow, f: PmFacet): string {
     case 'family':
       return r.familyId === null ? '' : String(r.familyId);
     case 'customer':
-      return tidy(r.customerName);
+      return tidy(r.customerName).toLowerCase();
   }
 }
 
-const selKey = (f: PmFacet, v: string): string => (f === 'town' ? townKey(v) : v);
+/** A selected value as `facetValue` spells it: town and customer are case-folded, the rest as given. */
+export function facetKey(f: PmFacet, v: string): string {
+  return f === 'town' || f === 'customer' ? tidy(v).toLowerCase() : v;
+}
 
+/**
+ * Rows matching every active facet (OR within a facet, AND across). A customer value that matches no
+ * row exactly falls back to a substring match, so older links (`?customer=` from the customer page,
+ * bookmarks from when the filter was a substring search) still find their machines.
+ */
 export function applyPmFacets(rows: PmRow[], sel: PmFacetSelection, except?: PmFacet): PmRow[] {
   const active = PM_FACETS.filter((f) => f !== except && sel[f].length > 0);
   if (active.length === 0) return rows;
-  const sets = active.map((f) => [f, new Set(sel[f].map((v) => selKey(f, v)))] as const);
-  return rows.filter((r) => sets.every(([f, s]) => s.has(facetValue(r, f))));
+  const tests = active.map((f) => {
+    const keys = new Set(sel[f].map((v) => facetKey(f, v)));
+    if (f !== 'customer') return (r: PmRow) => keys.has(facetValue(r, f));
+    const present = new Set(rows.map((r) => facetValue(r, f)));
+    const subs = [...keys].filter((k) => !present.has(k));
+    return (r: PmRow) => {
+      const v = facetValue(r, f);
+      return keys.has(v) || subs.some((s) => v.includes(s));
+    };
+  });
+  return rows.filter((r) => tests.every((t) => t(r)));
 }
 
 export interface FacetOption {
@@ -83,26 +109,30 @@ export function facetOptions(rows: PmRow[], sel: PmFacetSelection, f: PmFacet, l
     if (v !== '') counts.set(v, (counts.get(v) ?? 0) + 1);
   }
   // Display names come from all rows, so a zero-count ticked option still reads well.
-  const townNames = new Map<string, Map<string, number>>();
+  // Town and customer values are case-folded keys: each shows its most common spelling.
+  const spellings = new Map<string, Map<string, number>>();
   const famNames = new Map<string, string>();
-  if (f === 'town' || f === 'family') {
+  if (f === 'town' || f === 'customer' || f === 'family') {
     for (const r of rows) {
       const v = facetValue(r, f);
       if (v === '') continue;
-      if (f === 'town') {
-        const m = townNames.get(v) ?? new Map<string, number>();
-        m.set(tidy(r.town), (m.get(tidy(r.town)) ?? 0) + 1);
-        townNames.set(v, m);
-      } else if (r.family) famNames.set(v, r.family);
+      if (f === 'family') {
+        if (r.family) famNames.set(v, r.family);
+        continue;
+      }
+      const name = tidy(f === 'town' ? r.town : r.customerName);
+      const m = spellings.get(v) ?? new Map<string, number>();
+      m.set(name, (m.get(name) ?? 0) + 1);
+      spellings.set(v, m);
     }
   }
+  const ticked = new Map(sel[f].map((v) => [facetKey(f, v), v] as const));
   const nameOf = (v: string): string => {
-    if (f === 'town') return townNames.has(v) ? mostCommon(townNames.get(v)!) : v;
+    if (f === 'town' || f === 'customer') return spellings.has(v) ? mostCommon(spellings.get(v)!) : (ticked.get(v) ?? v);
     if (f === 'family') return labels?.get(v) ?? famNames.get(v) ?? v;
     return labels?.get(v) ?? v;
   };
-  const ticked = new Set(sel[f].map((v) => selKey(f, v)));
-  const values = new Set([...counts.keys(), ...ticked]);
+  const values = new Set([...counts.keys(), ...ticked.keys()]);
   return [...values]
     .map((value) => ({ value, label: nameOf(value), count: counts.get(value) ?? 0, checked: ticked.has(value) }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));

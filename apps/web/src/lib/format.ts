@@ -149,3 +149,23 @@ export function machineActionLabel(action: string, customerName: string | null, 
   const s = serial?.trim();
   return `${action}: ${customer}${s ? `, serial ${s}` : ''}`;
 }
+
+const MODEL_MAKE = /^(?:konica[\s-]*minolta|konica(?![\s-]*minolta)|olivetti|develop|sindoh|kyocera|ricoh)\s+/i;
+const MODEL_TAIL =
+  /\s+(?:digital|colou?r|mono|photocopier|copier|printer|mfp|multi-?function|a3|a4|system)$/i;
+
+/**
+ * A model name short enough for a table cell: the make in front ("Konica Minolta", "Konica", "Olivetti", …)
+ * and descriptors at the end ("Digital Colour Photocopier", "A3", "MFP", …) taken off.
+ * `Konica Minolta C300i Digital Colour Photocopier` → `C300i`. Never strips to nothing; blank → `—`.
+ */
+export function shortModel(model: string | null | undefined): string {
+  const full = (model ?? '').trim().replace(/\s+/g, ' ');
+  if (!full) return '—';
+  let s = full.replace(MODEL_MAKE, '');
+  for (let prev = ''; prev !== s; ) {
+    prev = s;
+    s = s.replace(MODEL_TAIL, '');
+  }
+  return s.trim() || full;
+}

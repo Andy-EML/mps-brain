@@ -28,7 +28,6 @@ import {
   lastVisitText,
   pagesText,
   pctText,
-  reasonText,
   statusLabel,
   statusTone,
 } from '@/components/pm-status';
@@ -38,9 +37,10 @@ import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { deviceHref } from '@/lib/device-origin';
-import { formatDate, machineActionLabel } from '@/lib/format';
+import { formatDate, machineActionLabel, shortModel } from '@/lib/format';
 
-const CELL = 'px-4 py-3 align-top text-[13px]';
+/** Tight cells so the whole row, Plan column included, fits beside the filter panel without sideways scroll. */
+const CELL = 'px-2 py-2 align-top text-[13px]';
 const FIELD_LABEL = 'mb-1 block text-[12px] text-muted-foreground';
 /** Anything in the row that does its own thing on click, so the row must not also toggle. */
 const OWN_CLICK = 'a, button, input, select, textarea, label';
@@ -71,9 +71,10 @@ export interface PmRowProps {
 }
 
 /**
- * One machine on `/pm` as an accordion row, like the replenishment Review tab: a one-line summary
- * (customer, serial, model, status and reason, pages since / %, last counted visit, est. due) that
- * opens onto the PM detail, the Mark booked / Dismiss / Undo forms and an "Open device" link.
+ * One machine on `/pm` as an accordion row, like the replenishment Review tab: a compact summary
+ * (customer, serial, short model, status, pages since / %, last counted visit, est. due) that
+ * opens onto the PM detail (with the reason and the full model name), the Mark booked / Dismiss /
+ * Undo forms and an "Open device" link.
  * Clicking anywhere on the summary toggles it; the chevron button is the keyboard way in. The
  * panel renders on first open and stays mounted, so collapsing keeps a half-filled form.
  */
@@ -96,7 +97,6 @@ export function PmRow({
   const panelId = `pm-panel-${r.vantageEquipmentId}`;
   const res = r.result;
   const visit = lastVisitText(res.lastQualifying);
-  const reason = reasonText(res.reason, timeCapMonths, res.clockSource);
   const customer = r.customerName ?? 'Unknown customer';
 
   function toggle() {
@@ -118,7 +118,8 @@ export function PmRow({
         onClick={onRowClick}
         className={cn('cursor-pointer border-b border-line/70 transition-colors hover:bg-muted/40', open && 'border-b-0 bg-muted/30')}
       >
-        <td className={cn(CELL, 'max-w-[260px]')}>
+        {/* No town line: the town group header above says it. */}
+        <td className={cn(CELL, 'min-w-[200px] pl-4')}>
           <button
             type="button"
             aria-expanded={open}
@@ -132,7 +133,6 @@ export function PmRow({
             />
             <span className="min-w-0 break-words">{customer}</span>
           </button>
-          {r.town ? <span className="mt-0.5 ml-6 block text-[12px] font-normal text-muted-foreground">{r.town}</span> : null}
         </td>
         <td className={cn(CELL, 'font-mono text-[12px] whitespace-nowrap')}>
           {r.serial ? (
@@ -145,7 +145,9 @@ export function PmRow({
           )}
           {r.drmsEquipmentId ? null : <span className="block font-sans text-[11px] text-muted-foreground">Not linked</span>}
         </td>
-        <td className={CELL}>{r.model ?? '—'}</td>
+        <td className={cn(CELL, 'whitespace-nowrap')} title={r.model ?? undefined}>
+          {shortModel(r.model)}
+        </td>
         <td className={CELL}>
           <span className="flex flex-wrap items-center gap-1.5">
             {r.plan.whenInArea ? <WhenInAreaBadge overdueMonths={overdueMonths} /> : null}
@@ -158,14 +160,14 @@ export function PmRow({
               {statusLabel(res.status)}
             </ToneBadge>
           </span>
-          {reason ? <span className="mt-1 block text-[12px] text-muted-foreground">{reason}</span> : null}
           {res.status === 'booked' && res.bookedFor ? (
             <span className="mt-1 block text-[12px] text-muted-foreground">In Vantage for {formatDate(res.bookedFor)}</span>
           ) : null}
           {r.action ? <span className="mt-1 block text-[12px] text-muted-foreground">{actionText(r.action)}</span> : null}
         </td>
-        <td className={cn(CELL, 'text-right tabular-nums whitespace-nowrap')}>
-          <span className={cn(res.pagesSince === null && 'text-muted-foreground')}>
+        {/* Only "Not enough meter history" may wrap here: it would otherwise widen the column for every row. */}
+        <td className={cn(CELL, 'text-right tabular-nums')}>
+          <span className={cn(res.pagesSince === null ? 'text-muted-foreground' : 'whitespace-nowrap')}>
             {pagesText(res.pagesSince, res.pagesSinceIsLowerBound)}
           </span>
           <span className="block text-[12px] text-muted-foreground">{pctText(res.pctUsed)}</span>
@@ -180,7 +182,7 @@ export function PmRow({
             <span className="block text-[12px] text-muted-foreground">Time cap {formatDate(res.timeCapDate)}</span>
           ) : null}
         </td>
-        <td className={cn(CELL, 'w-px pr-3 pl-1 whitespace-nowrap')}>
+        <td className={cn(CELL, 'w-px pr-2 pl-1 whitespace-nowrap')}>
           {otherDealerTab ? <MarkOurs row={r} back={back} /> : <PlanCell row={r} back={back} canAddToPlan={canAddToPlan} dealerSuggestions={dealerSuggestions} />}
         </td>
       </tr>
@@ -361,11 +363,16 @@ function Panel({
           </form>
         </div>
       ) : null}
+      {r.model ? (
+        <p className="px-5 py-2.5 text-[13px]">
+          <span className="text-muted-foreground">Model</span> {r.model}
+        </p>
+      ) : null}
       <PmDetail
         row={r}
         qualifyingMinutes={qualifyingMinutes}
         timeCapMonths={timeCapMonths}
-        className={cn(!error && !r.action && '[&>div:first-child]:border-t-0')}
+        className={cn(!error && !r.action && !r.model && '[&>div:first-child]:border-t-0')}
       />
       <div className="grid gap-4 border-t border-line px-5 py-4 lg:grid-cols-2">
         <BookedForm vantageEquipmentId={r.vantageEquipmentId} back={back} />

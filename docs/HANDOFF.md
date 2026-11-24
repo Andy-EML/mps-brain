@@ -51,7 +51,7 @@
 >   County, else *Unknown*. `PmRow.familyId` was added for the family facet.
 > - **Logic**: `apps/web/src/lib/pm-facets.ts` (client-safe) and `apps/web/src/lib/pm-statuses.ts`.
 >   The CSV export (`apps/web/src/app/(app)/pm/export/route.ts`) uses the same `selectPmRows` as the
->   page, so the file matches what is on screen.
+>   page, so the file has the same rows as on screen (not grouped by town).
 > - **Removed**: the overdue-reason select. The All / pages / time pills remain.
 
 **Read this section first, then `CLAUDE.md`, then the current spec. The 2026-09-18 sections below

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatGap, formatIsoDateTime, machineActionLabel } from './format';
+import { formatGap, formatIsoDateTime, machineActionLabel, shortModel } from './format';
 
 const NOW = new Date('2026-09-18T12:00:00Z');
 const hoursBefore = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -51,5 +51,29 @@ describe('machineActionLabel', () => {
     expect(machineActionLabel('Priority', null, 'A1')).toBe('Priority: Unknown customer, serial A1');
     expect(machineActionLabel('Plan actions', 'Acme', null)).toBe('Plan actions: Acme');
     expect(machineActionLabel('Priority', '  ', '')).toBe('Priority: Unknown customer');
+  });
+});
+
+describe('shortModel', () => {
+  it('strips the make and trailing descriptors', () => {
+    expect(shortModel('Konica Minolta C300i Digital Colour Photocopier')).toBe('C300i');
+    expect(shortModel('Olivetti MF254 Digital Colour Photocopier')).toBe('MF254');
+    expect(shortModel('KONICA MINOLTA bizhub 4050i Digital Mono Printer')).toBe('bizhub 4050i');
+    expect(shortModel('Develop ineo+ 450i A3 MFP')).toBe('ineo+ 450i');
+    expect(shortModel('Kyocera TASKalfa 2554ci Photocopier')).toBe('TASKalfa 2554ci');
+    expect(shortModel('Konica Bizhub 300i')).toBe('Bizhub 300i');
+  });
+  it('leaves short names alone', () => {
+    expect(shortModel('bizhub C300i')).toBe('bizhub C300i');
+    expect(shortModel('ineo+458')).toBe('ineo+458');
+    expect(shortModel('  C258  ')).toBe('C258');
+  });
+  it('never strips to nothing', () => {
+    expect(shortModel('Konica Minolta')).toBe('Konica Minolta');
+    expect(shortModel('Photocopier')).toBe('Photocopier');
+  });
+  it('blank is a dash', () => {
+    expect(shortModel(null)).toBe('—');
+    expect(shortModel('   ')).toBe('—');
   });
 });
