@@ -81,3 +81,36 @@ export function mapResultText(r: MapPlanResult, mode: 'add' | 'ask'): string {
   const reasons = [...new Set(r.skipped.map((s) => SKIP_COPY[s.reason]))].join(', ');
   return `${main} · ${r.skipped.length} skipped: ${reasons}`;
 }
+
+const STATUS_COPY: Record<MapPin['status'], string> = {
+  overdue: 'Overdue',
+  due_soon: 'Due soon',
+  ok: 'OK',
+  held: 'Held off — frequent calls',
+  booked: 'PM booked',
+  unknown: 'Unknown',
+};
+
+/** A pin's due state in words: `Overdue 8m`, `Due soon`, `When in area · Overdue 3m`. */
+export function pinDueText(p: Pick<MapPin, 'status' | 'overdueMonths' | 'whenInArea'>): string {
+  const due = p.status === 'overdue' && p.overdueMonths !== null && p.overdueMonths >= 1 ? `Overdue ${p.overdueMonths}m` : STATUS_COPY[p.status];
+  return p.whenInArea ? `When in area · ${due}` : due;
+}
+
+const COLUMN_COPY: Record<NonNullable<MapPin['boardColumn']>, string> = {
+  to_plan: 'To plan',
+  asked: 'Asked engineer',
+  booked: 'Booked',
+  done: 'Done',
+};
+
+/** The board column a pin is in, as the board names it, or null when it is not on the board. */
+export function boardColumnText(column: MapPin['boardColumn']): string | null {
+  return column === null ? null : COLUMN_COPY[column];
+}
+
+/** Footer note for machines that cannot be drawn, or null when every machine has a location. */
+export function unlocatedText(n: number): string | null {
+  if (n <= 0) return null;
+  return n === 1 ? '1 machine has no location' : `${n} machines have no location`;
+}

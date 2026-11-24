@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapPin, MapPlanResult } from '@mps/db/queries';
-import { MAP_IDS_MAX, farFromCall, mapResultText, parseMapIds, pinTone, selectInBox } from './planner-map';
+import { MAP_IDS_MAX, boardColumnText, farFromCall, mapResultText, parseMapIds, pinDueText, pinTone, selectInBox, unlocatedText } from './planner-map';
 
 function pin(over: Partial<MapPin> = {}): MapPin {
   return {
@@ -57,5 +57,22 @@ describe('mapResultText', () => {
       call: { engineerName: 'Dave', start: new Date('2026-11-25T10:00:00Z') },
     };
     expect(mapResultText(r, 'ask')).toBe('3 asked Dave for Wed 25 Nov · 1 skipped: no longer due');
+  });
+});
+
+describe('pinDueText / boardColumnText / unlocatedText', () => {
+  it('overdue with months', () => expect(pinDueText(pin({ status: 'overdue', overdueMonths: 8 }))).toBe('Overdue 8m'));
+  it('overdue under a month', () => expect(pinDueText(pin({ status: 'overdue', overdueMonths: 0 }))).toBe('Overdue'));
+  it('due soon', () => expect(pinDueText(pin({ status: 'due_soon', overdueMonths: null }))).toBe('Due soon'));
+  it('when in area', () => expect(pinDueText(pin({ whenInArea: true, status: 'overdue', overdueMonths: 3 }))).toBe('When in area · Overdue 3m'));
+  it('columns', () => {
+    expect(boardColumnText('to_plan')).toBe('To plan');
+    expect(boardColumnText('asked')).toBe('Asked engineer');
+    expect(boardColumnText(null)).toBeNull();
+  });
+  it('unlocated', () => {
+    expect(unlocatedText(0)).toBeNull();
+    expect(unlocatedText(1)).toBe('1 machine has no location');
+    expect(unlocatedText(12)).toBe('12 machines have no location');
   });
 });
