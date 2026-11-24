@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapPin, MapPlanResult } from '@mps/db/queries';
-import { MAP_IDS_MAX, boardColumnText, farFromCall, mapResultText, parseMapIds, parsePriorityInput, pinDueText, pinTone, selectInBox, unlocatedText } from './planner-map';
+import { MAP_IDS_MAX, boardColumnText, farFromCall, mapResultText, parseMapIds, parsePriorityInput, parseWorkUnitId, pinDueText, pinTone, selectInBox, unlocatedText } from './planner-map';
 
 function pin(over: Partial<MapPin> = {}): MapPin {
   return {
@@ -87,5 +87,15 @@ describe('parsePriorityInput', () => {
     expect(() => parsePriorityInput('7', true)).toThrow();
     expect(() => parsePriorityInput(1.5, true)).toThrow();
     expect(() => parsePriorityInput(7, 'true')).toThrow();
+  });
+});
+
+describe('parseWorkUnitId', () => {
+  it('accepts a positive int4', () => {
+    expect(parseWorkUnitId(123)).toBe(123);
+    expect(parseWorkUnitId(2147483647)).toBe(2147483647);
+  });
+  it.each([['123'], [0], [-1], [1.5], [NaN], [2147483648], [null]])('rejects %s', (bad) => {
+    expect(() => parseWorkUnitId(bad)).toThrow('bad work unit id');
   });
 });

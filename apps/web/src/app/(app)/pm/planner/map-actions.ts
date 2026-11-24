@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { SettingsError, planFromMap, setPriority } from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
-import { mapResultText, parseMapIds, parsePriorityInput } from '@/lib/planner-map';
+import { mapResultText, parseMapIds, parsePriorityInput, parseWorkUnitId } from '@/lib/planner-map';
 
 /**
  * The PM map's bulk actions: add the selected machines to the plan, or ask an engineer about them
@@ -13,8 +13,16 @@ import { mapResultText, parseMapIds, parsePriorityInput } from '@/lib/planner-ma
  */
 export type MapActionResult = { ok: true; text: string } | { ok: false; error: string };
 
-async function run(ids: unknown, mode: 'add' | 'ask', workUnitId?: number): Promise<MapActionResult> {
+async function run(ids: unknown, mode: 'add' | 'ask', rawWorkUnitId?: unknown): Promise<MapActionResult> {
   const user = await requireUser();
+  let workUnitId: number | undefined;
+  if (mode === 'ask') {
+    try {
+      workUnitId = parseWorkUnitId(rawWorkUnitId);
+    } catch {
+      return { ok: false, error: 'That call is no longer in the diary — refresh the map' };
+    }
+  }
   try {
     const vantageEquipmentIds = parseMapIds(ids);
     const r = await planFromMap(getDb(), { vantageEquipmentIds, mode, workUnitId, userId: user.userId });

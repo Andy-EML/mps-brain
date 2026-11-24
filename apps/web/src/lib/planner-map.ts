@@ -59,6 +59,12 @@ export function parseMapIds(raw: unknown): number[] {
   return [...new Set(raw as number[])];
 }
 
+/** Validates the engineer call id a map action posts: a positive int4 (the column is integer). */
+export function parseWorkUnitId(raw: unknown): number {
+  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw <= 0 || raw > 2147483647) throw new Error('bad work unit id');
+  return raw;
+}
+
 /** Validates the popup's Priority toggle: one machine id (as `parseMapIds`) and a boolean. */
 export function parsePriorityInput(id: unknown, on: unknown): { vantageEquipmentId: number; on: boolean } {
   if (typeof on !== 'boolean') throw new Error('bad priority');
