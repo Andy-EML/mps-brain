@@ -1,5 +1,6 @@
 import { DEFAULT_PM_SETTINGS, inPmView, type PmRow, type PmSettings, type PmStatus } from '@mps/db/queries';
 // Relative, not `@/`: vitest has no path alias.
+import { PM_STATUSES } from '../../../lib/pm-statuses';
 import { overdueKind } from '../../../components/pm-status';
 
 /**
@@ -9,7 +10,7 @@ import { overdueKind } from '../../../components/pm-status';
  */
 
 export const PM_VIEWS = ['due', 'booked', 'dismissed', 'when-in-area', 'other-dealer', 'all'] as const;
-export const PM_STATUSES = ['overdue', 'due_soon', 'held', 'booked', 'unknown', 'ok'] as const satisfies readonly PmStatus[];
+export { PM_STATUSES };
 export const OVERDUE_FILTERS = ['all', 'pages', 'time'] as const;
 
 export type PmViewFilter = (typeof PM_VIEWS)[number];

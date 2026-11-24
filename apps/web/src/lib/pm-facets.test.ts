@@ -131,6 +131,10 @@ describe('facets', () => {
     expect(fam.map((o) => o.label)).toEqual(['Mapped', 'TN-5']);
     expect(facetOptions(rows, empty(), 'county').map((o) => o.label)).toEqual(['Berkshire', 'Bucks', 'Unknown']);
   });
+  it('customer with stray whitespace matches its ticked value', () => {
+    const rs = [row(1, { customerName: '  Acme  Ltd ' }), row(2, { customerName: 'Other' })];
+    expect(applyPmFacets(rs, { ...empty(), customer: ['Acme Ltd'] }).map((r) => r.vantageEquipmentId)).toEqual([1]);
+  });
   it('parsePmFacets drops junk', () => {
     const sel = parsePmFacets(new URLSearchParams('town=Reading&town=%20&town=Reading&town=Slough&status=overdue&status=bogus&family=12&family=abc&customer=Acme'));
     expect(sel.town).toEqual(['Reading', 'Slough']);

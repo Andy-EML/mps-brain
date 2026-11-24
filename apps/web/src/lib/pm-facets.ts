@@ -1,10 +1,12 @@
 import type { PmRow } from '@mps/db/queries';
-// Relative, not `@/`: vitest has no path alias. Types only from @mps/db (client-safe).
-import { PM_STATUSES } from '../app/(app)/pm/filters';
+// Relative, not `@/`: vitest has no path alias. Only types come from @mps/db, so this module is client-safe.
+import { PM_STATUSES } from './pm-statuses';
 
 export const PM_FACETS = ['town', 'county', 'status', 'family', 'customer'] as const;
 export type PmFacet = (typeof PM_FACETS)[number];
 export type PmFacetSelection = Record<PmFacet, string[]>;
+
+const tidy = (t: string | null): string => (t ?? '').trim().replace(/\s+/g, ' ');
 
 type Params = URLSearchParams | Record<string, string | string[] | undefined>;
 
@@ -18,7 +20,7 @@ function all(params: Params, key: string): string[] {
 export function parsePmFacets(params: Params): PmFacetSelection {
   const out = {} as PmFacetSelection;
   for (const f of PM_FACETS) {
-    const vals = [...new Set(all(params, f).map((v) => v.trim()).filter(Boolean))];
+    const vals = [...new Set(all(params, f).map((v) => (f === 'customer' ? tidy(v) : v.trim())).filter(Boolean))];
     out[f] =
       f === 'status'
         ? vals.filter((v) => (PM_STATUSES as readonly string[]).includes(v))
@@ -28,8 +30,6 @@ export function parsePmFacets(params: Params): PmFacetSelection {
   }
   return out;
 }
-
-const tidy = (t: string | null): string => (t ?? '').trim().replace(/\s+/g, ' ');
 
 /** Trimmed, case-folded, whitespace-collapsed; '' for blank. */
 export function townKey(town: string | null): string {
@@ -51,7 +51,7 @@ export function facetValue(r: PmRow, f: PmFacet): string {
     case 'family':
       return r.familyId === null ? '' : String(r.familyId);
     case 'customer':
-      return r.customerName ?? '';
+      return tidy(r.customerName);
   }
 }
 
