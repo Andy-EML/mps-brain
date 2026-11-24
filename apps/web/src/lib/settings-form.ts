@@ -87,6 +87,7 @@ const SETTINGS_ERRORS: Record<SettingsErrorCode | 'too_many', string> = {
   invalid_pm_action: 'That PM action is not valid — pick a snooze of 30, 90 or 180 days, and add a note when the reason is Other.',
   invalid_planner_setting: 'A planner setting is out of range or invalid — check the distances, retention days, dealer names and patch districts (such as GU14).',
   invalid_other_dealer: 'Enter the other dealer’s name (up to 60 characters).',
+  call_gone: 'That engineer call is no longer in the schedule — pick another and try again.',
   too_many: 'That is too many devices to pick one by one — use “Select all matching” instead.',
 };
 
