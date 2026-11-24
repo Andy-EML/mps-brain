@@ -14,6 +14,7 @@ const row = (status: PmStatus, over: Partial<PmResult> = {}, id = 1): PmRow => (
   district: null,
   county: null,
   areaCounty: null,
+  familyId: null,
   otherDealer: { dealer: null, source: null, region: null },
   plan: { whenInArea: false, priority: false, boardColumn: null },
   serial: 'A1',

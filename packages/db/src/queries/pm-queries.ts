@@ -134,6 +134,8 @@ export interface PmRow {
   serial: string | null;
   model: string | null;
   family: string | null;
+  /** The cartridge family id behind `family`, or null. */
+  familyId: number | null;
   intervalPages: number;
   intervalSource: 'family' | 'global';
   result: PmResult;
@@ -359,6 +361,7 @@ async function buildRows(db: Db, machines: MachineRow[], s: PmSettings, now: Dat
       serial: m.serial,
       model: m.model,
       family: m.family,
+      familyId: m.familyId,
       intervalPages,
       intervalSource: m.familyInterval !== null ? 'family' : 'global',
       result,

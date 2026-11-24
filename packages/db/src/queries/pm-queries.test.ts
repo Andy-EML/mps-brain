@@ -38,6 +38,7 @@ describe('inPmView', () => {
     district: null,
     county: null,
     areaCounty: null,
+    familyId: null,
     otherDealer: { dealer: null, source: null, region: null },
     plan: { whenInArea: false, priority: false, boardColumn: null },
     serial: 'A1',
