@@ -36,6 +36,24 @@
 > - **Packages added**: `leaflet` 1.9.4, `react-leaflet` 5.0.0, `leaflet.markercluster` 1.5.3.
 > - No new worker jobs, no migrations, no Vantage or DRMS writes.
 
+> **Update 2026-11-24: PM due filters (`/pm`).** Read-only page changes, no migrations, no writes.
+> - **Rows**: at most 50 a page (`PM_ROWS_OPTIONS` = 10/20/50, `apps/web/src/lib/list-state.ts`).
+>   A remembered 100 or 200 falls back to 50.
+> - **Town groups**: each town gets a header `<Town> · n due · m overdue`, `★ p` for priority. A
+>   town that spans pages repeats its header with ` (continued)`. "No town" is last. Order is
+>   worst-first; `townSort=az` sorts A–Z.
+> - **Side filter panel** (`apps/web/src/components/pm-facet-panel.tsx`): Town, County, Status and
+>   Customer, multi-select with counts. Each facet is counted with the other facets applied. Top 8
+>   options, then *Show all (n)*. Removable chips and *Clear all* sit above the table. Below `lg` the
+>   panel sits behind a *Filters (n)* button. **Model family is not offered** (user decision), but
+>   old `family=` links still filter.
+> - **County** = planner county (`PmRow.areaCounty`, from the postcode-district cache), else Vantage
+>   County, else *Unknown*. `PmRow.familyId` was added for the family facet.
+> - **Logic**: `apps/web/src/lib/pm-facets.ts` (client-safe) and `apps/web/src/lib/pm-statuses.ts`.
+>   The CSV export (`apps/web/src/app/(app)/pm/export/route.ts`) uses the same `selectPmRows` as the
+>   page, so the file matches what is on screen.
+> - **Removed**: the overdue-reason select. The All / pages / time pills remain.
+
 **Read this section first, then `CLAUDE.md`, then the current spec. The 2026-09-18 sections below
 (Foundation) are kept only for the detail; where they disagree, this one wins.**
 
