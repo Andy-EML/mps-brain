@@ -15,7 +15,7 @@ import { OSM_ATTRIBUTION, OSM_TILES, boardColumnText, pinDueText, pinTone, type 
 
 /**
  * The Leaflet half of the PM map (client-only, loaded with `next/dynamic` and `ssr: false`): OSM
- * tiles, clustered PM pins, the engineers' calls as blue squares, the `nearMiles` ring round the
+ * tiles, clustered PM pins, the engineers' calls as blue spanner markers, the `nearMiles` ring round the
  * picked call and the box-select rectangle. Pins are drawn locally; only tile requests leave the
  * browser, and they carry the viewport, never a customer.
  */
@@ -81,9 +81,10 @@ function pinIcon(p: MapPin, selected: boolean): L.DivIcon {
 function callIcon(picked: boolean): L.DivIcon {
   return L.divIcon({
     className: 'mps-map-call',
-    html: `<span class="block ${picked ? 'size-4 ring-2 ring-blue-300' : 'size-3.5'} rounded-[3px] border-2 border-white bg-blue-600 shadow"></span>`,
-    iconSize: picked ? [16, 16] : [14, 14],
-    iconAnchor: picked ? [8, 8] : [7, 7],
+    // A spanner in a blue disc (lucide "wrench" path), so calls read as engineer visits, not machines.
+    html: `<span class="flex ${picked ? 'size-6 ring-2 ring-blue-300' : 'size-5'} items-center justify-center rounded-full border-2 border-white bg-blue-600 text-white shadow"><svg viewBox="0 0 24 24" class="${picked ? 'size-3.5' : 'size-3'}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>`,
+    iconSize: picked ? [24, 24] : [20, 20],
+    iconAnchor: picked ? [12, 12] : [10, 10],
   });
 }
 
@@ -155,7 +156,7 @@ function PinLayer({ pins, deviceIds, selected }: Pick<PlannerMapCanvasProps, 'pi
   return null;
 }
 
-/** The day's located calls as blue squares, and the ring round the picked one. */
+/** The day's located calls as blue spanner markers, and the ring round the picked one. */
 function CallLayer({ calls, pickedCallId, focus, nearMiles, onPickCall }: Pick<PlannerMapCanvasProps, 'calls' | 'pickedCallId' | 'focus' | 'nearMiles' | 'onPickCall'>) {
   const map = useMap();
   const onPick = useRef(onPickCall);

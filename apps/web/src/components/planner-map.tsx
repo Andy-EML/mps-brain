@@ -1,5 +1,6 @@
 'use client';
 
+import { Wrench } from 'lucide-react';
 import { useCallback, useMemo, useState, useTransition } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -353,7 +354,10 @@ function Legend() {
         <span className="size-2.5 rounded-full ring-2 ring-foreground" /> On the board
       </li>
       <li className={item}>
-        <span className="size-2.5 rounded-[2px] bg-blue-600" /> Engineer call
+        <span className="flex size-3.5 items-center justify-center rounded-full bg-blue-600 text-white">
+          <Wrench aria-hidden className="size-2.5" strokeWidth={3} />
+        </span>{' '}
+        Engineer call
       </li>
     </ul>
   );
