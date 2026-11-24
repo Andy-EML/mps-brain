@@ -29,10 +29,7 @@ export function suggestionDistanceText(s: Pick<PmSuggestion, 'sameSite' | 'sameD
   return '';
 }
 
-/** The board note an Ask leaves: `Asked Dave for 24 Nov` (the call's London day). */
-export function askNote(engineerName: string, callStart: Date): string {
-  return `Asked ${engineerName} for ${formatDayMonth(callStart)}`;
-}
+export { askNote } from '@mps/db/queries';
 
 function bad(): never {
   throw new SettingsError('That PM action is not valid — check the form and try again.', 'invalid_pm_action');

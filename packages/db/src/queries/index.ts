@@ -20,6 +20,7 @@ export * from './meter-history';
 export * from './order-watch';
 export * from './pm-due';
 export * from './pm-actions';
+export * from './pm-map';
 export * from './pm-plan';
 export * from './pm-planner';
 export * from './pm-queries';
