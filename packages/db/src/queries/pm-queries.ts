@@ -8,6 +8,7 @@ import {
   cartridgeFamilyModels,
   deviceLinks,
   drmsEquipment,
+  postcodeDistricts,
   vantageCustomers,
   vantageEquipment,
   vantageEquipmentContracts,
@@ -124,6 +125,8 @@ export interface PmRow {
   district: string | null;
   /** The customer's Vantage `County` (free text, often blank), or null. */
   county: string | null;
+  /** The planner's county for the district (postcode_districts cache, already mapped by the worker), or null when no district or not cached. */
+  areaCounty: string | null;
   /** Who services this site for PM (the region rule or a manual flag). Other-dealer machines leave the default lists. */
   otherDealer: OtherDealerInfo;
   /** Per-machine planner state from `pm_plan`: the flags and the stored board column (null = not on the board). */
@@ -291,15 +294,24 @@ function planOf(p: { whenInArea: boolean; priority: boolean; boardColumn: BoardC
   return p ? { whenInArea: p.whenInArea, priority: p.priority, boardColumn: p.boardColumn } : NO_PLAN;
 }
 
+/** District -> mapped county from the postcodes.io cache (found districts only). One query per call. */
+async function loadAreaCounties(db: Db): Promise<Map<string, string | null>> {
+  const rows = await db.select({ district: postcodeDistricts.district, county: postcodeDistricts.county, status: postcodeDistricts.status }).from(postcodeDistricts);
+  const out = new Map<string, string | null>();
+  for (const r of rows) if (r.status === 'ok') out.set(r.district, r.county);
+  return out;
+}
+
 async function buildRows(db: Db, machines: MachineRow[], s: PmSettings, now: Date): Promise<PmRow[]> {
   const ids = machines.map((m) => m.vantageEquipmentId);
-  const [visits, meters, actions, resets, dealerOf, plans] = await Promise.all([
+  const [visits, meters, actions, resets, dealerOf, plans, areaCounties] = await Promise.all([
     loadVisits(db, ids),
     loadCombinedMeters(db, ids, now),
     loadOpenPmActions(db, ids),
     loadManualResets(db, ids),
     loadDealerResolver(db),
     loadPlanRows(db, ids),
+    loadAreaCounties(db),
   ]);
   const clears: { id: number; reason: PmActionClearedReason }[] = [];
   const rows = machines.map((m) => {
@@ -332,14 +344,16 @@ async function buildRows(db: Db, machines: MachineRow[], s: PmSettings, now: Dat
     if (result.status === 'booked' || state === 'booked') view = 'booked';
     else if (state === 'snoozed') view = 'dismissed';
     else if (state === 'reset' && !inDefaultView({ result, intervalPages }, now)) view = 'dismissed';
+    const district = postcodeOutward(m.postCode);
     return {
       vantageEquipmentId: m.vantageEquipmentId,
       drmsEquipmentId: m.drmsEquipmentId,
       customerName: m.customerName,
       town: m.town,
       customerId: m.customerId,
-      district: postcodeOutward(m.postCode),
+      district,
       county: m.county,
+      areaCounty: district ? (areaCounties.get(district) ?? null) : null,
       otherDealer: dealerOf(m.customerId),
       plan: planOf(plans.get(m.vantageEquipmentId)),
       serial: m.serial,

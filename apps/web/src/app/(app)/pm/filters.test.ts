@@ -13,6 +13,7 @@ const row = (status: PmStatus, over: Partial<PmResult> = {}, id = 1): PmRow => (
   customerId: null,
   district: null,
   county: null,
+  areaCounty: null,
   otherDealer: { dealer: null, source: null, region: null },
   plan: { whenInArea: false, priority: false, boardColumn: null },
   serial: 'A1',

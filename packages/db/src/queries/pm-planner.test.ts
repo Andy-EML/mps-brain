@@ -67,6 +67,7 @@ function pmRow(over: Partial<PmRow> = {}, status: PmRow['result']['status'] = 'o
     customerId: 7,
     district: 'GU14',
     county: 'Hampshire',
+    areaCounty: null,
     otherDealer: { dealer: null, source: null, region: null },
     plan: { whenInArea: false, priority: false, boardColumn: 'to_plan' },
     serial: 'A1',

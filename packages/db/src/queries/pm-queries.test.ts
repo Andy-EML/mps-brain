@@ -8,6 +8,7 @@ import {
   deviceLinks,
   drmsEquipment,
   hiddenDevices,
+  postcodeDistricts,
   vantageCustomers,
   vantageEquipment,
   vantageEquipmentContracts,
@@ -36,6 +37,7 @@ describe('inPmView', () => {
     customerId: null,
     district: null,
     county: null,
+    areaCounty: null,
     otherDealer: { dealer: null, source: null, region: null },
     plan: { whenInArea: false, priority: false, boardColumn: null },
     serial: 'A1',
@@ -276,6 +278,22 @@ describe('pm queries', () => {
       expect(by[1]).toMatchObject({ customerId: 7, district: 'GU14', county: 'Hampshire', otherDealer: { dealer: null, source: null, region: null }, plan: { whenInArea: false, priority: false } });
       expect(by[2]).toMatchObject({ customerId: 8, district: null, county: null, otherDealer: { dealer: 'MJ Flood', source: 'region', region: 'ireland' } });
       expect(by[3]).toMatchObject({ customerId: null, district: null, otherDealer: { dealer: null } });
+    });
+
+    it('areaCounty comes from the district cache', async () => {
+      await t.db.insert(vantageCustomers).values({ vantageId: 7, name: 'Newbury Ltd', raw: { PostCode: 'RG20 8AA' } });
+      await t.db.insert(vantageEquipment).values({ vantageId: 1, customerName: 'Newbury Ltd', vantageCustomerId: 7, serial: 'S1', raw: { Item: { IsMetered: true, NominalCode: '4000' } } });
+      await contract(1);
+      await t.db.insert(postcodeDistricts).values({ district: 'RG20', county: 'Berkshire', status: 'ok' });
+      const rows = await listPmDue(t.db, NOW, { dealer: 'all' });
+      expect(rows[0]!.areaCounty).toBe('Berkshire');
+    });
+
+    it('areaCounty null without cached district', async () => {
+      await seed();
+      await t.db.insert(postcodeDistricts).values({ district: 'D04', county: 'Dublin', status: 'not_found' });
+      const rows = await listPmDue(t.db, NOW, { dealer: 'all' });
+      expect(rows.map((r) => r.areaCounty)).toEqual([null, null, null]);
     });
 
     it('the default list drops an other-dealer site; other keeps only it; all keeps both', async () => {
