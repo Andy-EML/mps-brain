@@ -17,6 +17,25 @@
 > `api.postcodes.io`). After the first deploy, press *Run now* on `postcode-lookup` on `/admin/jobs`
 > repeatedly until every district is cached. Nothing new is written to Vantage or DRMS.
 
+> **Update 2026-11-24: PM map (`/pm/planner?view=map`).** Same page as the board, same data rules.
+> - **Pins**: `loadMapPins` (`packages/db/src/queries/pm-planner.ts`) gives every due machine plus
+>   the when-in-area set, minus other dealer, dismissed and booked (open `pm_actions` booked or a
+>   Vantage PM job). Location is the customer's Vantage lat/lng; else the `postcode_districts`
+>   centroid (hollow pin, "approximate — district centre"); else counted as "no location".
+> - **Engineer calls**: from `loadUpcoming` (calls now carry `at`) for the Today/Tomorrow switch.
+>   Picking a call flies the map to it and draws a `nearMiles` ring.
+> - **Actions** (`apps/web/src/app/(app)/pm/planner/map-actions.ts`): `mapAddToPlanAction(ids)`,
+>   `mapAskEngineerAction(ids, workUnitId)`, `mapSetPriorityAction(id, on)`. All call `planFromMap`
+>   or `setPriority` (`packages/db/src/queries/pm-map.ts`, `pm-plan.ts`) and return a result, no
+>   redirect. They write `pm_plan` and the audit log only: nothing to Vantage, nothing to engineers.
+> - **UI**: `apps/web/src/components/planner-map.tsx` (shell) and `planner-map-canvas.tsx`
+>   (Leaflet, loaded client-only via `next/dynamic`). Box select is the *Select area* toggle or
+>   Shift-drag; selection is client state. Popup: Add to plan and Priority.
+> - **Tiles**: OpenStreetMap, `OSM_TILES` in `apps/web/src/lib/planner-map.ts`. Only tile requests
+>   leave the building (`tile.openstreetmap.org`, by viewport). Customer data is never sent out.
+> - **Packages added**: `leaflet` 1.9.4, `react-leaflet` 5.0.0, `leaflet.markercluster` 1.5.3.
+> - No new worker jobs, no migrations, no Vantage or DRMS writes.
+
 **Read this section first, then `CLAUDE.md`, then the current spec. The 2026-09-18 sections below
 (Foundation) are kept only for the detail; where they disagree, this one wins.**
 
