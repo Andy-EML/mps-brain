@@ -104,6 +104,7 @@ describe('dealer resolver', () => {
   it('getOtherDealerControl gives the device page its props: region default, own flag, head office, suggestions', async () => {
     const g = await getOtherDealerControl(t.db, GUERNSEY);
     expect(g).toEqual({
+      vantageCustomerId: GUERNSEY,
       customerName: 'SPF Guernsey',
       ownOverride: null,
       ownDealerName: null,

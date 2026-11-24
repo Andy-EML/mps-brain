@@ -1,4 +1,3 @@
-import { regionOf, resolveOtherDealer, type OtherDealerFlag } from '@mps/core';
 import { and, asc, count, countDistinct, eq, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import {
@@ -14,8 +13,7 @@ import {
 } from '../schema';
 import { getSelfManaged, headOfficeIdSql, selfManagedSourceSql, type SelfManagedInfo, type SelfManagedSource } from './customer-flags';
 import type { DeviceOrderLineRow, DeviceOrderRow } from './device';
-import { loadDealerResolver, type OtherDealerInfo } from './other-dealer';
-import { getPlannerSettings } from './pm-planner-settings';
+import { loadDealerResolver, loadSiteDealerFlags, type OtherDealerInfo } from './other-dealer';
 import {
   deviceListConditions,
   deviceListOrder,
@@ -311,37 +309,19 @@ export async function getCustomer(db: Db, vantageId: number): Promise<CustomerDe
     );
   if (!c) return null;
   const { county, ...detail } = c;
-  const [selfManaged, dealerOf, settings] = await Promise.all([
-    getSelfManaged(db, vantageId),
-    loadDealerResolver(db),
-    getPlannerSettings(db),
-  ]);
+  const [selfManaged, dealerOf] = await Promise.all([getSelfManaged(db, vantageId), loadDealerResolver(db)]);
   const sites = await loadCustomerRows(db, { headOfficeId: vantageId, dealerOf });
   const headOfficeId = selfManaged.headOffice?.vantageId ?? null;
-  const flagRows = await db
-    .select({ id: customerFlags.vantageCustomerId, override: customerFlags.otherDealerOverride, name: customerFlags.otherDealerName })
-    .from(customerFlags)
-    .where(inArray(customerFlags.vantageCustomerId, headOfficeId === null ? [vantageId] : [vantageId, headOfficeId]));
-  const flagOf = (id: number | null): OtherDealerFlag | null => {
-    const f = flagRows.find((r) => r.id === id);
-    return f && (f.override === 'dealer' || f.override === 'ours') ? { override: f.override, name: f.name } : null;
-  };
-  const own = flagOf(vantageId);
-  // The same resolver with the own flag left out: what "Default" on the control would give.
-  const otherDealerDefault = resolveOtherDealer({
-    own: null,
-    headOffice: flagOf(headOfficeId),
-    region: regionOf({ postCode: c.postCode, county }),
-    regionDealers: settings.regionDealers,
-  });
+  // Shared with the device page's PM-by control: one place resolves the flags and the region rule.
+  const control = await loadSiteDealerFlags(db, vantageId, headOfficeId, { postCode: c.postCode, county });
   return {
     ...detail,
     headOffice: selfManaged.headOffice,
     selfManaged,
     otherDealer: dealerOf(vantageId),
-    otherDealerDefault,
-    ownOverride: own?.override ?? null,
-    ownDealerName: own?.override === 'dealer' ? own.name : null,
+    otherDealerDefault: control.defaultInfo,
+    ownOverride: control.ownOverride,
+    ownDealerName: control.ownDealerName,
     sites,
   };
 }

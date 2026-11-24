@@ -352,11 +352,11 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
         actions={
           dealerControl || !hidden ? (
             <div className="flex flex-wrap items-center gap-2">
-              {dealerControl && device.vantageCustomerId != null ? (
+              {dealerControl ? (
                 <OtherDealerControl
                   // Remounts from the saved state after a save.
                   key={`${dealerControl.ownOverride}|${dealerControl.ownDealerName}`}
-                  vantageCustomerId={device.vantageCustomerId}
+                  vantageCustomerId={dealerControl.vantageCustomerId}
                   customerName={dealerControl.customerName}
                   ownOverride={dealerControl.ownOverride}
                   ownDealerName={dealerControl.ownDealerName}

@@ -53,6 +53,7 @@ export async function loadDealerResolver(db: Db): Promise<(vantageCustomerId: nu
 
 /** What the *PM by* control (customer page, device page) needs for one site. */
 export interface OtherDealerControlData {
+  vantageCustomerId: number;
   customerName: string;
   /** The site's own manual state; null = none (head office / region decide). */
   ownOverride: 'ours' | 'dealer' | null;
@@ -90,15 +91,32 @@ export async function getOtherDealerControl(db: Db, vantageCustomerId: number): 
       ),
     );
   if (!c) return null;
-  const [flagRows, [sites], settings] = await Promise.all([
-    db
-      .select({ id: customerFlags.vantageCustomerId, override: customerFlags.otherDealerOverride, name: customerFlags.otherDealerName })
-      .from(customerFlags)
-      .where(inArray(customerFlags.vantageCustomerId, c.headOffice === null ? [vantageCustomerId] : [vantageCustomerId, c.headOffice])),
+  const [flags, [sites]] = await Promise.all([
+    loadSiteDealerFlags(db, vantageCustomerId, c.headOffice, { postCode: c.postCode, county: c.county }),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(vantageCustomers)
       .where(and(isNull(vantageCustomers.deletedDate), sql`${headOfficeIdSql()} = ${vantageCustomerId}`)),
+  ]);
+  return { vantageCustomerId, customerName: c.name ?? `Customer ${vantageCustomerId}`, ...flags, isHeadOffice: (sites?.n ?? 0) > 0 };
+}
+
+/**
+ * The one place the *PM by* control's state is resolved for a site: its own flag, what "Default"
+ * gives (head office flag, else the region rule on its address) and what applies now. The customer
+ * page (`getCustomer`) and the device page (`getOtherDealerControl`) both use it.
+ */
+export async function loadSiteDealerFlags(
+  db: Db,
+  vantageCustomerId: number,
+  headOfficeId: number | null,
+  address: { postCode: string | null; county: string | null },
+): Promise<Pick<OtherDealerControlData, 'ownOverride' | 'ownDealerName' | 'effective' | 'defaultInfo' | 'suggestions'>> {
+  const [flagRows, settings] = await Promise.all([
+    db
+      .select({ id: customerFlags.vantageCustomerId, override: customerFlags.otherDealerOverride, name: customerFlags.otherDealerName })
+      .from(customerFlags)
+      .where(inArray(customerFlags.vantageCustomerId, headOfficeId === null ? [vantageCustomerId] : [vantageCustomerId, headOfficeId])),
     getPlannerSettings(db),
   ]);
   const flagOf = (id: number | null): OtherDealerFlag | null => {
@@ -106,16 +124,13 @@ export async function getOtherDealerControl(db: Db, vantageCustomerId: number): 
     return f && (f.override === 'dealer' || f.override === 'ours') ? { override: f.override, name: f.name } : null;
   };
   const own = flagOf(vantageCustomerId);
-  const region = regionOf({ postCode: c.postCode, county: c.county });
-  const common = { region, regionDealers: settings.regionDealers };
+  const common = { region: regionOf(address), regionDealers: settings.regionDealers };
   return {
-    customerName: c.name ?? `Customer ${vantageCustomerId}`,
     ownOverride: own?.override ?? null,
     ownDealerName: own?.override === 'dealer' ? own.name : null,
-    effective: resolveOtherDealer({ own, headOffice: flagOf(c.headOffice), ...common }),
-    defaultInfo: resolveOtherDealer({ own: null, headOffice: flagOf(c.headOffice), ...common }),
+    effective: resolveOtherDealer({ own, headOffice: flagOf(headOfficeId), ...common }),
+    defaultInfo: resolveOtherDealer({ own: null, headOffice: flagOf(headOfficeId), ...common }),
     suggestions: [...new Set(Object.values(settings.regionDealers).filter((d): d is string => !!d))],
-    isHeadOffice: (sites?.n ?? 0) > 0,
   };
 }
 
