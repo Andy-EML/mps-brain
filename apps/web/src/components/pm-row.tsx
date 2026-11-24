@@ -17,6 +17,7 @@ import {
   undoPmActionAction,
 } from '@/app/(app)/pm/actions';
 import { PmDetail } from '@/components/pm-detail';
+import { PmOtherDealerDialog } from '@/components/pm-other-dealer-dialog';
 import {
   DEFAULT_SNOOZE_OPTION,
   DISMISS_REASONS,
@@ -65,6 +66,8 @@ export interface PmRowProps {
   otherDealerTab: boolean;
   /** The row is in the Due or When in area tab, so its menu offers *Add to plan* (`canAddToPlan`). */
   canAddToPlan: boolean;
+  /** Dealer names suggested by the menu's *Other dealer…* dialog (the planner's region dealers). */
+  dealerSuggestions: string[];
 }
 
 /**
@@ -86,6 +89,7 @@ export function PmRow({
   overdueMonths,
   otherDealerTab,
   canAddToPlan,
+  dealerSuggestions,
 }: PmRowProps) {
   const [open, setOpen] = useState(initiallyOpen);
   const [rendered, setRendered] = useState(initiallyOpen);
@@ -177,7 +181,7 @@ export function PmRow({
           ) : null}
         </td>
         <td className={cn(CELL, 'w-px pr-3 pl-1 whitespace-nowrap')}>
-          {otherDealerTab ? <MarkOurs row={r} back={back} /> : <PlanCell row={r} back={back} canAddToPlan={canAddToPlan} />}
+          {otherDealerTab ? <MarkOurs row={r} back={back} /> : <PlanCell row={r} back={back} canAddToPlan={canAddToPlan} dealerSuggestions={dealerSuggestions} />}
         </td>
       </tr>
       <tr id={panelId} hidden={!open} className="border-b border-line/70 bg-muted/30">
@@ -224,7 +228,18 @@ function PlanFields({ id, back }: { id: number; back: string }) {
  * scroll box never clips it; closes on outside click, Escape and on choosing an item). Each item
  * submits a hidden form that stays in the row, so closing the menu never unmounts a pending action.
  */
-function PlanCell({ row: r, back, canAddToPlan }: { row: PmRowData; back: string; canAddToPlan: boolean }) {
+function PlanCell({
+  row: r,
+  back,
+  canAddToPlan,
+  dealerSuggestions,
+}: {
+  row: PmRowData;
+  back: string;
+  canAddToPlan: boolean;
+  dealerSuggestions: string[];
+}) {
+  const [dealerOpen, setDealerOpen] = useState(false);
   const priority = r.plan.priority;
   const onBoard = r.plan.boardColumn !== null;
   const addForm = useRef<HTMLFormElement>(null);
@@ -262,8 +277,22 @@ function PlanCell({ row: r, back, canAddToPlan }: { row: PmRowData; back: string
           <DropdownMenuItem onClick={() => areaForm.current?.requestSubmit()} className="text-[13px]">
             {r.plan.whenInArea ? 'Back to Due' : 'When in area'}
           </DropdownMenuItem>
+          {r.customerId !== null ? (
+            <DropdownMenuItem onClick={() => setDealerOpen(true)} className="text-[13px]">
+              Other dealer…
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
+      {r.customerId !== null ? (
+        <PmOtherDealerDialog
+          open={dealerOpen}
+          onOpenChange={setDealerOpen}
+          vantageCustomerId={r.customerId}
+          siteLabel={[r.customerName?.trim() || 'this site', r.town?.trim()].filter(Boolean).join(', ')}
+          suggestions={dealerSuggestions}
+        />
+      ) : null}
     </div>
   );
 }

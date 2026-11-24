@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Download, Info } from 'lucide-react';
 import { cn } from 'cn';
-import { PM_SORT_KEYS, getPmSettings, listFamilies, listPmDue, londonDay, overdueMonths, type PmRow, type PmSettings } from '@mps/db/queries';
+import { PM_SORT_KEYS, getPlannerSettings, getPmSettings, listFamilies, listPmDue, londonDay, overdueMonths, type PmRow, type PmSettings } from '@mps/db/queries';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { FilterTabs, type FilterTab } from '@/components/filter-tabs';
 import { PageHeader } from '@/components/page-header';
@@ -86,7 +86,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
 
   const db = getDb();
   const now = new Date();
-  const [all, settings, families] = await Promise.all([
+  const [all, settings, families, planner] = await Promise.all([
     // view and dealer 'all' explicitly: the tabs (incl. Other dealer) are counted and applied here.
     listPmDue(db, now, {
       view: 'all',
@@ -98,7 +98,10 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
     }),
     getPmSettings(db),
     listFamilies(db),
+    getPlannerSettings(db),
   ]);
+  // The region dealers, suggested when a row is marked Other dealer from its menu.
+  const dealerSuggestions = [...new Set(Object.values(planner.regionDealers).filter((d): d is string => !!d))];
   const counts = countPm(all, now, settings);
   const rows = applyPmView(all, filters, now, settings);
   const base = filterParams(filters);
@@ -321,6 +324,7 @@ export default async function PmDuePage({ searchParams }: PageProps<'/pm'>) {
                     overdueMonths={overdueMonths(r, now)}
                     otherDealerTab={filters.view === 'other-dealer'}
                     canAddToPlan={canAddToPlan(r, now)}
+                    dealerSuggestions={dealerSuggestions}
                   />
                 ))}
               </tbody>
