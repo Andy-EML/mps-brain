@@ -24,6 +24,7 @@ import {
   groupCardsByArea,
   haversineMiles,
   loadBoard,
+  loadMapPins,
   loadUpcoming,
   suggestNear,
   type SuggestionCandidate,
@@ -241,6 +242,7 @@ describe('suggestNear', () => {
     vantageEquipmentId: id,
     customerId: 100 + id,
     customerName: `Cust ${id}`,
+    town: null,
     serial: `S${id}`,
     model: 'C300i',
     status: 'overdue',
@@ -249,6 +251,7 @@ describe('suggestNear', () => {
     whenInArea: false,
     district: 'ZZ9',
     at: null,
+    approximate: false,
     view: 'due',
     dealer: null,
     boardColumn: null,
@@ -720,6 +723,85 @@ describe('planner database loaders', () => {
       expect(await getScheduledCall(t.db, 2)).toEqual({ engineerId: 9, engineerName: 'Engineer 9', start: new Date('2026-04-01T10:00:00Z') });
       expect(await getScheduledCall(t.db, 3)).toBeNull();
       expect(await getScheduledCall(t.db, 99)).toBeNull();
+    });
+  });
+
+  describe('loadUpcoming call location', () => {
+    const NOW3 = new Date('2026-04-01T08:00:00Z');
+    const callUnit = (id: number, customerId: number | null) =>
+      t.db.insert(vantageScheduledUnits).values({ workUnitId: id, workId: id, engineerId: 1, customerId, scheduledStart: new Date('2026-04-01T09:00:00Z'), categoryName: 'Break/fix', categoryType: 'Field', raw: {} });
+
+    it('loadUpcoming returns the call location', async () => {
+      await customer(7, 'Acme Ltd', { PostCode: 'GU14 7PR', Latitude: '51.2933', Longitude: '-0.7556' });
+      await customer(9, 'Nowhere Ltd', { PostCode: 'ZZ9 9ZZ' });
+      await callUnit(1, 7);
+      await callUnit(2, 9);
+      const calls = (await loadUpcoming(t.db, NOW3)).engineers[0]!.days[0]!.calls;
+      expect(calls[0]!.at).toEqual({ lat: 51.2933, lng: -0.7556 });
+      expect(calls[1]!.at).toBeNull();
+    });
+  });
+
+  describe('loadMapPins', () => {
+    it('loadMapPins returns due machines with customer location', async () => {
+      await customer(7, 'Acme', { PostCode: 'GU14 7PR', Town: 'Farnborough', Latitude: '51.2933', Longitude: '-0.7556' });
+      await dueMachine(1, 7);
+      const { pins, unlocated } = await loadMapPins(t.db, NOW);
+      expect(unlocated).toBe(0);
+      expect(pins).toHaveLength(1);
+      expect(pins[0]).toMatchObject({ vantageEquipmentId: 1, customerId: 7, serial: 'SER1', district: 'GU14', at: { lat: 51.2933, lng: -0.7556 }, approximate: false, status: 'overdue', town: 'Farnborough' });
+    });
+
+    it('falls back to district centre', async () => {
+      await customer(12, 'No coords', { PostCode: 'GU51 1AA' });
+      await t.db.insert(postcodeDistricts).values({ district: 'GU51', latitude: 51.28, longitude: -0.83, status: 'ok' });
+      await dueMachine(1, 12);
+      const { pins } = await loadMapPins(t.db, NOW);
+      expect(pins[0]).toMatchObject({ at: { lat: 51.28, lng: -0.83 }, approximate: true });
+    });
+
+    it('counts machines with no location', async () => {
+      await customer(9, 'Nowhere', { PostCode: 'ZZ9 9ZZ' });
+      await dueMachine(1, 9);
+      const r = await loadMapPins(t.db, NOW);
+      expect(r.pins).toEqual([]);
+      expect(r.unlocated).toBe(1);
+    });
+
+    it('leaves out other dealer, dismissed and booked', async () => {
+      await customer(7, 'Acme', { PostCode: 'GU14 7PR', Latitude: '51.29', Longitude: '-0.75' });
+      await customer(15, 'Dublin', { PostCode: 'D04 EK2K', Latitude: '51.29', Longitude: '-0.75' });
+      await dueMachine(1, 7); // shown
+      await dueMachine(2, 15); // other dealer
+      await dueMachine(3, 7); // dismissed
+      await dueMachine(4, 7); // booked
+      await dueMachine(5, 7); // booked and on the board (Booked column)
+      await dismissPm(t.db, { vantageEquipmentId: 3, reason: 'not_now', note: null, servicedOn: null, userId, now: NOW });
+      await markPmBooked(t.db, { vantageEquipmentId: 4, bookedFor: new Date('2026-12-10T00:00:00Z'), reference: null, userId, now: NOW });
+      await addToPlan(t.db, { vantageEquipmentIds: [5], userId, now: ago(1) });
+      await markPmBooked(t.db, { vantageEquipmentId: 5, bookedFor: new Date('2026-12-10T00:00:00Z'), reference: null, userId, now: NOW });
+      const { pins } = await loadMapPins(t.db, NOW);
+      expect(pins.map((p) => p.vantageEquipmentId)).toEqual([1]);
+    });
+
+    it('keeps when-in-area machines', async () => {
+      await customer(7, 'Acme', { PostCode: 'GU14 7PR', Latitude: '51.29', Longitude: '-0.75' });
+      await dueMachine(1, 7);
+      await addToPlan(t.db, { vantageEquipmentIds: [1], userId, now: ago(1) });
+      await setWhenInArea(t.db, { vantageEquipmentId: 1, on: true, userId, now: ago(1) });
+      const { pins } = await loadMapPins(t.db, NOW);
+      expect(pins).toHaveLength(1);
+      expect(pins[0]!.whenInArea).toBe(true);
+    });
+
+    it('sorts priority first, then overdue months, then id', async () => {
+      await customer(7, 'Acme', { PostCode: 'GU14 7PR', Latitude: '51.29', Longitude: '-0.75' });
+      await dueMachine(2, 7);
+      await dueMachine(1, 7);
+      await dueMachine(3, 7);
+      await setPriority(t.db, { vantageEquipmentId: 3, on: true, userId, now: ago(1) });
+      const { pins } = await loadMapPins(t.db, NOW);
+      expect(pins.map((p) => p.vantageEquipmentId)).toEqual([3, 1, 2]);
     });
   });
 });

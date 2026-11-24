@@ -369,6 +369,7 @@ export interface SuggestionCandidate {
   vantageEquipmentId: number;
   customerId: number | null;
   customerName: string | null;
+  town: string | null;
   serial: string | null;
   model: string | null;
   status: PmStatus;
@@ -377,6 +378,8 @@ export interface SuggestionCandidate {
   whenInArea: boolean;
   district: string | null;
   at: LatLng | null;
+  /** True when `at` is the district centre, not the customer's own coordinates. */
+  approximate: boolean;
   view: PmView;
   dealer: string | null;
   boardColumn: BoardColumn | null;
@@ -393,6 +396,7 @@ export interface UpcomingCall {
   equipment: string | null;
   started: boolean;
   located: 'customer' | 'district' | null;
+  at: LatLng | null;
   suggestions: PmSuggestion[];
 }
 
@@ -472,6 +476,92 @@ export function suggestNear(
 }
 
 /**
+ * Every due machine as a candidate for a call or the map: plan flags, board column and a location
+ * (the customer's coordinates, else its district centre, flagged `approximate`). `pmRows` is
+ * `listPlannerRows` when the caller already has it; plan state is always read fresh.
+ */
+export async function loadCandidates(db: Db, now: Date, pmRows?: PmRow[]): Promise<SuggestionCandidate[]> {
+  const [rows, planMap, cache] = await Promise.all([pmRows ?? listPlannerRows(db, now), loadPlanRows(db), loadDistrictCache(db)]);
+  const due = rows.filter((r) => inPmView(r, 'due', now));
+  const customers = await loadCustomers(db, due.flatMap((r) => (r.customerId === null ? [] : [r.customerId])));
+  return due.map((r) => {
+    const p = planMap.get(r.vantageEquipmentId);
+    const own = r.customerId !== null ? (customers.get(r.customerId)?.at ?? null) : null;
+    const centre = r.district ? (cache.get(r.district)?.at ?? null) : null;
+    return {
+      vantageEquipmentId: r.vantageEquipmentId,
+      customerId: r.customerId,
+      customerName: r.customerName,
+      town: r.town,
+      serial: r.serial,
+      model: r.model,
+      status: r.result.status,
+      overdueMonths: overdueOf(r, now),
+      priority: p?.priority ?? false,
+      whenInArea: p?.whenInArea ?? false,
+      district: r.district,
+      at: own ?? centre,
+      approximate: own === null && centre !== null,
+      view: r.view,
+      dealer: r.otherDealer.dealer,
+      boardColumn: p && p.boardColumn !== null ? boardColumnOf(p, r, now).column : null,
+    };
+  });
+}
+
+export interface MapPin {
+  vantageEquipmentId: number;
+  customerId: number | null;
+  customerName: string | null;
+  town: string | null;
+  serial: string | null;
+  model: string | null;
+  status: PmStatus;
+  overdueMonths: number | null;
+  priority: boolean;
+  whenInArea: boolean;
+  boardColumn: BoardColumn | null;
+  district: string | null;
+  at: LatLng;
+  approximate: boolean;
+}
+
+/**
+ * Due machines to pin on the PM map: ours (not another dealer's, not dismissed or booked) and not
+ * in the board's Booked column. Machines with no location are counted in `unlocated`. Sorted
+ * priority, overdue months, id.
+ */
+export async function loadMapPins(db: Db, now: Date = new Date(), pmRows?: PmRow[]): Promise<{ pins: MapPin[]; unlocated: number }> {
+  const candidates = (await loadCandidates(db, now, pmRows)).filter((c) => c.view === 'due' && c.dealer === null && c.boardColumn !== 'booked');
+  const pins: MapPin[] = [];
+  let unlocated = 0;
+  for (const c of candidates) {
+    if (c.at === null) {
+      unlocated++;
+      continue;
+    }
+    pins.push({
+      vantageEquipmentId: c.vantageEquipmentId,
+      customerId: c.customerId,
+      customerName: c.customerName,
+      town: c.town,
+      serial: c.serial,
+      model: c.model,
+      status: c.status,
+      overdueMonths: c.overdueMonths,
+      priority: c.priority,
+      whenInArea: c.whenInArea,
+      boardColumn: c.boardColumn,
+      district: c.district,
+      at: c.at,
+      approximate: c.approximate,
+    });
+  }
+  pins.sort((a, b) => Number(b.priority) - Number(a.priority) || (b.overdueMonths ?? -1) - (a.overdueMonths ?? -1) || a.vantageEquipmentId - b.vantageEquipmentId);
+  return { pins, unlocated };
+}
+
+/**
  * Each engineer's Field calls for today and tomorrow (Europe/London days) from
  * `vantage_scheduled_units` (completed ones left out), in scheduled order, each with the due
  * machines near it. Suggestions search the whole due list, not only the board. `pmRows` is
@@ -507,41 +597,16 @@ export async function loadUpcoming(
   }
   const callCustomerId = (u: (typeof units)[number]) => u.customerId ?? (u.vantageEquipmentId === null ? null : (equipment.get(u.vantageEquipmentId)?.customerId ?? null));
 
-  const [rows, planMap, cache, engineerRows] = await Promise.all([
+  const [rows, cache, engineerRows] = await Promise.all([
     pmRows ?? listPlannerRows(db, now),
-    loadPlanRows(db),
     loadDistrictCache(db),
     db.select({ id: vantageEngineers.vantageId, name: vantageEngineers.name }).from(vantageEngineers),
   ]);
-  const due = rows.filter((r) => inPmView(r, 'due', now));
-  const customers = await loadCustomers(db, [
-    ...units.flatMap((u) => {
-      const c = callCustomerId(u);
-      return c === null ? [] : [c];
-    }),
-    ...due.flatMap((r) => (r.customerId === null ? [] : [r.customerId])),
-  ]);
-
-  const candidates: SuggestionCandidate[] = due.map((r) => {
-    const p = planMap.get(r.vantageEquipmentId);
-    const at = (r.customerId !== null ? customers.get(r.customerId)?.at : null) ?? (r.district ? (cache.get(r.district)?.at ?? null) : null);
-    return {
-      vantageEquipmentId: r.vantageEquipmentId,
-      customerId: r.customerId,
-      customerName: r.customerName,
-      serial: r.serial,
-      model: r.model,
-      status: r.result.status,
-      overdueMonths: overdueOf(r, now),
-      priority: p?.priority ?? false,
-      whenInArea: p?.whenInArea ?? false,
-      district: r.district,
-      at,
-      view: r.view,
-      dealer: r.otherDealer.dealer,
-      boardColumn: p && p.boardColumn !== null ? boardColumnOf(p, r, now).column : null,
-    };
-  });
+  const customers = await loadCustomers(db, units.flatMap((u) => {
+    const c = callCustomerId(u);
+    return c === null ? [] : [c];
+  }));
+  const candidates = await loadCandidates(db, now, rows);
 
   const engineerNames = new Map(engineerRows.map((e) => [e.id, e.name]));
   const byEngineer = new Map<number | null, UpcomingEngineer>();
@@ -577,6 +642,7 @@ export async function loadUpcoming(
       equipment: equipmentText,
       started: u.workStart !== null,
       located: cust?.at ? 'customer' : centroid ? 'district' : null,
+      at,
       suggestions: suggestNear({ customerId, district, at }, candidates, settings.nearMiles),
     };
     (londonDay(u.scheduledStart) === today ? eng.days[0]! : eng.days[1]!).calls.push(call);

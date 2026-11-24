@@ -156,6 +156,7 @@ const call = (over: Partial<UpcomingCall> = {}): UpcomingCall => ({
   equipment: 'C250i (SN1)',
   started: false,
   located: 'customer',
+  at: { lat: 51.29, lng: -0.75 },
   suggestions: [],
   ...over,
 });
