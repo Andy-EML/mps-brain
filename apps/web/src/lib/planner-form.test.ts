@@ -27,11 +27,12 @@ describe('parseMoveForm', () => {
       to: 'asked',
       note: 'Rang Dave',
     });
-    expect(parseMoveForm(form({ vantageEquipmentId: '42', to: 'done', note: '   ' }))).toEqual({ vantageEquipmentId: 42, to: 'done', note: null });
+    expect(parseMoveForm(form({ vantageEquipmentId: '42', to: 'to_plan', note: '   ' }))).toEqual({ vantageEquipmentId: 42, to: 'to_plan', note: null });
   });
 
-  it('refuses booked (it goes through the Mark-booked form), unknown columns and a missing column', () => {
+  it('refuses booked (it goes through the Mark-booked form), done (not a board move), unknown columns and a missing column', () => {
     refused(() => parseMoveForm(form({ vantageEquipmentId: '42', to: 'booked' })));
+    refused(() => parseMoveForm(form({ vantageEquipmentId: '42', to: 'done' })));
     refused(() => parseMoveForm(form({ vantageEquipmentId: '42', to: 'later' })));
     refused(() => parseMoveForm(form({ vantageEquipmentId: '42', to: '' })));
     refused(() => parseMoveForm(form({ vantageEquipmentId: '42' })));

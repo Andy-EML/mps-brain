@@ -54,7 +54,7 @@
 >   page, so the file has the same rows as on screen (not grouped by town).
 > - **Removed**: the overdue-reason select. The All / pages / time pills remain.
 
-> **Update 2026-11-24: planner reshape (`/pm/planner`).** Presentation only: no migrations, no jobs,
+> **Update 2026-11-24: planner reshape (`/pm/planner`).** No migrations or jobs; one new action (Back to Planned);
 > no Vantage or DRMS writes.
 > - **Tabs**: `/pm/planner` opens on the Map. The Board is the second tab at
 >   `/pm/planner?view=board`; `?view=map` still works. Card actions redirect back to `?view=board`

@@ -133,6 +133,24 @@ describe('planFromMap', () => {
     expect(await t.db.select().from(pmPlan)).toEqual([]);
   });
 
+  it('add restarts a Done card on To plan', async () => {
+    await dueMachine(1);
+    await moveCard(t.db, { vantageEquipmentId: 1, to: 'done', userId, now: ago(3) });
+    const r = await planFromMap(t.db, { vantageEquipmentIds: [1], mode: 'add', userId, now: NOW });
+    expect(r.done).toEqual([1]);
+    expect(r.skipped).toEqual([]);
+    expect((await plans())[1]!.boardColumn).toBe('to_plan');
+  });
+
+  it('ask moves a Done card out of Done to Asked', async () => {
+    await dueMachine(1);
+    await moveCard(t.db, { vantageEquipmentId: 1, to: 'done', userId, now: ago(3) });
+    const r = await planFromMap(t.db, { vantageEquipmentIds: [1], mode: 'ask', workUnitId: 50, userId, now: NOW });
+    expect(r.done).toEqual([1]);
+    expect(r.skipped).toEqual([]);
+    expect((await plans())[1]!.boardColumn).toBe('asked');
+  });
+
   it('already Asked gets the extra note line', async () => {
     await dueMachine(1);
     await moveCard(t.db, { vantageEquipmentId: 1, to: 'asked', note: 'Key code 1234', userId, now: ago(3) });

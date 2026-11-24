@@ -31,7 +31,6 @@ describe('dragPayload / dragIds', () => {
 
 const panel = (over: Partial<UpcomingPanelView> = {}): UpcomingPanelView => ({
   empty: null,
-  showsError: false,
   dayLabels: { today: 'Today 24 Nov', tomorrow: 'Tomorrow 25 Nov' },
   engineers: [
     {

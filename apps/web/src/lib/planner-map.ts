@@ -75,7 +75,6 @@ export function parsePriorityInput(id: unknown, on: unknown): { vantageEquipment
 const SKIP_COPY: Record<MapSkipReason, string> = {
   not_on_map: 'no longer due',
   booked: 'already booked',
-  done: 'already done',
 };
 
 const dayFmt = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short' });

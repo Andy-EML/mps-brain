@@ -1,34 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { SettingsError, type PmSuggestion, type UpcomingCall, type UpcomingEngineer } from '@mps/db/queries';
+import type { PmSuggestion, UpcomingCall, UpcomingEngineer } from '@mps/db/queries';
 import {
   askNote,
   callTimeText,
   diaryNeedsRefresh,
   groupCallSuggestions,
-  parseAskForm,
-  parseSuggestionForm,
   suggestionDistanceText,
-  upcomingAnchor,
   upcomingView,
-  withAnchor,
 } from './planner-upcoming';
-
-const form = (fields: Record<string, string>) => {
-  const f = new FormData();
-  for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  return f;
-};
-
-const refused = (fn: () => unknown) => {
-  try {
-    fn();
-  } catch (err) {
-    expect(err).toBeInstanceOf(SettingsError);
-    expect((err as SettingsError).code).toBe('invalid_pm_action');
-    return;
-  }
-  throw new Error('expected a SettingsError');
-};
 
 describe('callTimeText', () => {
   it('shows the London time: BST in summer, GMT in winter', () => {
@@ -53,50 +32,6 @@ describe('askNote', () => {
     expect(askNote('Dave', new Date('2026-11-24T08:00:00Z'))).toBe('Asked Dave for 24 Nov');
     // 23:30Z on 31 Mar is 1 Apr in London.
     expect(askNote('Sam Jones', new Date('2026-03-31T23:30:00Z'))).toBe('Asked Sam Jones for 1 Apr');
-  });
-});
-
-describe('parseAskForm', () => {
-  it('reads the machine and the call (work unit) id; the engineer and day come from the call on the server', () => {
-    expect(parseAskForm(form({ vantageEquipmentId: ' 42 ', call: ' 10 ', engineerName: 'Mallory', callStart: 'x' }))).toEqual({
-      vantageEquipmentId: 42,
-      workUnitId: 10,
-    });
-  });
-
-  it('refuses a missing or bad call id', () => {
-    refused(() => parseAskForm(form({ vantageEquipmentId: '42' })));
-    for (const call of ['', '0', '-1', '1.5', 'x', '12345678901']) refused(() => parseAskForm(form({ vantageEquipmentId: '42', call })));
-  });
-
-  it('refuses a bad machine id', () => {
-    refused(() => parseAskForm(form({ vantageEquipmentId: '', call: '10' })));
-    refused(() => parseAskForm(form({ vantageEquipmentId: '0', call: '10' })));
-    refused(() => parseAskForm(form({ vantageEquipmentId: 'x1', call: '10' })));
-  });
-});
-
-describe('parseSuggestionForm', () => {
-  it('reads the machine id and refuses a bad one', () => {
-    expect(parseSuggestionForm(form({ vantageEquipmentId: '7' }))).toEqual({ vantageEquipmentId: 7 });
-    refused(() => parseSuggestionForm(form({})));
-    refused(() => parseSuggestionForm(form({ vantageEquipmentId: '-1' })));
-  });
-});
-
-describe('upcomingAnchor / withAnchor', () => {
-  it('turns a posted work unit id into the call anchor, anything else into null', () => {
-    expect(upcomingAnchor('123')).toBe('call-123');
-    expect(upcomingAnchor(' 9 ')).toBe('call-9');
-    for (const raw of ['', 'x', '1#x', '12345678901', null]) expect(upcomingAnchor(raw)).toBeNull();
-    expect(upcomingAnchor(new File([], 'x'))).toBeNull();
-  });
-
-  it('replaces the hash of a redirect', () => {
-    expect(withAnchor('/pm/planner#card-4', 'call-9')).toBe('/pm/planner#call-9');
-    expect(withAnchor('/pm/planner?card=4&plannerError=x#card-4', 'call-9')).toBe('/pm/planner?card=4&plannerError=x#call-9');
-    expect(withAnchor('/pm/planner', 'call-9')).toBe('/pm/planner#call-9');
-    expect(withAnchor('/pm/planner#card-4', null)).toBe('/pm/planner#card-4');
   });
 });
 
@@ -204,13 +139,13 @@ describe('upcomingView', () => {
   const fresh = [{ job: 'vantage-schedule', status: 'success', startedAt: now, finishedAt: now }];
 
   it('says the diary has not refreshed when there are no calls and no recent run', () => {
-    const v = upcomingView({ engineers: [] }, [], now, null);
+    const v = upcomingView({ engineers: [] }, [], now);
     expect(v.empty).toBe("Engineers' diary hasn't refreshed yet");
     expect(v.engineers).toEqual([]);
   });
 
   it('says no booked calls when the diary is fresh but empty', () => {
-    expect(upcomingView({ engineers: [] }, fresh, now, null).empty).toBe('No booked calls today or tomorrow');
+    expect(upcomingView({ engineers: [] }, fresh, now).empty).toBe('No booked calls today or tomorrow');
   });
 
   it('builds days, calls and compact suggestion lines', () => {
@@ -236,7 +171,6 @@ describe('upcomingView', () => {
       },
       fresh,
       now,
-      { card: 2, message: 'Nope' },
     );
     expect(v.empty).toBeNull();
     expect(v.dayLabels).toEqual({ today: 'Today 24 Nov', tomorrow: 'Tomorrow 25 Nov' });
@@ -250,9 +184,9 @@ describe('upcomingView', () => {
     expect(c1!.summary).toBe('09:30 Bravo Ltd · 4 nearby');
     expect(c1!.siteText).toBe('Bravo Ltd — 2 machines here');
     expect(c1!.site.map((s) => s.id)).toEqual([3, 4]);
-    expect(c1!.others.map((s) => [s.id, s.line, s.onBoard, s.canAdd, s.canAsk, s.error])).toEqual([
-      [1, 'Acme · C300i · overdue 3m · 1.2 mi', 'Planned', false, false, null],
-      [2, 'Acme · C300i · overdue 18m · same district', null, true, true, 'Nope'],
+    expect(c1!.others.map((s) => [s.id, s.line, s.onBoard, s.canAdd, s.canAsk])).toEqual([
+      [1, 'Acme · C300i · overdue 3m · 1.2 mi', 'Planned', false, true],
+      [2, 'Acme · C300i · overdue 18m · same district', null, true, true],
     ]);
     expect(c1!.site.map((s) => [s.id, s.line, s.onBoard, s.canAdd])).toEqual([
       [3, 'Bravo Ltd · C300i · due soon · same site', 'Planned', false],
@@ -267,7 +201,7 @@ describe('upcomingView', () => {
   });
 
   it('says one machine here, singular', () => {
-    const v = upcomingView({ engineers: [engineer([call({ suggestions: [suggestion({ sameSite: true })] })])] }, fresh, now, null);
+    const v = upcomingView({ engineers: [engineer([call({ suggestions: [suggestion({ sameSite: true })] })])] }, fresh, now);
     expect(v.engineers[0]!.days[0]!.calls[0]!.siteText).toBe('Bravo Ltd — 1 machine here');
   });
 
@@ -283,7 +217,6 @@ describe('upcomingView', () => {
       },
       fresh,
       now,
-      null,
     );
     expect(v.engineers[0]!.canAsk).toBe(false);
     const [booked, free] = v.engineers[0]!.days[0]!.calls[0]!.others;
@@ -291,9 +224,27 @@ describe('upcomingView', () => {
     expect(free).toMatchObject({ canAsk: false, canAdd: true, onBoard: null });
   });
 
-  it('reports whether a refused card is shown under a suggestion', () => {
-    const data = { engineers: [engineer([call({ suggestions: [suggestion({ vantageEquipmentId: 9 })] })])] };
-    expect(upcomingView(data, fresh, now, { card: 9, message: 'x' }).showsError).toBe(true);
-    expect(upcomingView(data, fresh, now, { card: 8, message: 'x' }).showsError).toBe(false);
+  it('keeps Ask for a Planned (or Asked) machine, which cannot be added again; Booked cannot be asked', () => {
+    const v = upcomingView(
+      {
+        engineers: [
+          engineer([
+            call({
+              suggestions: [
+                suggestion({ vantageEquipmentId: 1, boardColumn: 'to_plan' }),
+                suggestion({ vantageEquipmentId: 2, boardColumn: 'asked' }),
+                suggestion({ vantageEquipmentId: 3, boardColumn: 'booked' }),
+              ],
+            }),
+          ]),
+        ],
+      },
+      fresh,
+      now,
+    );
+    const [planned, asked, booked] = v.engineers[0]!.days[0]!.calls[0]!.others;
+    expect(planned).toMatchObject({ onBoard: 'Planned', canAdd: false, canAsk: true });
+    expect(asked).toMatchObject({ onBoard: 'Planned', canAdd: false, canAsk: true });
+    expect(booked).toMatchObject({ onBoard: 'Booked', canAdd: false, canAsk: false });
   });
 });

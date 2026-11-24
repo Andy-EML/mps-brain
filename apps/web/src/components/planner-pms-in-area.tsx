@@ -68,7 +68,7 @@ export interface PlannerPmsInAreaProps {
  * one line each; machines at the call's own site fold into one line, also opened by a click. Each
  * engineer's block collapses from its heading (open to start). Drag a machine (or the site line)
  * onto Planned, or use *Add to plan* / *Ask <engineer>*. Machines already on the board show their
- * column instead. Recorded in this app only — the office rings the engineer; nothing goes to Vantage.
+ * column (a Planned one can still be asked about). Recorded in this app only — the office rings the engineer; nothing goes to Vantage.
  */
 export function PlannerPmsInArea({ view }: PlannerPmsInAreaProps) {
   const [day, setDay] = useState<Day>('today');
@@ -290,30 +290,20 @@ function MachineRow({
         <GripVertical aria-hidden="true" className={cn('size-3.5 shrink-0 text-muted-foreground', !draggable && 'invisible')} />
         {s.priority ? <Star role="img" aria-label="Priority" className="size-3 shrink-0 fill-current text-warn" /> : null}
         <span className={cn('min-w-0 flex-1 truncate', s.whenInArea && 'italic')}>{s.line}</span>
-        {s.onBoard !== null ? (
-          <span className="shrink-0 text-[11px] text-brand">{s.onBoard}</span>
-        ) : (
-          <>
-            {s.canAdd ? (
-              <SmallButton label="Add to plan" aria={`Add to plan: ${who}`} disabled={pending} onClick={() => save(() => mapAddToPlanAction([s.id]))} />
-            ) : null}
-            {s.canAsk ? (
-              <SmallButton
-                label={`Ask ${firstName(engineer.name)}`}
-                aria={`Ask ${engineer.name}: ${who}`}
-                primary
-                disabled={pending}
-                onClick={() => save(() => mapAskEngineerAction([s.id], call.workUnitId))}
-              />
-            ) : null}
-          </>
-        )}
+        {s.onBoard !== null ? <span className="shrink-0 text-[11px] text-brand">{s.onBoard}</span> : null}
+        {s.canAdd ? (
+          <SmallButton label="Add to plan" aria={`Add to plan: ${who}`} disabled={pending} onClick={() => save(() => mapAddToPlanAction([s.id]))} />
+        ) : null}
+        {s.canAsk ? (
+          <SmallButton
+            label={`Ask ${firstName(engineer.name)}`}
+            aria={`Ask ${engineer.name}: ${who}`}
+            primary
+            disabled={pending}
+            onClick={() => save(() => mapAskEngineerAction([s.id], call.workUnitId))}
+          />
+        ) : null}
       </div>
-      {s.error ? (
-        <p role="alert" className="mt-0.5 ml-5 rounded bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive">
-          {s.error}
-        </p>
-      ) : null}
     </li>
   );
 }

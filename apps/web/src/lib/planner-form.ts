@@ -7,9 +7,9 @@ import { SettingsError, type BoardCard, type BoardColumn, type LeftDueReason } f
  * form (`parseBookedForm`) because Booked is derived from the PM action it writes.
  */
 
-export type MovableColumn = 'to_plan' | 'asked' | 'done';
+export type MovableColumn = 'to_plan' | 'asked';
 
-const MOVABLE: readonly string[] = ['to_plan', 'asked', 'done'] satisfies MovableColumn[];
+const MOVABLE: readonly string[] = ['to_plan', 'asked'] satisfies MovableColumn[];
 const NOTE_MAX = 500;
 const PLANNER = '/pm/planner';
 
@@ -27,7 +27,7 @@ function id(raw: string | null): number {
   return Number(raw);
 }
 
-/** Move to… : `vantageEquipmentId`, `to` (`to_plan` / `asked` / `done`), `note` (optional, blank -> null, at most 500). */
+/** Move to… : `vantageEquipmentId`, `to` (`to_plan` / `asked`), `note` (optional, blank -> null, at most 500). */
 export function parseMoveForm(fd: FormData): { vantageEquipmentId: number; to: MovableColumn; note: string | null } {
   const vantageEquipmentId = id(text(fd, 'vantageEquipmentId'));
   const to = text(fd, 'to');

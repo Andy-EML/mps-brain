@@ -21,7 +21,7 @@ const SCHEDULE_JOB = 'vantage-schedule';
 const first = (v: string | string[] | undefined): string | undefined => (Array.isArray(v) ? v[0] : v);
 
 /**
- * `/pm/planner`: the PM board — PMs in area (the upcoming-jobs panel, `#upcoming`) → Planned →
+ * `/pm/planner`: opens on the Map (`?view=board` is the Board tab). The board — PMs in area (the upcoming-jobs panel, `#upcoming`) → Planned →
  * Booked; the plan's machines (and Priority machines) grouped by county, patch and postcode
  * district. Done cards are not shown. Reads our own database only (`loadBoard`
  * also runs the board sync, which writes `pm_plan` only); every action is recorded in
@@ -76,14 +76,14 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
     );
   }
   // Both days; the panel's Today / Tomorrow switch picks one.
-  const upcomingPanel = upcomingView(upcoming, lastSchedule ? [lastSchedule] : [], now, error);
+  const upcomingPanel = upcomingView(upcoming, lastSchedule ? [lastSchedule] : [], now);
   // Forms post this back; the device page's Back returns to it. Errors and the card are not kept.
   const back = `${PLANNER}?view=board`;
   const pageError = errorKey && !error ? pmErrorMessage(errorKey) : null;
-  // A refused action shows on its card, or under its suggestion; the page says it only when neither is on screen.
+  // A refused action shows on its card; the page says it when that card is not on the board.
   // Done cards are not on the board, so an error on one counts as missing.
   const onBoard = cards.filter((c) => visibleColumnOf(c.column) !== null);
-  const errorCardMissing = error !== null && !onBoard.some((c) => c.vantageEquipmentId === error.card) && !upcomingPanel.showsError;
+  const errorCardMissing = error !== null && !onBoard.some((c) => c.vantageEquipmentId === error.card);
 
   return (
     <>

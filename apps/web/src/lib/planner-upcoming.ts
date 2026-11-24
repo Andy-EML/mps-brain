@@ -1,11 +1,10 @@
-import { SettingsError, type PmStatus, type PmSuggestion, type UpcomingCall, type UpcomingEngineer } from '@mps/db/queries';
+import type { PmStatus, PmSuggestion, UpcomingCall, UpcomingEngineer } from '@mps/db/queries';
 import { customerHref } from '../components/customers';
 import { formatDayMonth, shortModel } from './format';
 import { visibleColumnOf } from './planner-columns';
 
 /**
- * The `/pm/planner` PMs-in-area panel (was Upcoming jobs): display text, the Ask-engineer / Add-to-plan forms and the
- * view model the (client) panel renders. Pure. Built on the server so the panel never imports
+ * The `/pm/planner` PMs-in-area panel (was Upcoming jobs): display text and the view model the (client) panel renders. Pure. Built on the server so the panel never imports
  * database values. Asking an engineer is recorded in this app only — the office rings the engineer;
  * nothing is sent to anyone or written to Vantage.
  */
@@ -31,50 +30,6 @@ export function suggestionDistanceText(s: Pick<PmSuggestion, 'sameSite' | 'sameD
 }
 
 export { askNote } from '@mps/db/queries';
-
-function bad(): never {
-  throw new SettingsError('That PM action is not valid — check the form and try again.', 'invalid_pm_action');
-}
-
-function text(fd: FormData, name: string): string | null {
-  const value = fd.get(name);
-  return typeof value === 'string' ? value.trim() : null;
-}
-
-function machineId(fd: FormData): number {
-  return positiveId(text(fd, 'vantageEquipmentId'));
-}
-
-function positiveId(raw: string | null): number {
-  if (raw === null || !/^\d{1,10}$/.test(raw) || Number(raw) < 1) bad();
-  return Number(raw);
-}
-
-/**
- * Asked engineer: `vantageEquipmentId` and `call` (the work unit id). The engineer and the call's
- * day are looked up from the call on the server (`getScheduledCall`), never taken from the form.
- */
-export function parseAskForm(fd: FormData): { vantageEquipmentId: number; workUnitId: number } {
-  return { vantageEquipmentId: machineId(fd), workUnitId: positiveId(text(fd, 'call')) };
-}
-
-/** Add to plan from a suggestion: just the machine. */
-export function parseSuggestionForm(fd: FormData): { vantageEquipmentId: number } {
-  return { vantageEquipmentId: machineId(fd) };
-}
-
-/** The posted work unit id as the call's anchor (`call-123`), so the panel comes back to that call. */
-export function upcomingAnchor(raw: FormDataEntryValue | string | null): string | null {
-  if (typeof raw !== 'string') return null;
-  const v = raw.trim();
-  return /^\d{1,10}$/.test(v) ? `call-${v}` : null;
-}
-
-/** A redirect with its hash replaced by `anchor` (unchanged when there is none). */
-export function withAnchor(href: string, anchor: string | null): string {
-  if (anchor === null) return href;
-  return `${href.split('#', 1)[0]}#${anchor}`;
-}
 
 export interface RunLike {
   job: string;
@@ -132,14 +87,12 @@ export interface UpcomingSuggestionView {
   status: PmStatus;
   priority: boolean;
   whenInArea: boolean;
-  /** The board column the machine already shows in, shown instead of the actions; null when it is free. */
+  /** The board column the machine already shows in (Planned also keeps Ask); null when it is free. */
   onBoard: 'Planned' | 'Booked' | null;
   /** Not on the board (a Done card counts as not on it), so it can be added or asked about. */
   canAdd: boolean;
-  /** Can be added and the call has an engineer to ring. */
+  /** The call has an engineer to ring and the machine is not Booked (a Planned machine can still be asked about). */
   canAsk: boolean;
-  /** A refused action on this machine. */
-  error: string | null;
 }
 
 export interface UpcomingCallView {
@@ -187,8 +140,6 @@ export interface UpcomingPanelView {
   /** The day switch's labels: `Today 24 Nov` / `Tomorrow 25 Nov` (`Today` / `Tomorrow` without dates). */
   dayLabels: { today: string; tomorrow: string };
   engineers: UpcomingEngineerView[];
-  /** The refused action's machine is under one of the calls (so the page need not repeat the error). */
-  showsError: boolean;
 }
 
 function dayHeading(which: 'today' | 'tomorrow', date: string | undefined): string {
@@ -203,14 +154,13 @@ function locationNote(located: 'customer' | 'district' | null, district: string 
 
 /**
  * The panel's view model from `loadUpcoming` (its engineers and, when given, the London dates of the
- * two days), the recent `sync_runs` and a refused action (if any). Both days are built; the panel's
+ * two days), the recent `sync_runs`. Both days are built; the panel's
  * Today / Tomorrow switch picks one.
  */
 export function upcomingView(
   data: { engineers: UpcomingEngineer[]; today?: string; tomorrow?: string },
   runs: RunLike[],
   now: Date,
-  error: { card: number; message: string } | null,
 ): UpcomingPanelView {
   const dayLabels = { today: dayHeading('today', data.today), tomorrow: dayHeading('tomorrow', data.tomorrow) };
   if (data.engineers.length === 0) {
@@ -218,16 +168,12 @@ export function upcomingView(
       empty: diaryNeedsRefresh(runs, now) ? "Engineers' diary hasn't refreshed yet" : 'No booked calls today or tomorrow',
       dayLabels,
       engineers: [],
-      showsError: false,
     };
   }
-  let showsError = false;
   const engineers = data.engineers.map((e): UpcomingEngineerView => {
     const canAsk = e.engineerId !== null;
     const suggestionView = (s: PmSuggestion): UpcomingSuggestionView => {
       const column = s.boardColumn === null ? null : visibleColumnOf(s.boardColumn);
-      const err = error?.card === s.vantageEquipmentId ? error.message : null;
-      if (err !== null) showsError = true;
       const free = column === null;
       return {
         id: s.vantageEquipmentId,
@@ -239,8 +185,7 @@ export function upcomingView(
         whenInArea: s.whenInArea,
         onBoard: column === null ? null : ON_BOARD_LABEL[column],
         canAdd: free,
-        canAsk: canAsk && free,
-        error: err,
+        canAsk: canAsk && column !== 'booked',
       };
     };
     return {
@@ -276,5 +221,5 @@ export function upcomingView(
       })),
     };
   });
-  return { empty: null, dayLabels, engineers, showsError };
+  return { empty: null, dayLabels, engineers };
 }

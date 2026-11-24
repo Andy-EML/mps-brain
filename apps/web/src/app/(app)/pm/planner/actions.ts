@@ -4,9 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
   SettingsError,
-  addToPlan,
   getEquipmentPm,
-  getScheduledCall,
   markPmBooked,
   moveCard,
   removeFromPlan,
@@ -18,11 +16,12 @@ import { getDb } from '@/lib/db';
 import { parseBookedForm, pmErrorKey } from '@/lib/pm-action-form';
 import { parsePlanForm } from '@/lib/pm-plan-form';
 import { parseMoveForm, parseRemoveForm, plannerRedirectHref } from '@/lib/planner-form';
-import { askNote, parseAskForm, parseSuggestionForm, upcomingAnchor, withAnchor } from '@/lib/planner-upcoming';
 
 /**
  * `/pm/planner` card actions: Book (the Mark-booked form), Back to Planned (undo a booking made
- * here), the note (`moveCardAction` to the card's own column), Remove and the Priority star; and the upcoming-jobs panel's Asked engineer / Add to plan. Recorded in this app only — nothing is written to Vantage.
+ * here), the note (`moveCardAction` to the card's own column), Remove and the Priority star.
+ * (PMs in area's Add / Ask buttons are the map actions, `map-actions.ts`.) Recorded in this app only —
+ * nothing is written to Vantage.
  * Each calls `requireUser()` first (an action is a public POST endpoint) and takes the user id from
  * the session, never the form. Every form posts `return` (the planner URL); the action goes back
  * there scrolled to the card. A refusal comes back as `card=<id>&plannerError=<key>` (the `/pm`
@@ -36,11 +35,7 @@ function postedId(formData: FormData): number | null {
   return typeof raw === 'string' && /^\d{1,10}$/.test(raw.trim()) ? Number(raw.trim()) : null;
 }
 
-/**
- * `anchor` (the upcoming-jobs panel's `call-<id>`) replaces the `#card-<id>` hash so a suggestion's
- * action comes back to its call rather than jumping to the board.
- */
-async function run(formData: FormData, work: (userId: number) => Promise<unknown>, anchor: string | null = null): Promise<void> {
+async function run(formData: FormData, work: (userId: number) => Promise<unknown>): Promise<void> {
   const user = await requireUser();
   const card = postedId(formData);
   const back = formData.get('return');
@@ -52,14 +47,14 @@ async function run(formData: FormData, work: (userId: number) => Promise<unknown
     error = pmErrorKey(err);
   }
   // redirect() throws, so it stays outside the try.
-  if (error !== null) redirect(withAnchor(plannerRedirectHref(back, card, error), anchor));
+  if (error !== null) redirect(plannerRedirectHref(back, card, error));
   revalidatePath('/pm/planner');
   revalidatePath('/pm');
-  redirect(withAnchor(plannerRedirectHref(back, card), anchor));
+  redirect(plannerRedirectHref(back, card));
 }
 
 /**
- * Move to To plan / Asked engineer / Done. The note is only changed when the form has a `note`
+ * Move to To plan / Asked engineer (Done is not a board move). The note is only changed when the form has a `note`
  * field (the note form); the Move to… menu leaves the card's note as it is.
  */
 export async function moveCardAction(formData: FormData): Promise<void> {
@@ -112,35 +107,4 @@ export async function unbookCardAction(formData: FormData): Promise<void> {
     }
     return undoPmAction(db, action.id, userId);
   });
-}
-
-/**
- * Upcoming jobs → *Asked engineer*: the office has rung the engineer about a PM near one of their
- * calls. The engineer and the call's day are read from the call (`getScheduledCall`), not the form.
- * Moves the machine to Asked engineer (putting it on the board when it is not on it — `moveCard`
- * inserts the plan row) and adds `Asked <engineer> for <call day>` under the card's note, keeping
- * whatever was typed there. Recorded here only: no notification is sent and nothing is written to
- * Vantage. A call that has gone from the diary, or has no engineer, is refused.
- */
-export async function askEngineerAction(formData: FormData): Promise<void> {
-  await run(
-    formData,
-    async (userId) => {
-      const f = parseAskForm(formData);
-      const db = getDb();
-      const call = await getScheduledCall(db, f.workUnitId);
-      if (call === null) throw new SettingsError('That PM action is not valid — check the form and try again.', 'invalid_pm_action');
-      return moveCard(db, { vantageEquipmentId: f.vantageEquipmentId, to: 'asked', appendNote: askNote(call.engineerName, call.start), userId });
-    },
-    upcomingAnchor(formData.get('call')),
-  );
-}
-
-/** Upcoming jobs → *Add to plan*: puts a suggested machine on the board in To plan. */
-export async function addSuggestionToPlanAction(formData: FormData): Promise<void> {
-  await run(
-    formData,
-    (userId) => addToPlan(getDb(), { vantageEquipmentIds: [parseSuggestionForm(formData).vantageEquipmentId], userId }),
-    upcomingAnchor(formData.get('call')),
-  );
 }

@@ -12,7 +12,7 @@ export function askNote(engineerName: string, callStart: Date): string {
   return `Asked ${engineerName} for ${part('day')} ${part('month')}`;
 }
 
-export type MapSkipReason = 'not_on_map' | 'booked' | 'done';
+export type MapSkipReason = 'not_on_map' | 'booked';
 
 export interface MapPlanResult {
   done: number[];
@@ -49,12 +49,16 @@ export async function planFromMap(
     const pin = byId.get(id);
     if (!pin) skipped.push({ vantageEquipmentId: id, reason: 'not_on_map' });
     else if (pin.boardColumn === 'booked') skipped.push({ vantageEquipmentId: id, reason: 'booked' });
-    else if (pin.boardColumn === 'done') skipped.push({ vantageEquipmentId: id, reason: 'done' });
     else todo.push(id);
   }
 
   if (a.mode === 'add') {
-    await addToPlan(db, { vantageEquipmentIds: todo.filter((id) => byId.get(id)!.boardColumn === null), userId: a.userId, now });
+    // Not on the board, or a Done card (hidden): addToPlan puts both on To plan and leaves To plan / Asked alone.
+    const toAdd = todo.filter((id) => {
+      const column = byId.get(id)!.boardColumn;
+      return column === null || column === 'done';
+    });
+    await addToPlan(db, { vantageEquipmentIds: toAdd, userId: a.userId, now });
     done.push(...todo);
     return { done, skipped };
   }

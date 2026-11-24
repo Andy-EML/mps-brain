@@ -14,7 +14,7 @@ export function visibleColumnOf(c: BoardColumn): VisibleColumn | null {
 }
 
 /** One `askNote` line: `Asked <engineer> for <day> <month>`. */
-const ASK_LINE = /^Asked (.+) for (\d{1,2} [A-Za-z]{3})$/;
+const ASK_LINE = /^Asked (.+) for (\d{1,2} [A-Za-z]{3,4})$/;
 
 /**
  * The tag an asked card shows in Planned: `Asked <engineer> · <day>` from the latest

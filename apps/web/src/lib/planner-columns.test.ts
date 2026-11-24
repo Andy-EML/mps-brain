@@ -9,6 +9,10 @@ describe('visibleColumnOf', () => {
 });
 
 describe('askedTag', () => {
+  it('reads the four-letter en-GB September', () => {
+    expect(askedTag({ column: 'asked', note: 'Asked Keith for 3 Sept' })).toBe('Asked Keith · 3 Sept');
+  });
+
   it('askedTag uses latest Asked line', () => {
     expect(askedTag({ column: 'asked', note: 'key in reception\nAsked Andy for 24 Nov\nAsked Keith for 25 Nov' })).toBe('Asked Keith · 25 Nov');
   });

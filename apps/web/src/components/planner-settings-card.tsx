@@ -11,7 +11,7 @@ type NumberName = 'nearMiles' | 'doneRetentionDays' | 'askedStaleDays';
 
 const NUMBERS: { name: NumberName; label: string; unit: string; help: string }[] = [
   { name: 'nearMiles', label: 'Near a booked call', unit: 'miles', help: 'Upcoming jobs suggest PMs in the same postcode district or within this distance. 1 to 100.' },
-  { name: 'doneRetentionDays', label: 'Keep Done cards', unit: 'days', help: 'How long a card stays in Done before it drops off the board. 1 to 90.' },
+  { name: 'doneRetentionDays', label: 'Keep Done cards', unit: 'days', help: 'How long a Done record is kept (hidden) before it is deleted. 1 to 90.' },
   { name: 'askedStaleDays', label: 'Asked-engineer warning after', unit: 'days', help: 'A card in Asked engineer longer than this shows “asked N days ago”. 1 to 60.' },
 ];
 
