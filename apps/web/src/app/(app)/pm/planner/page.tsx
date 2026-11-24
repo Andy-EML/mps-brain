@@ -9,6 +9,7 @@ import { PlannerUpcoming } from '@/components/planner-upcoming';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { pmErrorMessage } from '@/lib/pm-action-form';
+import { visibleColumnOf } from '@/lib/planner-columns';
 import { upcomingView } from '@/lib/planner-upcoming';
 
 export const metadata = { title: 'PM planner · MPS Dashboard' };
@@ -20,9 +21,9 @@ const SCHEDULE_JOB = 'vantage-schedule';
 const first = (v: string | string[] | undefined): string | undefined => (Array.isArray(v) ? v[0] : v);
 
 /**
- * `/pm/planner`: the PM board — the machines the office put on the plan (and Priority machines),
- * in To plan → Asked engineer → Booked → Done, grouped by county, patch and postcode district —
- * with the upcoming-jobs panel (`#upcoming`) beside it. Reads our own database only (`loadBoard`
+ * `/pm/planner`: the PM board — PMs in area (the upcoming-jobs panel, `#upcoming`) → Planned →
+ * Booked; the plan's machines (and Priority machines) grouped by county, patch and postcode
+ * district. Done cards are not shown. Reads our own database only (`loadBoard`
  * also runs the board sync, which writes `pm_plan` only); every action is recorded in
  * this app — nothing is written to Vantage.
  */
@@ -79,7 +80,9 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
   const back = PLANNER;
   const pageError = errorKey && !error ? pmErrorMessage(errorKey) : null;
   // A refused action shows on its card, or under its suggestion; the page says it only when neither is on screen.
-  const errorCardMissing = error !== null && !cards.some((c) => c.vantageEquipmentId === error.card) && !upcomingPanel.showsError;
+  // Done cards are not on the board, so an error on one counts as missing.
+  const onBoard = cards.filter((c) => visibleColumnOf(c.column) !== null);
+  const errorCardMissing = error !== null && !onBoard.some((c) => c.vantageEquipmentId === error.card) && !upcomingPanel.showsError;
 
   return (
     <>
@@ -91,33 +94,28 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
         </p>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <div className="min-w-0 xl:col-span-2">
-          {cards.length === 0 ? (
-            <section className="rounded-xl border border-line bg-card px-5 py-10 text-center text-[14px]">
-              <p className="font-medium">Nothing on the plan yet — add machines from PM due</p>
-              <p className="mt-1 text-[13px] text-muted-foreground">
-                Use <em>Add to plan</em> on a machine in the Due or When in area tab; Priority machines join the plan on their own.
-              </p>
-              <Link href="/pm" className="mt-3 inline-block text-[13px] text-brand hover:underline">
-                Go to PM due
-              </Link>
-            </section>
-          ) : (
-            <PlannerBoard
-              cards={cards}
-              patches={settings.patches}
-              doneRetentionDays={settings.doneRetentionDays}
-              back={back}
-              error={error}
-            />
-          )}
-        </div>
-        {/* Upcoming jobs: each engineer's booked calls for today and tomorrow with nearby PMs. */}
-        <aside id="upcoming" aria-labelledby="upcoming-heading" className="min-w-0">
-          <PlannerUpcoming view={upcomingPanel} back={back} />
-        </aside>
-      </div>
+      {onBoard.length === 0 ? (
+        <p className="mb-4 rounded-lg border border-line bg-card px-4 py-2.5 text-[13px] text-muted-foreground">
+          Nothing on the plan yet — add machines from the PMs in area, or use <em>Add to plan</em> on{' '}
+          <Link href="/pm" className="text-brand hover:underline">
+            PM due
+          </Link>
+          ; Priority machines join the plan on their own.
+        </p>
+      ) : null}
+
+      <PlannerBoard
+        cards={cards}
+        patches={settings.patches}
+        pmsInArea={
+          // PMs in area (was Upcoming jobs): each engineer's booked calls for today and tomorrow with nearby PMs.
+          <aside id="upcoming" aria-labelledby="upcoming-heading" className="min-w-0">
+            <PlannerUpcoming view={upcomingPanel} back={back} />
+          </aside>
+        }
+        back={back}
+        error={error}
+      />
     </>
   );
 }

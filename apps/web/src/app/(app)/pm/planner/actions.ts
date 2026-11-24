@@ -2,7 +2,17 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { SettingsError, addToPlan, getScheduledCall, markPmBooked, moveCard, removeFromPlan, setPriority } from '@mps/db/queries';
+import {
+  SettingsError,
+  addToPlan,
+  getEquipmentPm,
+  getScheduledCall,
+  markPmBooked,
+  moveCard,
+  removeFromPlan,
+  setPriority,
+  undoPmAction,
+} from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { parseBookedForm, pmErrorKey } from '@/lib/pm-action-form';
@@ -11,8 +21,8 @@ import { parseMoveForm, parseRemoveForm, plannerRedirectHref } from '@/lib/plann
 import { askNote, parseAskForm, parseSuggestionForm, upcomingAnchor, withAnchor } from '@/lib/planner-upcoming';
 
 /**
- * `/pm/planner` card actions: Move to… (To plan / Asked engineer / Done), Book (the Mark-booked
- * form), Remove and the Priority star; and the upcoming-jobs panel's Asked engineer / Add to plan. Recorded in this app only — nothing is written to Vantage.
+ * `/pm/planner` card actions: Book (the Mark-booked form), Back to Planned (undo a booking made
+ * here), the note (`moveCardAction` to the card's own column), Remove and the Priority star; and the upcoming-jobs panel's Asked engineer / Add to plan. Recorded in this app only — nothing is written to Vantage.
  * Each calls `requireUser()` first (an action is a public POST endpoint) and takes the user id from
  * the session, never the form. Every form posts `return` (the planner URL); the action goes back
  * there scrolled to the card. A refusal comes back as `card=<id>&plannerError=<key>` (the `/pm`
@@ -82,6 +92,25 @@ export async function bookCardAction(formData: FormData): Promise<void> {
     const db = getDb();
     await markPmBooked(db, { ...f, userId });
     await moveCard(db, { vantageEquipmentId: f.vantageEquipmentId, to: 'to_plan', userId });
+  });
+}
+
+/**
+ * *Back to Planned* on a card booked here: undoes the open booked PM action (`undoPmAction`, as
+ * Undo on PM due does). `bookCardAction` left the stored column at To plan, so the card returns to
+ * Planned. The action is looked up from the machine, not taken from the form; a machine with no
+ * open booking recorded here (a Vantage PM job, or already undone) is refused.
+ */
+export async function unbookCardAction(formData: FormData): Promise<void> {
+  await run(formData, async (userId) => {
+    const { vantageEquipmentId } = parseRemoveForm(formData);
+    const db = getDb();
+    const row = await getEquipmentPm(db, vantageEquipmentId);
+    const action = row?.action ?? null;
+    if (action === null || action.kind !== 'booked') {
+      throw new SettingsError('That PM action is not valid — check the form and try again.', 'invalid_pm_action');
+    }
+    return undoPmAction(db, action.id, userId);
   });
 }
 

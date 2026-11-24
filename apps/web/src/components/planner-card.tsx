@@ -5,9 +5,9 @@ import { useFormStatus } from 'react-dom';
 import Link from 'next/link';
 import { Ellipsis, Star } from 'lucide-react';
 // Types only from @mps/db: its values would pull the database client into the browser bundle.
-import type { BoardCard, BoardColumn } from '@mps/db/queries';
+import type { BoardCard } from '@mps/db/queries';
 import { cn } from 'cn';
-import { bookCardAction, moveCardAction, removeCardAction, togglePriorityPlannerAction } from '@/app/(app)/pm/planner/actions';
+import { bookCardAction, moveCardAction, removeCardAction, togglePriorityPlannerAction, unbookCardAction } from '@/app/(app)/pm/planner/actions';
 import { statusLabel, statusTone } from '@/components/pm-status';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { machineActionLabel } from '@/lib/format';
+import { askedTag, isManualBooked } from '@/lib/planner-columns';
 
 const FIELD_LABEL = 'mb-1 block text-[12px] text-muted-foreground';
 
@@ -43,22 +44,23 @@ type Panel = 'book' | 'note' | null;
 
 /**
  * One machine on the planner board: customer, serial / model, PM status, months overdue (red), the
- * Priority star, the reason badge and note, a *Move to…* menu and *Remove*. When-in-area machines are
- * drawn muted (dashed). *Booked…* opens the Mark-booked form inside the card (Booked is derived from
- * the booking it records); *Note…* edits the note on To plan / Asked cards. Menu items submit hidden
- * forms that stay in the card, so closing the menu never unmounts a pending action.
+ * Priority star, the reason badge and note, the `Asked <engineer> · <day>` tag on an asked card, a
+ * card menu and *Remove*. When-in-area machines are drawn muted (dashed). The menu: *Book…* opens the
+ * Mark-booked form inside the card (Booked is derived from the booking it records); *Back to Planned*
+ * undoes a booking recorded here; *Note…* edits the note on Planned cards; *Remove from plan*. Menu
+ * items submit hidden forms that stay in the card, so closing the menu never unmounts a pending action.
  */
 export function PlannerCard({ card: c, back, badge, customerLink, deviceLink, error }: PlannerCardProps) {
   const [panel, setPanel] = useState<Panel>(null);
-  const moveForms = useRef<Partial<Record<'to_plan' | 'asked' | 'done', HTMLFormElement | null>>>({});
+  const unbookForm = useRef<HTMLFormElement>(null);
   const removeForm = useRef<HTMLFormElement>(null);
   const id = c.vantageEquipmentId;
   const booked = c.column === 'booked';
+  const canUnbook = isManualBooked(c);
   const canNote = c.column === 'to_plan' || c.column === 'asked';
+  const tag = askedTag(c);
   const customer = c.customerName ?? 'Unknown customer';
   const machine = [c.model, c.serial].filter(Boolean).join(' · ') || 'Unknown machine';
-
-  const move = (to: 'to_plan' | 'asked' | 'done') => moveForms.current[to]?.requestSubmit();
 
   return (
     <li
@@ -96,44 +98,36 @@ export function PlannerCard({ card: c, back, badge, customerLink, deviceLink, er
           <input type="hidden" name="on" value={c.priority ? 'false' : 'true'} />
           <StarButton pressed={c.priority} label={machineActionLabel('Priority', c.customerName, c.serial)} />
         </form>
-        {(['to_plan', 'asked', 'done'] as const).map((to) => (
-          <form
-            key={to}
-            ref={(el) => {
-              moveForms.current[to] = el;
-            }}
-            action={moveCardAction}
-            hidden
-          >
+        {canUnbook ? (
+          <form ref={unbookForm} action={unbookCardAction} hidden>
             <CardFields id={id} back={back} />
-            <input type="hidden" name="to" value={to} />
           </form>
-        ))}
+        ) : null}
         <form ref={removeForm} action={removeCardAction} hidden>
           <CardFields id={id} back={back} />
         </form>
         <DropdownMenu>
           <DropdownMenuTrigger
-            aria-label={`Move ${customer} to…`}
-            title="Move to…"
+            aria-label={`Actions for ${customer}`}
+            title="Actions"
             className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand/50 focus-visible:outline-none"
           >
             <Ellipsis aria-hidden className="size-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuGroup>
-              <DropdownMenuLabel>Move to…</DropdownMenuLabel>
-              <MoveItem label="To plan" current={c.column} to="to_plan" disabled={booked} onMove={move} />
-              <MoveItem label="Asked engineer" current={c.column} to="asked" disabled={booked} onMove={move} />
+              <DropdownMenuLabel>Card</DropdownMenuLabel>
               <DropdownMenuItem onClick={() => setPanel('book')} className="text-[13px]">
-                {booked ? 'Booked — change booking…' : 'Booked…'}
+                {booked ? 'Change booking…' : 'Book…'}
               </DropdownMenuItem>
-              <MoveItem label="Done" current={c.column} to="done" onMove={move} />
+              {canUnbook ? (
+                <DropdownMenuItem onClick={() => unbookForm.current?.requestSubmit()} className="text-[13px]">
+                  Back to Planned
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuGroup>
-            {booked ? (
-              <p className="px-1.5 py-1 text-[12px] text-muted-foreground">
-                Booked follows the booking: undo it on PM due to move the card back.
-              </p>
+            {booked && !canUnbook ? (
+              <p className="px-1.5 py-1 text-[12px] text-muted-foreground">Booked by a PM job in Vantage — change it there.</p>
             ) : null}
             <DropdownMenuSeparator />
             {canNote ? (
@@ -156,6 +150,11 @@ export function PlannerCard({ card: c, back, badge, customerLink, deviceLink, er
         ) : null}
         {c.overdueMonths !== null && c.overdueMonths >= 1 ? (
           <span className="text-[12px] font-medium text-critical">overdue {c.overdueMonths}m</span>
+        ) : null}
+        {tag ? (
+          <ToneBadge tone="ok" dot={false} className="px-2 py-0.5 text-[12px]">
+            {tag}
+          </ToneBadge>
         ) : null}
         {c.whenInArea ? (
           <ToneBadge tone="muted" dot={false} className="px-2 py-0.5 text-[12px]">
@@ -196,28 +195,6 @@ export function PlannerCard({ card: c, back, badge, customerLink, deviceLink, er
         <NoteForm id={id} back={back} column={c.column as 'to_plan' | 'asked'} note={c.note} onCancel={() => setPanel(null)} />
       ) : null}
     </li>
-  );
-}
-
-function MoveItem({
-  label,
-  to,
-  current,
-  disabled = false,
-  onMove,
-}: {
-  label: string;
-  to: 'to_plan' | 'asked' | 'done';
-  current: BoardColumn;
-  disabled?: boolean;
-  onMove: (to: 'to_plan' | 'asked' | 'done') => void;
-}) {
-  const here = current === to;
-  return (
-    <DropdownMenuItem disabled={here || disabled} onClick={() => onMove(to)} className="text-[13px]">
-      {label}
-      {here ? <span className="ml-auto text-[11px] text-muted-foreground">here</span> : null}
-    </DropdownMenuItem>
   );
 }
 
