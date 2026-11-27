@@ -188,7 +188,7 @@ describe('runReplenishEvaluate', () => {
 
       it('falls back to created_at when the proposal has no alarm time, and never touches threshold or approved proposals', async () => {
         await levels('colour', 'c1', 50, 50);
-        const mk = (colour: string, over: Partial<typeof replenishmentProposals.$inferInsert>) =>
+        const mk = (colour: (typeof replenishmentProposals.$inferInsert)['colour'], over: Partial<typeof replenishmentProposals.$inferInsert>) =>
           t.db.insert(replenishmentProposals).values({
             drmsEquipmentId: 'colour', vantageEquipmentId: 1, colour, trigger: 'alarm', status: 'pending', createdAt: new Date('2026-09-21T10:00:00Z'), ...over,
           });
