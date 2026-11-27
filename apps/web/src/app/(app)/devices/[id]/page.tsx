@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import {
   getCounterHistory,
   getDevice,
+  getDeviceParts,
   getDeviceSettings,
   getDeviceShelfOffer,
   getDeviceYield,
@@ -34,6 +35,7 @@ import { counterHistoryRows, groupAlarms, meterChannels, rawString } from '@/com
 import { OtherDealerControl } from '@/components/other-dealer-control';
 import { OrderHistory } from '@/components/order-history';
 import { PageHeader } from '@/components/page-header';
+import { PartsPanel } from '@/components/parts-panel';
 import { PmCard } from '@/components/pm-card';
 import { replenishmentErrorMessage } from '@/components/replenishment';
 import { SelfManagedBadge } from '@/components/self-managed-badge';
@@ -223,7 +225,8 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const shelfOffer = shelfLink ? null : await getDeviceShelfOffer(db, id);
   // Toner yield: the card below, and the "Last ordered … · N pages since" line on each live proposal.
   // Preventive maintenance hangs off the Vantage equipment too; an unlinked device has none.
-  const [tonerYield, yieldCheckMap, pm, pmSettings, dealerControl] = await Promise.all([
+  // Wear parts: DRMS parts alarms + parts fitted on Vantage visits (the 2026-11-26 parts-status plan).
+  const [tonerYield, yieldCheckMap, pm, pmSettings, dealerControl, parts] = await Promise.all([
     getDeviceYield(db, id),
     getYieldCheckForProposals(
       db,
@@ -233,6 +236,11 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
     getPmSettings(db),
     // Who services the device's site for PM; none for a device with no Vantage customer.
     detail.device.vantageCustomerId == null ? Promise.resolve(null) : getOtherDealerControl(db, detail.device.vantageCustomerId),
+    // A parts failure must not take the whole device page down; the card says so instead.
+    getDeviceParts(db, { drmsEquipmentId: id, vantageEquipmentId }, new Date()).catch((err: unknown) => {
+      console.error('getDeviceParts failed', err);
+      return null;
+    }),
   ]);
   const yieldChecks: YieldChecks = Object.fromEntries(yieldCheckMap);
   const orderRefs: Record<number, string | null> = Object.fromEntries(orders.orders.map((o) => [o.vantageId, o.reference]));
@@ -418,6 +426,15 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
               <p className="mt-3 text-[12px] text-muted-foreground">
                 No meter readings collected yet — a device reports these once CSRC has connected.
               </p>
+            )}
+          </Card>
+
+          <Card title="Parts" meta={parts?.familyName ? `${parts.familyName} family` : null}>
+            {/* Toner is the card above, so the panel leaves its bars out here. */}
+            {parts ? (
+              <PartsPanel data={parts} showToner={false} />
+            ) : (
+              <p className="text-[13px] text-muted-foreground">Parts unavailable</p>
             )}
           </Card>
 

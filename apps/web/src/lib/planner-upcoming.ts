@@ -82,6 +82,8 @@ export interface UpcomingSuggestionView {
   customer: string;
   /** Full model and serial, for accessible names and the row's tooltip. */
   machine: string;
+  /** For the row's Copy serial. */
+  serial: string | null;
   /** `customer · short model · overdue 8m · 0.4 mi`. */
   line: string;
   status: PmStatus;
@@ -179,6 +181,7 @@ export function upcomingView(
         id: s.vantageEquipmentId,
         customer: s.customerName ?? 'Unknown customer',
         machine: [s.model, s.serial].filter(Boolean).join(' · ') || 'Unknown machine',
+        serial: s.serial,
         line: suggestionLine(s),
         status: s.status,
         priority: s.priority,

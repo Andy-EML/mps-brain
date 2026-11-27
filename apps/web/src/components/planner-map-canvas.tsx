@@ -33,7 +33,12 @@ export interface MapCall {
 }
 
 /** A single-machine action from a pin's popup. */
-export type PinAction = { kind: 'add'; id: number } | { kind: 'priority'; id: number; on: boolean };
+export type PinAction =
+  | { kind: 'add'; id: number }
+  | { kind: 'priority'; id: number; on: boolean }
+  | { kind: 'dismiss'; id: number }
+  | { kind: 'details'; id: number }
+  | { kind: 'copy'; serial: string };
 
 export interface PlannerMapCanvasProps {
   pins: MapPin[];
@@ -109,6 +114,11 @@ function popupHtml(p: MapPin, drmsId: string | undefined): string {
     `<button type="button" class="${btn}" data-map-act="add" data-id="${id}"${onPlan ? ' disabled' : ''}>${onPlan ? 'On plan' : 'Add to plan'}</button>` +
     `<button type="button" class="${btn}" data-map-act="priority" data-id="${id}" data-on="${p.priority ? 'false' : 'true'}" aria-pressed="${p.priority}">` +
     `<span class="${p.priority ? 'text-critical' : 'text-muted-foreground'}" aria-hidden="true">${p.priority ? '★' : '☆'}</span> Priority</button>` +
+    (p.serial
+      ? `<button type="button" class="${btn}" data-map-act="copy" data-id="${id}" data-serial="${esc(p.serial)}" aria-label="Copy serial ${esc(p.serial)}">Copy serial</button>`
+      : '') +
+    `<button type="button" class="${btn}" data-map-act="dismiss" data-id="${id}">Dismiss</button>` +
+    `<button type="button" class="${btn}" data-map-act="details" data-id="${id}">Device details</button>` +
     `</div>`;
   return `<div class="text-[13px] leading-snug">${lines.join('<br>')}${actions}</div>`;
 }
@@ -255,7 +265,7 @@ function BoxSelect({ boxMode, onBox }: Pick<PlannerMapCanvasProps, 'boxMode' | '
 }
 
 /**
- * The popups' Add to plan / Priority buttons. Leaflet stops clicks inside a popup from bubbling,
+ * The popups' Add to plan / Priority / Copy serial / Dismiss / Device details buttons. Leaflet stops clicks inside a popup from bubbling,
  * so one capture-phase listener on the map container picks them up by their data attributes.
  */
 function PopupActions({ onPinAction }: Pick<PlannerMapCanvasProps, 'onPinAction'>) {
@@ -271,6 +281,15 @@ function PopupActions({ onPinAction }: Pick<PlannerMapCanvasProps, 'onPinAction'
       const id = Number(el.dataset.id);
       if (!Number.isSafeInteger(id) || id <= 0) return;
       e.preventDefault();
+      // Copy, Dismiss (which opens a dialog) and Device details (the side panel) can be used again, so they stay enabled.
+      if (el.dataset.mapAct === 'copy') {
+        if (el.dataset.serial) onAction.current({ kind: 'copy', serial: el.dataset.serial });
+        return;
+      }
+      if (el.dataset.mapAct === 'dismiss' || el.dataset.mapAct === 'details') {
+        onAction.current({ kind: el.dataset.mapAct, id });
+        return;
+      }
       el.disabled = true;
       if (el.dataset.mapAct === 'add') onAction.current({ kind: 'add', id });
       else if (el.dataset.mapAct === 'priority') onAction.current({ kind: 'priority', id, on: el.dataset.on === 'true' });

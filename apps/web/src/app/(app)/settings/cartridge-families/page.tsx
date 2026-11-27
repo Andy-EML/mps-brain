@@ -114,6 +114,11 @@ export default async function CartridgeFamiliesPage({ searchParams }: PageProps<
                           PM every {formatNumber(f.pmIntervalPages)} pages
                         </p>
                       ) : null}
+                      {Object.values(f.partLives).some((v) => v !== null) ? (
+                        <p className="mt-0.5 text-[12px] text-muted-foreground">
+                          Part lives set: {Object.values(f.partLives).filter((v) => v !== null).length} of 7
+                        </p>
+                      ) : null}
                     </td>
                     <td className={CELL}>
                       <ToneBadge tone="muted" dot={false} className="text-[12px]">

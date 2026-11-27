@@ -111,7 +111,7 @@ export default async function PmPlannerPage({ searchParams }: PageProps<'/pm/pla
         pmsInArea={
           // PMs in area (was Upcoming jobs): each engineer's booked calls, today or tomorrow, with nearby PMs; drag onto Planned.
           <aside id="upcoming" aria-labelledby="upcoming-heading" className="min-w-0">
-            <PlannerPmsInArea view={upcomingPanel} />
+            <PlannerPmsInArea view={upcomingPanel} today={upcoming.today} />
           </aside>
         }
         back={back}

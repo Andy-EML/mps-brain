@@ -86,6 +86,7 @@ describe('parseFamilyForm', () => {
       ratedYield: { black: 28000, cyan: 28000, magenta: null, yellow: 28000, waste: 125000 },
       notes: 'TN-328',
       pmIntervalPages: null,
+      partLives: { drumK: null, drumCmy: null, developerK: null, developerCmy: null, transferBelt: null, transferRoller: null, fuser: null },
     });
   });
 
@@ -132,5 +133,27 @@ describe('familyErrorMessage', () => {
   it('turns a known code into its sentence and anything else into a fallback', () => {
     expect(familyErrorMessage('in_use')).toBe('Shelves still use this family. Delete them first; to make it mono, set their cyan, magenta and yellow to 0 first.');
     expect(familyErrorMessage('<script>')).toBe('The family was not saved. Refresh the page and try again.');
+  });
+});
+
+describe('rated part lives', () => {
+  const lives = (rows: [string, string][], kind = 'colour') =>
+    parseFamilyForm(form([['name', 'A'], ['kind', kind], ...rows])).partLives;
+
+  it('blank = null, digits and commas are whole pages', () => {
+    expect(lives([['life-drumK', '100,000'], ['life-fuser', ' 200000 '], ['life-transferBelt', '']])).toEqual({
+      drumK: 100000, drumCmy: null, developerK: null, developerCmy: null, transferBelt: null, transferRoller: null, fuser: 200000,
+    });
+  });
+
+  it('clears the colour drum and developer lives of a mono family', () => {
+    const l = lives([['life-drumK', '90000'], ['life-drumCmy', '50000'], ['life-developerCmy', '50000']], 'mono');
+    expect(l).toMatchObject({ drumK: 90000, drumCmy: null, developerCmy: null });
+  });
+
+  it('refuses zero, decimals and words', () => {
+    for (const raw of ['0', '1.5', 'lots', '-3']) {
+      expect(codeOf(() => lives([['life-fuser', raw]]))).toBe('bad_value');
+    }
   });
 });

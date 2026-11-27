@@ -32,9 +32,55 @@ export async function loadCombinedMeters(
   vantageEquipmentIds: number[],
   now: Date = new Date(),
 ): Promise<Map<number, YieldMeterPoint[]>> {
+  return seriesOf(await loadMergedSnapshots(db, vantageEquipmentIds, now), combinedValue);
+}
+
+/**
+ * The colour (`Full Color:Total`) page meter history per Vantage equipment id, oldest first, from the
+ * same merged sources as {@link loadCombinedMeters}. A machine with no colour meter is absent.
+ */
+export async function loadColourMeters(
+  db: Db,
+  vantageEquipmentIds: number[],
+  now: Date = new Date(),
+): Promise<Map<number, YieldMeterPoint[]>> {
+  return seriesOf(await loadMergedSnapshots(db, vantageEquipmentIds, now), (s) => s.colour);
+}
+
+/** Combined and colour meter series from one load of the merged snapshots (see the two loaders above). */
+export async function loadMeterSeries(
+  db: Db,
+  vantageEquipmentIds: number[],
+  now: Date = new Date(),
+): Promise<{ combined: Map<number, YieldMeterPoint[]>; colour: Map<number, YieldMeterPoint[]> }> {
+  const snaps = await loadMergedSnapshots(db, vantageEquipmentIds, now);
+  return { combined: seriesOf(snaps, combinedValue), colour: seriesOf(snaps, (s) => s.colour) };
+}
+
+function seriesOf(
+  snaps: Map<number, MeterSnapshot[]>,
+  pick: (s: Pick<MeterSnapshot, 'black' | 'colour'>) => number | null,
+): Map<number, YieldMeterPoint[]> {
+  const out = new Map<number, YieldMeterPoint[]>();
+  for (const [id, list] of snaps) {
+    const series: YieldMeterPoint[] = [];
+    for (const s of list) {
+      const value = pick(s);
+      if (value !== null) series.push({ at: s.at, value });
+    }
+    if (series.length > 0) out.set(id, series.sort((a, b) => a.at.getTime() - b.at.getTime()));
+  }
+  return out;
+}
+
+async function loadMergedSnapshots(
+  db: Db,
+  vantageEquipmentIds: number[],
+  now: Date,
+): Promise<Map<number, MeterSnapshot[]>> {
   const since = new Date(now.getTime());
   since.setUTCMonth(since.getUTCMonth() - DRMS_HISTORY_MONTHS);
-  const out = new Map<number, YieldMeterPoint[]>();
+  const out = new Map<number, MeterSnapshot[]>();
   const ids = [...new Set(vantageEquipmentIds)];
   if (ids.length === 0) return out;
 
@@ -106,7 +152,7 @@ export async function loadCombinedMeters(
     const vp = points.get(id) ?? [];
     if (vp.some((p) => p.typeId === VANTAGE_BLACK_A3_TYPE)) continue;
     const merged = mergeSnapshots(drmsSnaps.get(id) ?? [], vantageSnapshots(vp));
-    const series: YieldMeterPoint[] = [];
+    const series: MeterSnapshot[] = [];
     // On a machine that has a colour meter, a snapshot missing it must not read as black only (a false
     // drop would look like a meter reset): carry the last known colour forward, or skip the point.
     const hasColour = merged.some((s) => s.colour !== null);
@@ -118,10 +164,9 @@ export async function loadCombinedMeters(
         if (lastColour === null) continue;
         snap = { ...s, colour: lastColour };
       }
-      const value = combinedValue(snap);
-      if (value !== null) series.push({ at: s.at, value });
+      series.push(snap);
     }
-    if (series.length > 0) out.set(id, series.sort((a, b) => a.at.getTime() - b.at.getTime()));
+    if (series.length > 0) out.set(id, series);
   }
   return out;
 }

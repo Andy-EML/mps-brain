@@ -1,16 +1,21 @@
 'use client';
 
-import { Wrench } from 'lucide-react';
-import { useCallback, useMemo, useState, useTransition } from 'react';
+import { Wrench, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { LatLng, MapPin, UpcomingCall, UpcomingEngineer } from '@mps/db/queries';
 import { cn } from 'cn';
-import { mapAddToPlanAction, mapAskEngineerAction, mapSetPriorityAction, type MapActionResult } from '@/app/(app)/pm/planner/map-actions';
+import { mapAddToPlanAction, mapAskEngineerAction, mapDismissAction, mapSetPriorityAction, type MapActionResult } from '@/app/(app)/pm/planner/map-actions';
 import type { MapCall, PinAction } from '@/components/planner-map-canvas';
+import { writeClipboard } from '@/components/copy-text';
+import { DismissFields } from '@/components/pm-dismiss-fields';
+import { LazyPartsPanel } from '@/components/lazy-parts-panel';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { deviceHref } from '@/lib/device-origin';
 import { formatDayMonth } from '@/lib/format';
 import { MAP_CONFIRM_OVER, MAP_IDS_MAX, farFromCall, pinDueText, selectInBox, unlocatedText, type Box } from '@/lib/planner-map';
 
@@ -125,13 +130,44 @@ export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMi
     },
     [router],
   );
+  const [dismissing, setDismissing] = useState<MapPin | null>(null);
+  // The popup is an HTML string, so its Device details open in the side panel (parts load on demand).
+  const [details, setDetails] = useState<MapPin | null>(null);
+  const detailsRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (details) detailsRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [details]);
   const onPinAction = useCallback(
-    (a: PinAction) =>
+    (a: PinAction) => {
+      if (a.kind === 'details') {
+        const pin = pinsById.get(a.id);
+        if (pin) setDetails(pin);
+        return;
+      }
+      if (a.kind === 'copy') {
+        void writeClipboard(a.serial).then((ok) => (ok ? toast.success(`Serial ${a.serial} copied`) : toast.error("Couldn't copy — select it instead")));
+        return;
+      }
+      if (a.kind === 'dismiss') {
+        const pin = pinsById.get(a.id);
+        if (pin) setDismissing(pin);
+        return;
+      }
       startTransition(async () => {
         await save(() => (a.kind === 'add' ? mapAddToPlanAction([a.id]) : mapSetPriorityAction(a.id, a.on)));
-      }),
-    [save],
+      });
+    },
+    [save, pinsById],
   );
+  const submitDismiss = (formData: FormData) =>
+    startTransition(async () => {
+      if (await save(() => mapDismissAction(formData))) {
+        const dismissedId = Number(formData.get('vantageEquipmentId'));
+        setDismissing(null);
+        setSelected((cur) => cur.filter((id) => id !== dismissedId));
+        setDetails((cur) => (cur && cur.vantageEquipmentId === dismissedId ? null : cur));
+      }
+    });
 
   const count = selectedPins.length;
   const tooMany = count > MAP_IDS_MAX;
@@ -193,6 +229,32 @@ export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMi
       </section>
 
       <aside className="min-w-0 space-y-4">
+        {details ? (
+          <section ref={detailsRef} aria-labelledby="map-details-heading" className="scroll-mt-4 rounded-xl border border-line bg-card p-4">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <h2 id="map-details-heading" className="text-[14px] font-semibold break-words">
+                  {details.customerName ?? 'Unknown customer'}
+                </h2>
+                <p className="text-[12px] break-words text-muted-foreground">
+                  {[details.town, details.model, details.serial].filter(Boolean).join(' · ')}
+                </p>
+                {deviceIds[details.vantageEquipmentId] ? (
+                  <Link
+                    href={deviceHref(deviceIds[details.vantageEquipmentId]!, 'pm-planner', '/pm/planner')}
+                    className="text-[12px] font-medium text-brand hover:underline"
+                  >
+                    Device page
+                  </Link>
+                ) : null}
+              </div>
+              <Button variant="ghost" size="icon-sm" onClick={() => setDetails(null)} aria-label="Close device details" title="Close">
+                <X aria-hidden />
+              </Button>
+            </div>
+            <LazyPartsPanel key={details.vantageEquipmentId} vantageEquipmentId={details.vantageEquipmentId} className="mt-3" />
+          </section>
+        ) : null}
         <section aria-labelledby="map-selection-heading" className="rounded-xl border border-line bg-card p-4">
           <h2 id="map-selection-heading" className="text-[14px] font-semibold">
             Selected: {count}
@@ -325,6 +387,35 @@ export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMi
               {confirm?.mode === 'ask' ? 'Ask engineer' : 'Add to plan'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dismissing !== null} onOpenChange={(open) => (open ? null : setDismissing(null))}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Dismiss PM?</DialogTitle>
+            <DialogDescription>
+              {dismissing ? [dismissing.customerName ?? 'Unknown customer', dismissing.model, dismissing.serial].filter(Boolean).join(' · ') : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {dismissing ? (
+            <form
+              key={dismissing.vantageEquipmentId}
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitDismiss(new FormData(e.currentTarget));
+              }}
+            >
+              <input type="hidden" name="vantageEquipmentId" value={dismissing.vantageEquipmentId} />
+              <DismissFields idPrefix={`map-dismiss-${dismissing.vantageEquipmentId}`} today={today} />
+              <DialogFooter className="mt-4">
+                <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+                <Button type="submit" disabled={pending}>
+                  {pending ? 'Saving…' : 'Dismiss'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

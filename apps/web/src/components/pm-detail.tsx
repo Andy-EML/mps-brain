@@ -30,6 +30,8 @@ export interface PmDetailProps {
   timeCapMonths: number;
   /** Extra classes for the wrapper. */
   className?: string;
+  /** Shown between the stats row and the visits (the `/pm` row's Parts panel). */
+  afterSummary?: React.ReactNode;
 }
 
 /**
@@ -38,10 +40,11 @@ export interface PmDetailProps {
  * since / % used / estimated due / time cap, and the last visits with the engineer's notes and how
  * each was judged. Nothing about toner, orders or yield. No hooks, so it renders on either side.
  */
-export function PmDetail({ row, qualifyingMinutes, timeCapMonths, className }: PmDetailProps) {
+export function PmDetail({ row, qualifyingMinutes, timeCapMonths, className, afterSummary }: PmDetailProps) {
   return (
     <div className={className}>
       <Summary row={row} timeCapMonths={timeCapMonths} />
+      {afterSummary}
       <VisitTable row={row} qualifyingMinutes={qualifyingMinutes} />
     </div>
   );

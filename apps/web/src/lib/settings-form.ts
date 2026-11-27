@@ -88,6 +88,7 @@ const SETTINGS_ERRORS: Record<SettingsErrorCode | 'too_many', string> = {
   invalid_planner_setting: 'A planner setting is out of range or invalid — check the distances, retention days, dealer names and patch districts (such as GU14).',
   invalid_other_dealer: 'Enter the other dealer’s name (up to 60 characters).',
   call_gone: 'That call is no longer in the diary — refresh the map',
+  invalid_part_life: 'A rated part life is a whole number of pages, 1 or more.',
   too_many: 'That is too many devices to pick one by one — use “Select all matching” instead.',
 };
 

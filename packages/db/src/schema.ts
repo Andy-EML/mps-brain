@@ -673,6 +673,14 @@ export const cartridgeFamilies = pgTable('cartridge_families', {
     ratedYieldWaste: integer('rated_yield_waste'),
   /** Page interval between preventive-maintenance visits; null when not set. */
   pmIntervalPages: integer('pm_interval_pages'),
+  /** Rated page lives of wear parts; null when unknown. Drum and developer are per unit: black, and each colour. */
+  lifeDrumK: integer('life_drum_k'),
+  lifeDrumCmy: integer('life_drum_cmy'),
+  lifeDeveloperK: integer('life_developer_k'),
+  lifeDeveloperCmy: integer('life_developer_cmy'),
+  lifeTransferBelt: integer('life_transfer_belt'),
+  lifeTransferRoller: integer('life_transfer_roller'),
+  lifeFuser: integer('life_fuser'),
   notes: text('notes'),
   updatedBy: integer('updated_by').references(() => users.id),
   updatedAt: ts('updated_at').notNull().defaultNow(),

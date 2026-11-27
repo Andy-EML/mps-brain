@@ -1,9 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { SettingsError, planFromMap, setPriority } from '@mps/db/queries';
+import { SettingsError, dismissPm, planFromMap, setPriority } from '@mps/db/queries';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { parseDismissForm } from '@/lib/pm-action-form';
 import { mapResultText, parseMapIds, parsePriorityInput, parseWorkUnitId } from '@/lib/planner-map';
 
 /**
@@ -56,6 +57,28 @@ export async function mapSetPriorityAction(id: number, on: boolean): Promise<Map
   } catch (err) {
     if (err instanceof SettingsError) return { ok: false, error: err.message };
     console.error('[pm-map] priority failed', err);
+    return { ok: false, error: "Couldn't save — try again" };
+  }
+}
+
+/**
+ * The map popup's Dismiss for one machine: same form fields and rules as the `/pm` row's Dismiss
+ * (`parseDismissForm`), but returns a result for the toast instead of redirecting to `/pm`.
+ */
+export async function mapDismissAction(formData: FormData): Promise<MapActionResult> {
+  const user = await requireUser();
+  try {
+    const f = parseDismissForm(formData, new Date());
+    await dismissPm(getDb(), { ...f, userId: user.userId });
+    revalidatePath('/pm/planner');
+    revalidatePath('/pm');
+    return {
+      ok: true,
+      text: f.reason === 'serviced_outside' ? 'Marked serviced — PM clock restarted' : `Dismissed for ${f.snoozeDays} days`,
+    };
+  } catch (err) {
+    if (err instanceof SettingsError) return { ok: false, error: err.message };
+    console.error('[pm-map] dismiss failed', err);
     return { ok: false, error: "Couldn't save — try again" };
   }
 }

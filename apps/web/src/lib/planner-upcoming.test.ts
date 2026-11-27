@@ -194,6 +194,7 @@ describe('upcomingView', () => {
     ]);
     expect(c1!.others[0]!.machine).toBe('Konica Minolta C300i Digital Colour Photocopier · A1');
     expect(c1!.others[0]!.priority).toBe(true);
+    expect(c1!.others[0]!.serial).toBe('A1');
     expect(c2).toMatchObject({ customer: 'Unknown customer', customerLink: null, locationNote: 'No location for this call', category: 'Site visit', equipment: null });
     expect(c2!.summary).toBe('09:30 Unknown customer · none nearby');
     expect(c2!.siteText).toBeNull();

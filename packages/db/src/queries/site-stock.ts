@@ -1,4 +1,4 @@
-import { REPLENISH_COLOURS, deviceDisplayName, type ReplenishColour, type ShelfConsumableCounts } from '@mps/core';
+import { REPLENISH_COLOURS, deviceDisplayName, type PartLives, type ReplenishColour, type ShelfConsumableCounts } from '@mps/core';
 import { and, asc, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import {
@@ -314,6 +314,8 @@ export interface FamilySummary {
   shelves: number;
   /** Pages between PM visits for this family's machines; null uses the global interval. */
   pmIntervalPages: number | null;
+  /** Rated wear-part lives in pages (drum / developer split black and colour); null when unknown. */
+  partLives: PartLives;
 }
 
 export async function listFamilies(db: Db): Promise<FamilySummary[]> {
@@ -339,6 +341,15 @@ export async function listFamilies(db: Db): Promise<FamilySummary[]> {
       notes: f.notes,
       shelves: shelfBy.get(f.id) ?? 0,
       pmIntervalPages: f.pmIntervalPages,
+      partLives: {
+        drumK: f.lifeDrumK,
+        drumCmy: f.lifeDrumCmy,
+        developerK: f.lifeDeveloperK,
+        developerCmy: f.lifeDeveloperCmy,
+        transferBelt: f.lifeTransferBelt,
+        transferRoller: f.lifeTransferRoller,
+        fuser: f.lifeFuser,
+      },
     };
   });
 }

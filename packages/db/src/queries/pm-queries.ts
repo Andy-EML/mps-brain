@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, exists, inArray, isNull, sql } from 'drizzle-orm';
-import { postcodeOutward } from '@mps/core';
+import { PART_LIFE_KEYS, postcodeOutward, type PartLives } from '@mps/core';
 import type { Db } from '../client';
 import { getAppState, setAppState } from '../app-state';
 import {
@@ -111,6 +111,45 @@ export async function setFamilyPmInterval(db: Db, familyId: number, pages: numbe
     throw new SettingsError('The PM interval must be a whole number of pages of at least 1.', 'invalid_pm_setting');
   }
   await db.update(cartridgeFamilies).set({ pmIntervalPages: pages, updatedAt: new Date() }).where(eq(cartridgeFamilies.id, familyId));
+}
+
+/**
+ * A family's rated part lives (pages); a missing key leaves that life unchanged, null clears it. With a
+ * `userId` the change is written to the audit log (`family.part_lives`).
+ */
+export async function setFamilyPartLives(
+  db: Db,
+  familyId: number,
+  lives: Partial<PartLives>,
+  userId: number | null = null,
+): Promise<void> {
+  const column = {
+    drumK: 'lifeDrumK',
+    drumCmy: 'lifeDrumCmy',
+    developerK: 'lifeDeveloperK',
+    developerCmy: 'lifeDeveloperCmy',
+    transferBelt: 'lifeTransferBelt',
+    transferRoller: 'lifeTransferRoller',
+    fuser: 'lifeFuser',
+  } as const satisfies Record<(typeof PART_LIFE_KEYS)[number], string>;
+  const set: Partial<Record<(typeof column)[keyof typeof column], number | null>> = {};
+  for (const key of PART_LIFE_KEYS) {
+    const v = lives[key];
+    if (v === undefined) continue;
+    if (v !== null && (!Number.isInteger(v) || v < 1)) {
+      throw new SettingsError('A rated part life is a whole number of pages, 1 or more.', 'invalid_part_life');
+    }
+    set[column[key]] = v;
+  }
+  if (Object.keys(set).length === 0) return;
+  await db.update(cartridgeFamilies).set({ ...set, updatedAt: new Date() }).where(eq(cartridgeFamilies.id, familyId));
+  if (userId !== null) {
+    const changed: Partial<PartLives> = {};
+    for (const key of PART_LIFE_KEYS) if (lives[key] !== undefined) changed[key] = lives[key] as number | null;
+    await db
+      .insert(auditLog)
+      .values({ userId, action: 'family.part_lives', entity: 'cartridge_family', entityIds: [familyId], details: { lives: changed } });
+  }
 }
 
 export interface PmRow {
@@ -261,7 +300,7 @@ function usedParts(raw: unknown): VisitUnit['parts'] {
   return out;
 }
 
-async function loadVisits(db: Db, ids: number[]): Promise<Map<number, VisitUnit[]>> {
+export async function loadVisits(db: Db, ids: number[]): Promise<Map<number, VisitUnit[]>> {
   const out = new Map<number, VisitUnit[]>();
   if (ids.length === 0) return out;
   const v = vantageWorkVisits;

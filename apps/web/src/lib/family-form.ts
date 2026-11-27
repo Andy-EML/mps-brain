@@ -1,4 +1,4 @@
-import { REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
+import { PART_LIFE_KEYS, REPLENISH_COLOURS, type PartLives, type ReplenishColour } from '@mps/core';
 import { SiteStockError, type SaveFamilyArgs, type SiteStockErrorCode } from '@mps/db/queries';
 import { familyCarries, parseModels } from './family-fields';
 
@@ -12,7 +12,10 @@ import { familyCarries, parseModels } from './family-fields';
  * - `yield-<consumable>` for each consumable: blank for "not known", otherwise whole pages;
  * - `pmInterval`: pages between preventive-maintenance visits for this family; blank uses the
  *   global interval from `/settings/pm`. Saved separately (`setFamilyPmInterval`), so it rides
- *   alongside the `saveFamily` arguments as `pmIntervalPages`.
+ *   alongside the `saveFamily` arguments as `pmIntervalPages`;
+ * - `life-<key>` for each rated part life (drumK, drumCmy, developerK, developerCmy, transferBelt,
+ *   transferRoller, fuser): blank for "not known", otherwise whole pages. Saved separately
+ *   (`setFamilyPartLives`), so they ride alongside as `partLives`.
  *
  * Pure. Throws `SiteStockError` with the queries' own codes, so the action handles both alike;
  * `saveFamily` validates again.
@@ -51,7 +54,17 @@ export function parsePmInterval(raw: string): number | null {
   return Number(text);
 }
 
-export type ParsedFamilyForm = Omit<SaveFamilyArgs, 'userId' | 'now'> & { pmIntervalPages: number | null };
+/** Blank is "not known"; otherwise whole pages, 1 or more (`120,000` is fine). */
+export function parsePartLife(raw: string): number | null {
+  const text = raw.trim().replace(/[,\s]/g, '');
+  if (text === '') return null;
+  if (!/^\d{1,9}$/.test(text) || Number(text) < 1) {
+    throw new SiteStockError('A rated part life is a whole number of pages, 1 or more.', 'bad_value');
+  }
+  return Number(text);
+}
+
+export type ParsedFamilyForm = Omit<SaveFamilyArgs, 'userId' | 'now'> & { pmIntervalPages: number | null; partLives: PartLives };
 
 export function parseFamilyForm(formData: FormData): ParsedFamilyForm {
   const isColour = text(formData, 'kind') !== 'mono';
@@ -64,6 +77,12 @@ export function parseFamilyForm(formData: FormData): ParsedFamilyForm {
     ratedYield[c] = familyCarries(isColour, c) ? parseYield(text(formData, `yield-${c}`)) : null;
   }
 
+  const partLives = {} as PartLives;
+  for (const k of PART_LIFE_KEYS) {
+    // A mono family has no colour drums or developers, so those lives are cleared whatever the form says.
+    partLives[k] = !isColour && (k === 'drumCmy' || k === 'developerCmy') ? null : parsePartLife(text(formData, `life-${k}`));
+  }
+
   const id = parseFamilyId(formData);
   return {
     ...(id === undefined ? {} : { id }),
@@ -73,12 +92,13 @@ export function parseFamilyForm(formData: FormData): ParsedFamilyForm {
     ratedYield,
     notes: text(formData, 'notes'),
     pmIntervalPages: parsePmInterval(text(formData, 'pmInterval')),
+    partLives,
   };
 }
 
 const FAMILY_ERRORS: Record<SiteStockErrorCode, string> = {
   not_found: 'That family no longer exists. Refresh the page and try again.',
-  bad_value: 'Check the form: a family needs a name, and a rated yield or PM interval is a whole number of pages, 1 or more.',
+  bad_value: 'Check the form: a family needs a name, and a rated yield, part life or PM interval is a whole number of pages, 1 or more.',
   duplicate: 'Another family already has that name, or one of those models already belongs to another family.',
   in_use: 'Shelves still use this family. Delete them first; to make it mono, set their cyan, magenta and yellow to 0 first.',
   empty: 'Nothing was changed.',

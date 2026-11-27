@@ -6,9 +6,13 @@ import { useRouter } from 'next/navigation';
 import { ChevronRight, GripVertical, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from 'cn';
-import { mapAddToPlanAction, mapAskEngineerAction, type MapActionResult } from '@/app/(app)/pm/planner/map-actions';
+import { mapAddToPlanAction, mapAskEngineerAction, mapDismissAction, type MapActionResult } from '@/app/(app)/pm/planner/map-actions';
+import { writeClipboard } from '@/components/copy-text';
+import { LazyPartsPanel } from '@/components/lazy-parts-panel';
+import { DismissFields } from '@/components/pm-dismiss-fields';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PM_IDS_MIME, dayPanel, dragPayload, type DayEngineer } from '@/lib/planner-pms-in-area';
 // Types only: the view model is built on the server (`upcomingView`), so no database value reaches the browser.
 import type { UpcomingCallView, UpcomingPanelView, UpcomingSuggestionView } from '@/lib/planner-upcoming';
@@ -59,6 +63,8 @@ function startDrag(e: DragEvent, ids: number[], subject: string) {
 export interface PlannerPmsInAreaProps {
   /** Both days; the Today / Tomorrow switch picks one. */
   view: UpcomingPanelView;
+  /** Today in London as `yyyy-mm-dd`: the Dismiss dialog's serviced date default and latest value. */
+  today: string;
 }
 
 /**
@@ -70,9 +76,10 @@ export interface PlannerPmsInAreaProps {
  * onto Planned, or use *Add to plan* / *Ask <engineer>*. Machines already on the board show their
  * column (a Planned one can still be asked about). Recorded in this app only — the office rings the engineer; nothing goes to Vantage.
  */
-export function PlannerPmsInArea({ view }: PlannerPmsInAreaProps) {
+export function PlannerPmsInArea({ view, today }: PlannerPmsInAreaProps) {
   const [day, setDay] = useState<Day>('today');
   const { save, pending } = usePlannerSave();
+  const [dismissing, setDismissing] = useState<UpcomingSuggestionView | null>(null);
   const panel = dayPanel(view, day);
 
   return (
@@ -108,10 +115,11 @@ export function PlannerPmsInArea({ view }: PlannerPmsInAreaProps) {
       ) : (
         <div className="flex flex-col divide-y divide-line">
           {panel.engineers.map((e) => (
-            <EngineerBlock key={e.key} engineer={e} save={save} pending={pending} />
+            <EngineerBlock key={e.key} engineer={e} save={save} pending={pending} onDismiss={setDismissing} />
           ))}
         </div>
       )}
+      <DismissDialog machine={dismissing} today={today} onClose={() => setDismissing(null)} />
     </section>
   );
 }
@@ -119,9 +127,11 @@ export function PlannerPmsInArea({ view }: PlannerPmsInAreaProps) {
 interface ActionProps {
   save: (call: () => Promise<MapActionResult>) => void;
   pending: boolean;
+  /** Opens the panel's Dismiss dialog for a machine. */
+  onDismiss: (s: UpcomingSuggestionView) => void;
 }
 
-function EngineerBlock({ engineer: e, save, pending }: { engineer: DayEngineer } & ActionProps) {
+function EngineerBlock({ engineer: e, save, pending, onDismiss }: { engineer: DayEngineer } & ActionProps) {
   const [open, setOpen] = useState(true);
   const headingId = `upcoming-eng-${e.key}`;
   const listId = useId();
@@ -145,7 +155,7 @@ function EngineerBlock({ engineer: e, save, pending }: { engineer: DayEngineer }
       {open ? (
         <ol id={listId} className="mt-1 flex flex-col gap-0.5">
           {e.calls.map((c) => (
-            <CallRow key={c.workUnitId} call={c} engineer={e} save={save} pending={pending} />
+            <CallRow key={c.workUnitId} call={c} engineer={e} save={save} pending={pending} onDismiss={onDismiss} />
           ))}
         </ol>
       ) : null}
@@ -153,7 +163,7 @@ function EngineerBlock({ engineer: e, save, pending }: { engineer: DayEngineer }
   );
 }
 
-function CallRow({ call: c, engineer, save, pending }: { call: UpcomingCallView; engineer: DayEngineer } & ActionProps) {
+function CallRow({ call: c, engineer, save, pending, onDismiss }: { call: UpcomingCallView; engineer: DayEngineer } & ActionProps) {
   // Collapsed to start; a click toggles it and it stays that way.
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
@@ -201,9 +211,9 @@ function CallRow({ call: c, engineer, save, pending }: { call: UpcomingCallView;
             </p>
           ) : null}
           <ul aria-label={`PMs near ${c.customer} at ${c.time}`} className="mt-0.5 flex flex-col gap-0.5">
-            {c.site.length > 0 && c.siteText ? <SiteGroup call={c} engineer={engineer} save={save} pending={pending} /> : null}
+            {c.site.length > 0 && c.siteText ? <SiteGroup call={c} engineer={engineer} save={save} pending={pending} onDismiss={onDismiss} /> : null}
             {c.others.map((s) => (
-              <MachineRow key={s.id} s={s} call={c} engineer={engineer} save={save} pending={pending} />
+              <MachineRow key={s.id} s={s} call={c} engineer={engineer} save={save} pending={pending} onDismiss={onDismiss} />
             ))}
           </ul>
         </div>
@@ -213,7 +223,7 @@ function CallRow({ call: c, engineer, save, pending }: { call: UpcomingCallView;
 }
 
 /** The machines at the call's own site, folded into one line with Add all / Ask for all. */
-function SiteGroup({ call: c, engineer, save, pending }: { call: UpcomingCallView; engineer: DayEngineer } & ActionProps) {
+function SiteGroup({ call: c, engineer, save, pending, onDismiss }: { call: UpcomingCallView; engineer: DayEngineer } & ActionProps) {
   const [open, setOpen] = useState(false);
   const listId = useId();
   const addIds = c.site.filter((s) => s.canAdd).map((s) => s.id);
@@ -258,7 +268,7 @@ function SiteGroup({ call: c, engineer, save, pending }: { call: UpcomingCallVie
       {open ? (
         <ul id={listId} aria-label={subject} className="ml-4 flex flex-col gap-0.5 border-l border-line pl-1">
           {c.site.map((s) => (
-            <MachineRow key={s.id} s={s} call={c} engineer={engineer} save={save} pending={pending} />
+            <MachineRow key={s.id} s={s} call={c} engineer={engineer} save={save} pending={pending} onDismiss={onDismiss} />
           ))}
         </ul>
       ) : null}
@@ -272,9 +282,14 @@ function MachineRow({
   engineer,
   save,
   pending,
+  onDismiss,
 }: { s: UpcomingSuggestionView; call: UpcomingCallView; engineer: DayEngineer } & ActionProps) {
   const who = `${s.customer}, ${s.machine}`;
   const draggable = s.canAdd && !pending;
+  // Device details: rendered on first open and kept mounted, so parts load once per machine.
+  const [open, setOpen] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const detailsId = useId();
   return (
     <li>
       <div
@@ -289,7 +304,20 @@ function MachineRow({
       >
         <GripVertical aria-hidden="true" className={cn('size-3.5 shrink-0 text-muted-foreground', !draggable && 'invisible')} />
         {s.priority ? <Star role="img" aria-label="Priority" className="size-3 shrink-0 fill-current text-warn" /> : null}
-        <span className={cn('min-w-0 flex-1 truncate', s.whenInArea && 'italic')}>{s.line}</span>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={detailsId}
+          title="Device details"
+          onClick={() => {
+            setOpen((o) => !o);
+            setRendered(true);
+          }}
+          className="flex min-w-0 flex-1 items-center gap-0.5 rounded text-left hover:underline"
+        >
+          <span className={cn('min-w-0 truncate', s.whenInArea && 'italic')}>{s.line}</span>
+          <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
+        </button>
         {s.onBoard !== null ? <span className="shrink-0 text-[11px] text-brand">{s.onBoard}</span> : null}
         {s.canAdd ? (
           <SmallButton label="Add to plan" aria={`Add to plan: ${who}`} disabled={pending} onClick={() => save(() => mapAddToPlanAction([s.id]))} />
@@ -304,7 +332,84 @@ function MachineRow({
           />
         ) : null}
       </div>
+      {rendered ? (
+        <div id={detailsId} hidden={!open} className="mt-0.5 mb-1 ml-5 rounded-md border border-line bg-card px-2.5 py-2">
+          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
+            <span className="min-w-0 flex-1 break-words text-muted-foreground">{s.machine}</span>
+            <span className="flex shrink-0 items-center gap-1">
+              {s.serial ? <CopySerialButton serial={s.serial} /> : null}
+              <SmallButton label="Dismiss" aria={`Dismiss: ${who}`} disabled={pending} onClick={() => onDismiss(s)} />
+            </span>
+          </div>
+          <LazyPartsPanel vantageEquipmentId={s.id} />
+        </div>
+      ) : null}
     </li>
+  );
+}
+
+/** Copy serial, with a toast saying it worked (as the map popup's). */
+function CopySerialButton({ serial }: { serial: string }) {
+  return (
+    <SmallButton
+      label="Copy serial"
+      aria={`Copy serial ${serial}`}
+      disabled={false}
+      onClick={() => {
+        void writeClipboard(serial).then((ok) => (ok ? toast.success(`Serial ${serial} copied`) : toast.error("Couldn't copy — select it instead")));
+      }}
+    />
+  );
+}
+
+/** Dismiss for one machine from the panel: the `/pm` Dismiss fields in a dialog, saved by `mapDismissAction`. */
+function DismissDialog({ machine, today, onClose }: { machine: UpcomingSuggestionView | null; today: string; onClose: () => void }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const submit = (formData: FormData) =>
+    startTransition(async () => {
+      let r: MapActionResult;
+      try {
+        r = await mapDismissAction(formData);
+      } catch {
+        toast.error(SAVE_FAILED);
+        return;
+      }
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      toast.success(r.text);
+      onClose();
+      router.refresh();
+    });
+  return (
+    <Dialog open={machine !== null} onOpenChange={(o) => (o ? null : onClose())}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Dismiss PM?</DialogTitle>
+          <DialogDescription>{machine ? `${machine.customer} · ${machine.machine}` : ''}</DialogDescription>
+        </DialogHeader>
+        {machine ? (
+          <form
+            key={machine.id}
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit(new FormData(e.currentTarget));
+            }}
+          >
+            <input type="hidden" name="vantageEquipmentId" value={machine.id} />
+            <DismissFields idPrefix={`area-dismiss-${machine.id}`} today={today} />
+            <DialogFooter className="mt-4">
+              <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+              <Button type="submit" disabled={pending}>
+                {pending ? 'Saving…' : 'Dismiss'}
+              </Button>
+            </DialogFooter>
+          </form>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

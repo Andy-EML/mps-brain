@@ -4,7 +4,7 @@ import { useId, useState, type KeyboardEvent } from 'react';
 import { useFormStatus } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { Pencil, Plus, Trash2, X } from 'lucide-react';
-import { REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
+import { PART_LIFE_KEYS, PART_LIFE_LABELS, REPLENISH_COLOURS, type PartLifeKey, type ReplenishColour } from '@mps/core';
 import type { FamilySummary } from '@mps/db/queries';
 import { cn } from 'cn';
 import { deleteFamilyAction, saveFamilyAction } from '@/app/(app)/settings/cartridge-families/actions';
@@ -69,6 +69,7 @@ interface FamilyState {
   models: string[];
   yields: Record<ReplenishColour, string>;
   pmInterval: string;
+  lives: Record<PartLifeKey, string>;
   notes: string;
 }
 
@@ -78,12 +79,18 @@ function initialState(family: FamilySummary | undefined): FamilyState {
     const v = family?.ratedYield[c];
     yields[c] = v === undefined ? '' : String(v);
   }
+  const lives = {} as Record<PartLifeKey, string>;
+  for (const k of PART_LIFE_KEYS) {
+    const v = family?.partLives[k];
+    lives[k] = v == null ? '' : String(v);
+  }
   return {
     name: family?.name ?? '',
     isColour: family?.isColour ?? true,
     models: family?.models ?? [],
     yields,
     pmInterval: family?.pmIntervalPages == null ? '' : String(family.pmIntervalPages),
+    lives,
     notes: family?.notes ?? '',
   };
 }
@@ -318,6 +325,32 @@ export function FamilyDialog({ family, unmapped, error }: FamilyDialogProps) {
               in PM settings.
             </p>
           </div>
+
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="text-sm font-medium">
+              Rated part lives (pages) <span className="font-normal text-muted-foreground">(optional)</span>
+            </legend>
+            <p className="text-xs text-muted-foreground">
+              Used for the estimated life left on the device page, PM list and planner. Leave blank when not known.
+            </p>
+            <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3">
+              {PART_LIFE_KEYS.filter((k) => state.isColour || (k !== 'drumCmy' && k !== 'developerCmy')).map((k) => (
+                <label key={k} className="flex flex-col gap-1 text-[12px] text-muted-foreground">
+                  {PART_LIFE_LABELS[k]}
+                  <Input
+                    name={`life-${k}`}
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={state.lives[k]}
+                    onChange={(e) => setState((s) => ({ ...s, lives: { ...s.lives, [k]: e.target.value } }))}
+                    className="h-8 tabular"
+                  />
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor={ids.notes} className="text-sm font-medium">

@@ -9,6 +9,7 @@ export * from './customer-status';
 export * from './customers';
 export * from './device';
 export * from './device-colour';
+export * from './device-parts';
 export * from './device-selection';
 export * from './devices';
 export * from './fleet';

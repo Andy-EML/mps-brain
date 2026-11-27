@@ -176,6 +176,13 @@
       "when": 1795455088238,
       "tag": "0024_recount_districts",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795689031644,
+      "tag": "0025_parts_life",
+      "breakpoints": true
     }
   ]
 }

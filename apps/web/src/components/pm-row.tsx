@@ -5,7 +5,7 @@ import { useFormStatus } from 'react-dom';
 import Link from 'next/link';
 import { ChevronRight, Ellipsis, Star } from 'lucide-react';
 // Types only from @mps/db: its values would pull the database client into the browser bundle.
-import type { DismissReason, PmRow as PmRowData } from '@mps/db/queries';
+import type { PmRow as PmRowData } from '@mps/db/queries';
 import { cn } from 'cn';
 import {
   addToPlanAction,
@@ -19,12 +19,8 @@ import {
 import { PmDetail } from '@/components/pm-detail';
 import { PmOtherDealerDialog } from '@/components/pm-other-dealer-dialog';
 import {
-  DEFAULT_SNOOZE_OPTION,
-  DISMISS_REASONS,
-  SNOOZE_OPTIONS,
   actionByText,
   actionText,
-  dismissReasonLabel,
   lastVisitText,
   pagesText,
   pctText,
@@ -32,6 +28,8 @@ import {
   statusTone,
 } from '@/components/pm-status';
 import { CopyText } from '@/components/copy-text';
+import { DismissFields } from '@/components/pm-dismiss-fields';
+import { LazyPartsPanel } from '@/components/lazy-parts-panel';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -363,30 +361,38 @@ function Panel({
           </form>
         </div>
       ) : null}
-      {r.model ? (
-        <p className="px-5 py-2.5 text-[13px]">
-          <span className="text-muted-foreground">Model</span> {r.model}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-5 py-2.5 text-[13px]">
+        <p>
+          {r.model ? (
+            <>
+              <span className="text-muted-foreground">Model</span> {r.model}
+            </>
+          ) : null}
         </p>
-      ) : null}
+        {r.drmsEquipmentId ? (
+          <Link href={deviceHref(r.drmsEquipmentId, 'pm', back)} className="font-medium text-brand hover:underline">
+            Open device page
+          </Link>
+        ) : (
+          <span className="text-muted-foreground">Not linked to a DRMS device, so there is no device page.</span>
+        )}
+      </div>
       <PmDetail
         row={r}
         qualifyingMinutes={qualifyingMinutes}
         timeCapMonths={timeCapMonths}
-        className={cn(!error && !r.action && !r.model && '[&>div:first-child]:border-t-0')}
+        afterSummary={
+          // The panel renders on the row's first open, so parts load then, one machine at a time.
+          <section aria-label="Parts" className="border-t border-line px-5 py-4">
+            <h3 className="mb-2 text-[13px] font-medium">Parts</h3>
+            <LazyPartsPanel vantageEquipmentId={r.vantageEquipmentId} className="max-w-3xl" />
+          </section>
+        }
       />
       <div className="grid gap-4 border-t border-line px-5 py-4 lg:grid-cols-2">
         <BookedForm vantageEquipmentId={r.vantageEquipmentId} back={back} />
         <DismissForm vantageEquipmentId={r.vantageEquipmentId} back={back} today={today} />
       </div>
-      <p className="border-t border-line px-5 py-3 text-[13px]">
-        {r.drmsEquipmentId ? (
-          <Link href={deviceHref(r.drmsEquipmentId, 'pm', back)} className="text-brand hover:underline">
-            Open device
-          </Link>
-        ) : (
-          <span className="text-muted-foreground">Not linked to a DRMS device, so there is no device page.</span>
-        )}
-      </p>
     </div>
   );
 }
@@ -422,69 +428,20 @@ function BookedForm({ vantageEquipmentId, back }: { vantageEquipmentId: number; 
 }
 
 function DismissForm({ vantageEquipmentId, back, today }: { vantageEquipmentId: number; back: string; today: string }) {
-  const [reason, setReason] = useState<DismissReason>('not_now');
-  const serviced = reason === 'serviced_outside';
-  const noteId = `pm-dismiss-note-${vantageEquipmentId}`;
-  const servicedId = `pm-dismiss-serviced-${vantageEquipmentId}`;
   return (
     <form action={dismissPmAction} className="rounded-lg border border-line p-4">
       <h3 className="mb-1 text-[13px] font-medium">Dismiss</h3>
-      <p className="mb-3 text-[12px] text-muted-foreground">
-        {serviced
-          ? 'Restarts the PM clock from the service date, as if a counted visit happened then.'
-          : 'Snoozed machines sit in Dismissed, then come back to the list.'}
-      </p>
       <input type="hidden" name="vantageEquipmentId" value={vantageEquipmentId} />
       <input type="hidden" name="return" value={back} />
-      <fieldset className="mb-3">
-        <legend className={FIELD_LABEL}>Reason</legend>
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-          {DISMISS_REASONS.map((value) => (
-            <label key={value} className="flex items-center gap-1.5 text-[13px]">
-              <input
-                type="radio"
-                name="reason"
-                value={value}
-                checked={reason === value}
-                onChange={() => setReason(value)}
-                className="accent-brand"
-              />
-              {dismissReasonLabel(value)}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      <div className="flex flex-wrap items-end gap-3">
-        {serviced ? (
-          <div>
-            <label htmlFor={servicedId} className={FIELD_LABEL}>
-              Serviced on
-            </label>
-            <Input id={servicedId} type="date" name="servicedOn" defaultValue={today} max={today} required className="h-9 w-40" />
-          </div>
-        ) : (
-          <fieldset>
-            <legend className={FIELD_LABEL}>Snooze for</legend>
-            <div className="flex h-9 items-center gap-3">
-              {SNOOZE_OPTIONS.map((days) => (
-                <label key={days} className="flex items-center gap-1.5 text-[13px]">
-                  <input type="radio" name="snoozeDays" value={days} defaultChecked={days === DEFAULT_SNOOZE_OPTION} className="accent-brand" />
-                  {days} days
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        )}
-        <div className="min-w-48 flex-1">
-          <label htmlFor={noteId} className={FIELD_LABEL}>
-            {reason === 'other' ? 'Note (required)' : 'Note (optional)'}
-          </label>
-          <Input id={noteId} name="note" maxLength={500} required={reason === 'other'} className="h-9" />
-        </div>
-        <SubmitButton variant="outline" pendingText="Saving…">
-          Dismiss
-        </SubmitButton>
-      </div>
+      <DismissFields
+        idPrefix={`pm-dismiss-${vantageEquipmentId}`}
+        today={today}
+        footer={
+          <SubmitButton variant="outline" pendingText="Saving…">
+            Dismiss
+          </SubmitButton>
+        }
+      />
     </form>
   );
 }

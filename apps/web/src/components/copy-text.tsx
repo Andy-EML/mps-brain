@@ -64,7 +64,8 @@ export function CopyText({ text, label = 'serial', iconOnly, ariaLabel, classNam
   );
 }
 
-async function writeClipboard(text: string): Promise<boolean> {
+/** Copies `text`; true when it worked. Falls back to `execCommand('copy')` off a secure origin. */
+export async function writeClipboard(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
