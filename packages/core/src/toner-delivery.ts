@@ -94,3 +94,14 @@ export function deliveryFitDates(orderDates: Date[], deliveries: Date[]): (Date 
     return times.find((t) => t.getTime() >= start && t.getTime() < end) ?? null;
   });
 }
+
+/**
+ * A Delivery for the colour received at or after `alarmAt` means the cartridge named by an Empty / Near
+ * Empty (or waste Full / Almost Full) alarm has since been changed, so that alarm is stale. Returns the
+ * first such Delivery, or null. `deliveries` are one colour's Delivery times, any order.
+ */
+export function deliveryAtOrAfter(deliveries: Date[] | undefined, alarmAt: Date): Date | null {
+  let hit: Date | null = null;
+  for (const t of deliveries ?? []) if (t.getTime() >= alarmAt.getTime() && (hit === null || t < hit)) hit = t;
+  return hit;
+}

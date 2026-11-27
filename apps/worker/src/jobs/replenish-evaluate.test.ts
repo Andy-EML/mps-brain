@@ -122,11 +122,11 @@ describe('runReplenishEvaluate', () => {
       expect(await rows()).toEqual([['black', 'threshold', 'pending', null]]);
     });
 
-    it('a Delivery by itself supersedes nothing: a pending alarm proposal stays, and Near Empty still proposes', async () => {
+    it('a Delivery for another colour supersedes nothing: a pending alarm proposal stays, and Near Empty still proposes', async () => {
       await levels('colour', 'c1', 50, 50);
       await alarm('colour', '2026-09-20T08:00:00Z', 'Toner Near Empty(M)');
       await runReplenishEvaluate({ db: t.db, now: () => NOW });
-      await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(M)');
+      await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(C)');
       await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Near Empty(Y)');
       await runReplenishEvaluate({ db: t.db, now: () => NOW });
       expect(await rows()).toEqual([
@@ -142,6 +142,73 @@ describe('runReplenishEvaluate', () => {
       const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
       expect(r.stats).toMatchObject({ superseded: 1, proposed: 0 });
       expect(await rows()).toEqual([['black', 'threshold', 'superseded', 'level recovered']]);
+    });
+
+    describe('a Delivery at or after the alarm (toner already changed)', () => {
+      it('raises no alarm proposal when a Delivery follows the Empty, and counts nothing superseded', async () => {
+        await levels('colour', 'c1', 50, 50);
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Toner Empty(C)');
+        await alarm('colour', '2026-09-21T11:28:00Z', 'Toner Delivery(C)', 'CounterDifferenceNotHighEnough');
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Waste Toner Bottle Full', 'ReadyForErpDelivery', 'waste');
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Toner Near Empty(Y)');
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Waste Toner Bottle Delivery', 'ReadyForErpDelivery', 'waste');
+        const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+        expect(r.stats).toMatchObject({ proposed: 1, alarmSupersededByDelivery: 0 });
+        expect(await rows()).toEqual([['yellow', 'alarm', 'pending', null]]);
+      });
+
+      it('supersedes a pending alarm proposal once a later Delivery for its colour arrives, with a dated note', async () => {
+        await levels('colour', 'c1', 50, 50);
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Toner Empty(C)');
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Waste Toner Bottle Almost Full', 'ReadyForErpDelivery', 'waste');
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Toner Near Empty(M)');
+        await runReplenishEvaluate({ db: t.db, now: () => NOW });
+        await alarm('colour', '2026-09-21T11:28:00Z', 'Toner Delivery(C)', 'CounterDifferenceNotHighEnough');
+        await alarm('colour', '2026-09-21T12:00:00Z', 'Waste Toner Bottle Delivery', 'EquipmentDiscovered', 'waste');
+        const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+        expect(r.stats).toMatchObject({ alarmSupersededByDelivery: 2, superseded: 2, proposed: 0 });
+        expect(await rows()).toEqual([
+          ['cyan', 'alarm', 'superseded', 'toner changed after alarm (Delivery 2026-09-21)'],
+          ['magenta', 'alarm', 'pending', null],
+          ['waste', 'alarm', 'superseded', 'toner changed after alarm (Delivery 2026-09-21)'],
+        ]);
+      });
+
+      it('leaves it pending when the Delivery is older than the alarm, or for another colour', async () => {
+        await levels('colour', 'c1', 50, 50);
+        await alarm('colour', '2026-09-21T08:00:00Z', 'Toner Delivery(C)');
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Toner Empty(C)');
+        await alarm('colour', '2026-09-21T10:46:00Z', 'Toner Empty(M)');
+        await runReplenishEvaluate({ db: t.db, now: () => NOW });
+        await alarm('colour', '2026-09-21T11:28:00Z', 'Toner Delivery(Y)');
+        const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+        expect(r.stats).toMatchObject({ alarmSupersededByDelivery: 0 });
+        expect(await rows()).toEqual([['cyan', 'alarm', 'pending', null], ['magenta', 'alarm', 'pending', null]]);
+      });
+
+      it('falls back to created_at when the proposal has no alarm time, and never touches threshold or approved proposals', async () => {
+        await levels('colour', 'c1', 50, 50);
+        const mk = (colour: string, over: Partial<typeof replenishmentProposals.$inferInsert>) =>
+          t.db.insert(replenishmentProposals).values({
+            drmsEquipmentId: 'colour', vantageEquipmentId: 1, colour, trigger: 'alarm', status: 'pending', createdAt: new Date('2026-09-21T10:00:00Z'), ...over,
+          });
+        await mk('cyan', {}); // no alarm id: created_at 10:00 < Delivery 11:00 -> superseded
+        await mk('magenta', { trigger: 'threshold' });
+        await mk('yellow', { status: 'approved' });
+        await mk('black', { createdAt: new Date('2026-09-21T12:30:00Z') }); // created after the Delivery -> stays
+        await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(C)');
+        await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(M)');
+        await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(Y)');
+        await alarm('colour', '2026-09-21T11:00:00Z', 'Waste Toner Bottle Delivery', 'ReadyForErpDelivery', 'waste');
+        const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+        expect(r.stats).toMatchObject({ alarmSupersededByDelivery: 1 });
+        expect(await rows()).toEqual([
+          ['cyan', 'alarm', 'superseded', 'toner changed after alarm (Delivery 2026-09-21)'],
+          ['magenta', 'threshold', 'superseded', 'level recovered'], // the existing rule, not the Delivery-after-alarm one
+          ['yellow', 'alarm', 'approved', null],
+          ['black', 'alarm', 'pending', null],
+        ]);
+      });
     });
 
     it('closes an in-progress order for the delivered colour only, and leaves pending Review proposals alone', async () => {

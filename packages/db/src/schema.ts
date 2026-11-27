@@ -215,6 +215,56 @@ export const vantageEngineers = pgTable('vantage_engineers', {
 });
 
 /**
+ * Vantage alert notes (the popups: "call ahead", "no mobile phones on site") on a customer or a
+ * machine, found by the nightly `vantage-alert-notes` keyword search. Vantage has no notes entity,
+ * so a note is only known while a keyword reaches it: every run stamps `last_seen_at` on the notes
+ * it found, and readers hide notes not seen for 7 days (no longer an alert, or deleted).
+ * `parent_id` is a `vantage_customers` id for `Customer`, a `vantage_equipment` id for `Equipment`.
+ */
+export const vantageAlertNotes = pgTable(
+  'vantage_alert_notes',
+  {
+    noteId: integer('note_id').primaryKey(),
+    parentType: text('parent_type', { enum: ['Customer', 'Equipment'] }).notNull(),
+    parentId: integer('parent_id').notNull(),
+    /** Account reference for a customer, serial for a machine. */
+    parentReference: text('parent_reference'),
+    text: text('text'),
+    loggedDate: ts('logged_date'),
+    loggedBy: text('logged_by'),
+    modifiedDate: ts('modified_date'),
+    raw: jsonb('raw').notNull(),
+    lastSeenAt: ts('last_seen_at').notNull(),
+  },
+  (t) => [index('vantage_alert_notes_parent_idx').on(t.parentType, t.parentId)],
+);
+
+/**
+ * Vantage `CustomerPerson`s (site contacts), fully pulled each night by `vantage-alert-notes`
+ * (`$filter=DeletedDate eq null`). A person missing from a full pull gets `deleted_at` and is hidden;
+ * one who comes back has it cleared. `customer_id` is a `vantage_customers` id (the site).
+ */
+export const vantageCustomerPeople = pgTable(
+  'vantage_customer_people',
+  {
+    personId: integer('person_id').primaryKey(),
+    customerId: integer('customer_id').notNull(),
+    fullName: text('full_name'),
+    role: text('role'),
+    phone: text('phone'),
+    extension: text('extension'),
+    mobile: text('mobile'),
+    email: text('email'),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    modifiedDate: ts('modified_date'),
+    raw: jsonb('raw').notNull(),
+    lastSeenAt: ts('last_seen_at').notNull(),
+    deletedAt: ts('deleted_at'),
+  },
+  (t) => [index('vantage_customer_people_customer_idx').on(t.customerId)],
+);
+
+/**
  * Scheduled `WorkUnit`s for today and tomorrow (London days), refreshed intraday by `vantage-schedule`.
  * Holds calls with no machine too (`vantage_equipment_id` null). The whole table is replaced each run.
  */

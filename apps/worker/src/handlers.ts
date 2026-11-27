@@ -14,6 +14,7 @@ import { runVantageContracts } from './jobs/vantage-contracts';
 import { runVantageMeters } from './jobs/vantage-meters';
 import { runPostcodeLookup } from './jobs/postcode-lookup';
 import { runVantageEngineers } from './jobs/vantage-engineers';
+import { runVantageAlertNotes } from './jobs/vantage-alert-notes';
 import { runVantageSchedule } from './jobs/vantage-schedule';
 import { runVantageWork } from './jobs/vantage-work';
 import { runVantageOrders } from './jobs/vantage-orders';
@@ -86,6 +87,10 @@ export function buildHandlers(deps: HandlerDeps): Record<QueueName, (data: JobDa
     },
     [QUEUES.vantageEngineers]: async () => {
       await withSyncRun(db, QUEUES.vantageEngineers, () => runVantageEngineers({ db, vantage, now }));
+    },
+    [QUEUES.vantageAlertNotes]: async () => {
+      // Read-only keyword searches of Vantage notes, one at a time.
+      await withSyncRun(db, QUEUES.vantageAlertNotes, () => runVantageAlertNotes({ db, vantage, now }));
     },
     [QUEUES.vantageSchedule]: async () => {
       await withSyncRun(db, QUEUES.vantageSchedule, () => runVantageSchedule({ db, vantage, now }));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dedupeDeliveries, deliveryColour, deliveryFitDates, effectiveTonerLevel, isDeliveryAlarm } from './toner-delivery';
+import { dedupeDeliveries, deliveryAtOrAfter, deliveryColour, deliveryFitDates, effectiveTonerLevel, isDeliveryAlarm } from './toner-delivery';
 
 const d = (s: string) => new Date(`${s}T12:00:00Z`);
 
@@ -65,5 +65,15 @@ describe('deliveryFitDates', () => {
   it('gives orders on the same date the same fit', () => {
     const o = d('2026-10-01');
     expect(deliveryFitDates([o, o], [d('2026-10-02')])).toEqual([d('2026-10-02'), d('2026-10-02')]);
+  });
+});
+
+describe('deliveryAtOrAfter', () => {
+  it('returns the first Delivery at or after the alarm, else null', () => {
+    const times = [d('2026-10-05'), d('2026-10-01'), d('2026-10-03')];
+    expect(deliveryAtOrAfter(times, d('2026-10-02'))).toEqual(d('2026-10-03'));
+    expect(deliveryAtOrAfter(times, d('2026-10-03'))).toEqual(d('2026-10-03'));
+    expect(deliveryAtOrAfter(times, d('2026-10-06'))).toBeNull();
+    expect(deliveryAtOrAfter(undefined, d('2026-10-06'))).toBeNull();
   });
 });

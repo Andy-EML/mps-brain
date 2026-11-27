@@ -38,5 +38,25 @@
     "name": "751i",
     "isColour": false,
     "models": ["bizhub 751i"]
+  },
+  {
+    "name": "C458 / C558 / C658",
+    "isColour": true,
+    "models": ["C458", "ineo+458", "ineo+558", "ineo+658"]
+  },
+  {
+    "name": "C224e / C284e / C364e",
+    "isColour": true,
+    "models": ["ineo+224e", "ineo+284e", "ineo+364e"]
+  },
+  {
+    "name": "300i / 301i",
+    "isColour": false,
+    "models": ["bizhub 300i", "bizhub 301i"]
+  },
+  {
+    "name": "C3351 / C3851",
+    "isColour": true,
+    "models": ["C3351"]
   }
 ]

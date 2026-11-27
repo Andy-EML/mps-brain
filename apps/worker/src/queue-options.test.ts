@@ -15,6 +15,7 @@ describe('QUEUE_OPTIONS', () => {
       [QUEUES.vantageContracts]: { name: 'vantage-contracts', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       [QUEUES.vantageWork]: { name: 'vantage-work', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       [QUEUES.vantageEngineers]: { name: 'vantage-engineers', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
+      [QUEUES.vantageAlertNotes]: { name: 'vantage-alert-notes', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       [QUEUES.vantageSchedule]: { name: 'vantage-schedule', policy: 'stately', retryLimit: 0, expireInSeconds: 1800 },
       [QUEUES.postcodeLookup]: { name: 'postcode-lookup', policy: 'stately', retryLimit: 0, expireInSeconds: 3600 },
       [QUEUES.replenishEvaluate]: { name: 'replenish-evaluate', policy: 'stately', retryLimit: 0, expireInSeconds: 1800 },

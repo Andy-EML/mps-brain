@@ -36,7 +36,7 @@ describe('buildHandlers', () => {
     const handlers = buildHandlers({
       db: t.db,
       drms,
-      vantage: { ...vantage.client, listSalesOrders: async () => [], listEngineers: async () => [{ Id: 1, Name: 'A', IsActive: true }], listScheduledWorkUnits: async () => [], findEquipmentBySerial: async () => [] } as unknown as VantageClient,
+      vantage: { ...vantage.client, listSalesOrders: async () => [], listEngineers: async () => [{ Id: 1, Name: 'A', IsActive: true }], searchNotes: async () => [], listCustomerPeople: async () => [], listScheduledWorkUnits: async () => [], findEquipmentBySerial: async () => [] } as unknown as VantageClient,
       linkConfig: { erpIdField: 'id', customerErpField: 'reference' },
       tz: 'Europe/London',
       queueLinkRun: async () => {
@@ -94,12 +94,14 @@ describe('buildHandlers', () => {
   it('runs the planner feed jobs (engineers, schedule, postcode lookup) wrapped in sync runs', async () => {
     const { handlers } = setup(new Date('2026-11-23T03:15:00Z'));
     await handlers['vantage-engineers']({});
+    await handlers['vantage-alert-notes']({});
     await handlers['vantage-schedule']({});
     // No customers in the test database, so no postcodes.io call is made.
     await handlers['postcode-lookup']({});
     const runs = await t.db.select().from(syncRuns).orderBy(syncRuns.id);
     expect(runs.map((r) => [r.job, r.status])).toEqual([
       ['vantage-engineers', 'success'],
+      ['vantage-alert-notes', 'success'],
       ['vantage-schedule', 'success'],
       ['postcode-lookup', 'success'],
     ]);

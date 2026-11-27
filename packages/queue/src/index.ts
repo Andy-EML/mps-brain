@@ -15,6 +15,8 @@ export const QUEUES = {
   vantageWork: 'vantage-work',
   /** Nightly: Vantage engineers (id, name, active) for the PM planner. */
   vantageEngineers: 'vantage-engineers',
+  /** Nightly: Vantage alert notes (popups) on customers and machines, found by keyword search. */
+  vantageAlertNotes: 'vantage-alert-notes',
   /** Intraday (06:00-19:30): work units scheduled for today and tomorrow, for the PM planner's Upcoming jobs. */
   vantageSchedule: 'vantage-schedule',
   /** Nightly: caches county and centroid per customer postcode district from postcodes.io. */

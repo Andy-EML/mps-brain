@@ -3,6 +3,8 @@ import {
   READY_FOR_ERP,
   REJECTED_SUPPRESS_DAYS,
   TONER_COLOURS,
+  deliveryAtOrAfter,
+  deliveryColour,
   errorMessage,
   evaluateDevice,
   isRecovered,
@@ -16,9 +18,11 @@ import {
   closeOrdersByDelivery,
   computeHolds,
   counterPivotSubquery,
+  deliveryAlarmSql,
   effectiveToner,
   effectiveSettingsSubquery,
   getOrderStates,
+  londonDay,
   londonDayAsUtc,
   notHiddenDevice,
   supersedeHiddenProposals,
@@ -128,6 +132,22 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   const alarmsByDevice = new Map<string, ConsumableAlarm[]>();
   for (const { drmsId, ...a } of alarmRows) alarmsByDevice.set(drmsId, [...(alarmsByDevice.get(drmsId) ?? []), a]);
 
+  // Every Toner / Waste Delivery alarm, any DRMS status (indexed predicate). A Delivery at or after an Empty /
+  // Near Empty (waste: Full / Almost Full) means the toner was changed, so that alarm proposes nothing and a
+  // pending alarm proposal built on it is superseded below.
+  const deliveryRows = await db
+    .select({ drmsId: deviceAlarms.drmsEquipmentId, at: deviceAlarms.receivedTime, description: deviceAlarms.description })
+    .from(deviceAlarms)
+    .where(deliveryAlarmSql());
+  const deliveriesByDevice = new Map<string, Partial<Record<ReplenishColour, Date[]>>>();
+  for (const r of deliveryRows) {
+    const colour = deliveryColour(r.description);
+    if (!colour) continue;
+    const byColour = deliveriesByDevice.get(r.drmsId) ?? {};
+    (byColour[colour] ??= []).push(r.at);
+    deliveriesByDevice.set(r.drmsId, byColour);
+  }
+
   const rejectedSince = new Date(now.getTime() - REJECTED_SUPPRESS_DAYS * 86_400_000);
   const proposalRows = await db
     .select({
@@ -139,8 +159,10 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       decidedAt: replenishmentProposals.decidedAt,
       createdAt: replenishmentProposals.createdAt,
       shelfId: replenishmentProposals.shelfId,
+      alarmAt: deviceAlarms.receivedTime,
     })
     .from(replenishmentProposals)
+    .leftJoin(deviceAlarms, eq(deviceAlarms.alarmId, replenishmentProposals.alarmId))
     .where(
       // Shelf top-ups belong to the site-stock job: the device loop never supersedes them and their
       // rejections are not the device's, but a live one still counts as live for its device + colour.
@@ -155,7 +177,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   const linkedIds = [...new Set(devices.map((d) => d.vantageEquipmentId).filter((id): id is number => id !== null))];
   const orderStates = await getOrderStates(db, linkedIds, now);
 
-  const stats = { devices: devices.length, proposed: 0, superseded: hiddenSuperseded, suppressed: 0, autoOff: 0, unlinked: 0, selfManaged: 0, selfManagedSuperseded, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps, deliveryClosed: deliveryClosed.closed };
+  const stats = { devices: devices.length, proposed: 0, superseded: hiddenSuperseded, suppressed: 0, autoOff: 0, unlinked: 0, selfManaged: 0, selfManagedSuperseded, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps, deliveryClosed: deliveryClosed.closed, alarmSupersededByDelivery: 0 };
 
   for (const d of devices) {
     // Self-managed customers get no proposals at all (the flag beats a device-level auto-replenish override).
@@ -174,13 +196,18 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
     // device's insert (below) never conflicts with a still-pending row it just replaced —
     // otherwise a same-run alarm proposal for the recovered colour would be silently dropped.
     const toSupersede: { id: number; note: string }[] = [];
+    const deliveryNoteIds = new Set<number>();
     for (const p of mine) {
       if (p.status !== 'pending' || p.shelfId !== null || coversChange.has(p.id)) continue;
       const ordered = states ? orderedInVantage(states[p.colour], p.createdAt) : null;
       if (ordered !== null) toSupersede.push({ id: p.id, note: `ordered in Vantage (${ordered})` });
       else if (coveredColours.has(p.colour)) toSupersede.push({ id: p.id, note: 'covered by site stock' });
       else if (!d.autoReplenish) toSupersede.push({ id: p.id, note: 'auto-replenish switched off' });
-      else if (p.trigger === 'threshold' && p.colour !== 'waste' && isRecovered(levels[p.colour], thresholds[p.colour])) {
+      else if (p.trigger === 'alarm' && toBeSupersededByDelivery(p, deliveriesByDevice.get(d.drmsId))) {
+        const at = deliveryAtOrAfter(deliveriesByDevice.get(d.drmsId)?.[p.colour as ReplenishColour], p.alarmAt ?? p.createdAt)!;
+        toSupersede.push({ id: p.id, note: `toner changed after alarm (Delivery ${londonDay(at)})` });
+        deliveryNoteIds.add(p.id);
+      } else if (p.trigger === 'threshold' && p.colour !== 'waste' && isRecovered(levels[p.colour], thresholds[p.colour])) {
         toSupersede.push({ id: p.id, note: 'level recovered' });
       }
     }
@@ -192,6 +219,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
         .where(and(eq(replenishmentProposals.id, s.id), eq(replenishmentProposals.status, 'pending')))
         .returning({ id: replenishmentProposals.id });
       stats.superseded += updated.length;
+      if (deliveryNoteIds.has(s.id)) stats.alarmSupersededByDelivery += updated.length;
     }
 
     const history: Partial<Record<ReplenishColour, ColourHistory>> = {};
@@ -218,6 +246,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       alarms: alarmsByDevice.get(d.drmsId) ?? [],
       history,
       siteStockCovered: [...coveredColours],
+      deliveries: deliveriesByDevice.get(d.drmsId),
       now,
     });
     if (result.skipped === 'auto_off') stats.autoOff++;
@@ -272,6 +301,17 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   }
 
   return { status: 'success', stats };
+}
+
+/**
+ * True when a Delivery for the proposal's colour was received at or after its alarm (falling back to when
+ * the proposal was created), so the toner it asks for has already been changed.
+ */
+function toBeSupersededByDelivery(
+  p: { colour: string; alarmAt: Date | null; createdAt: Date },
+  deliveries: Partial<Record<ReplenishColour, Date[]>> | undefined,
+): boolean {
+  return deliveryAtOrAfter(deliveries?.[p.colour as ReplenishColour], p.alarmAt ?? p.createdAt) !== null;
 }
 
 /**

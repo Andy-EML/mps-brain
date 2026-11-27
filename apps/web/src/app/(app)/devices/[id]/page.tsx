@@ -4,7 +4,9 @@ import { ArrowLeft, Boxes, EyeOff } from 'lucide-react';
 import { notFound } from 'next/navigation';
 import {
   getCounterHistory,
+  getCustomerContact,
   getDevice,
+  getDeviceContact,
   getDeviceParts,
   getDeviceSettings,
   getDeviceShelfOffer,
@@ -29,6 +31,8 @@ import { AlarmGroups } from '@/components/alarm-groups';
 import { Breadcrumb } from '@/components/breadcrumb';
 import { CopyText } from '@/components/copy-text';
 import { CounterTable } from '@/components/counter-table';
+import { CustomerContact } from '@/components/customer-contact';
+import { VantageNoteSearch } from '@/components/vantage-note-search';
 import { DetailCard, DetailRow } from '@/components/detail-card';
 import { HideDeviceDialog, UnhideDeviceButton } from '@/components/hide-device';
 import { counterHistoryRows, groupAlarms, meterChannels, rawString } from '@/components/device-detail';
@@ -41,6 +45,7 @@ import { replenishmentErrorMessage } from '@/components/replenishment';
 import { SelfManagedBadge } from '@/components/self-managed-badge';
 import { ReplenishmentCard } from '@/components/replenishment-card';
 import { coveredColours, shelfHref } from '@/components/shelf';
+import { customerHref } from '@/components/customers';
 import { deviceStatusLabel, hasRecentAlarm, newCartridgeNote, tonerChannels } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
@@ -226,7 +231,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   // Toner yield: the card below, and the "Last ordered … · N pages since" line on each live proposal.
   // Preventive maintenance hangs off the Vantage equipment too; an unlinked device has none.
   // Wear parts: DRMS parts alarms + parts fitted on Vantage visits (the 2026-11-26 parts-status plan).
-  const [tonerYield, yieldCheckMap, pm, pmSettings, dealerControl, parts] = await Promise.all([
+  const [tonerYield, yieldCheckMap, pm, pmSettings, dealerControl, parts, contact] = await Promise.all([
     getDeviceYield(db, id),
     getYieldCheckForProposals(
       db,
@@ -241,6 +246,12 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
       console.error('getDeviceParts failed', err);
       return null;
     }),
+    // The customer's phone (or its head office's), contacts, and the machine's plus the customer's Vantage alert notes.
+    vantageEquipmentId != null
+      ? getDeviceContact(db, { vantageEquipmentId })
+      : detail.device.vantageCustomerId != null
+        ? getCustomerContact(db, detail.device.vantageCustomerId)
+        : Promise.resolve(null),
   ]);
   const yieldChecks: YieldChecks = Object.fromEntries(yieldCheckMap);
   const orderRefs: Record<number, string | null> = Object.fromEntries(orders.orders.map((o) => [o.vantageId, o.reference]));
@@ -266,6 +277,12 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
   const hasMeters = meters.some((m) => device.meters[m.key] != null);
 
   const subtitleParts: React.ReactNode[] = [
+    // The site, linked to its customer page.
+    device.vantageCustomerId != null ? (
+      <Link href={customerHref(device.vantageCustomerId)} className="font-medium text-brand hover:underline">
+        {customer}
+      </Link>
+    ) : null,
     device.model,
     device.serial ? (
       <>
@@ -288,7 +305,11 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
     <>
       <Breadcrumb
         className="mb-3"
-        items={[{ label: origin.label, href: origin.href }, { label: customer }, { label: name }]}
+        items={[
+          { label: origin.label, href: origin.href },
+          { label: customer, href: device.vantageCustomerId != null ? customerHref(device.vantageCustomerId) : undefined },
+          { label: name },
+        ]}
       />
 
       <Link
@@ -379,6 +400,8 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
           ) : null
         }
       />
+
+      {contact ? <CustomerContact contact={contact} showSource className="-mt-3 mb-5 max-w-3xl" /> : null}
 
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
@@ -615,6 +638,8 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
               {device.lastAlarmAt ? formatRelative(device.lastAlarmAt, now) : null}
             </DetailRow>
           </DetailCard>
+
+          <VantageNoteSearch />
 
           {user.role === 'admin' ? (
             <section className="rounded-xl border border-line bg-card px-5 py-4">

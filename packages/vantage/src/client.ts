@@ -1,4 +1,4 @@
-import { AuthError, HttpError, ParseError, getField, getNumber, getString, parseApiDate } from '@mps/core';
+import { AuthError, HttpError, ParseError, getField, getNumber, getString, noteSearchWord, odataString, parseApiDate } from '@mps/core';
 
 export interface VantageClientOptions {
   baseUrl: string;
@@ -189,6 +189,32 @@ export function createVantageClient(opts: VantageClientOptions) {
     }
   }
 
+  /**
+   * `$skip`/`$top` paging for a bound function, which has no `Id` to keyset on. Rows repeated across
+   * pages (the result can shift under concurrent edits) are dropped by `Id`.
+   */
+  async function skipList(path: string, limit?: number): Promise<VantageRecord[]> {
+    const out: VantageRecord[] = [];
+    const seen = new Set<number>();
+    const top = limit === undefined ? pageSize : Math.max(1, Math.min(pageSize, limit));
+    for (let page = 0; ; page++) {
+      if (page >= maxPages) throw new ParseError(`Vantage ${path} paging exceeded ${maxPages} pages`, 200);
+      const body = await get(path, { $top: top, $skip: page * top });
+      const items = Array.isArray(body) ? body : getField(body, 'value');
+      if (!Array.isArray(items)) throw new ParseError(`Vantage ${path} response has no value array`, 200);
+      for (const item of items as VantageRecord[]) {
+        const id = getNumber(item, 'Id');
+        if (id !== null) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+        }
+        out.push(item);
+      }
+      if (limit !== undefined && out.length >= limit) return out.slice(0, limit);
+      if (items.length < top) return out;
+    }
+  }
+
   const listFilters = (o: ListOptions) => {
     if (!o.since) return [];
     const since = o.since.toISOString();
@@ -255,8 +281,25 @@ export function createVantageClient(opts: VantageClientOptions) {
       }),
     /** Read-only: live engineers (`Id`, `Name`, `IsActive`). */
     listEngineers: () => odataList('Engineer'),
+    /**
+     * Read-only: every live `CustomerPerson` (site contact: name, role, phone, extension, mobile,
+     * email, IsPrimary), keyset-paged with `deleteddate eq null`. About 1,700 rows (2026-11-27).
+     */
+    listCustomerPeople: () => odataList('customerperson'),
     /** Read-only: the dozen `MeterType`s with their class (Mono/Colour), deleted ones included. */
     listMeterTypes: () => odataList('MeterType', { includeDeleted: true, expand: 'Class($select=Id,Name)' }),
+    /**
+     * Read-only: notes matching one search word, every page (`GET /user/GetNotesViaKeyword`). Rows
+     * are `NoteSearchResultComponent`s (Id, ParentId, ParentType, ParentReference, Text, IsAlert,
+     * LoggedDate, LoggedBy, …) of every parent kind, alert or not; callers filter. Stopwords
+     * return nothing. The word must be 2-50 characters: an empty search is a 400, so it is refused
+     * here before any call. `limit` stops after that many rows (the web app's live search).
+     */
+    async searchNotes(word: string, o: { limit?: number } = {}): Promise<VantageRecord[]> {
+      const w = noteSearchWord(word);
+      if (w === null) throw new ParseError('Vantage note search needs a word of 2 to 50 characters', null);
+      return skipList(`user/GetNotesViaKeyword(search=${encodeURIComponent(odataString(w))})`, o.limit);
+    },
     /**
      * Read-only: the live Vantage equipment with this serial (not deleted), with its customer and
      * contracts, for the DRMS registration scan. Not paged — a serial matches a handful at most.

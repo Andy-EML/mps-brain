@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { cn } from 'cn';
 import { mapAddToPlanAction, mapAskEngineerAction, mapDismissAction, type MapActionResult } from '@/app/(app)/pm/planner/map-actions';
 import { writeClipboard } from '@/components/copy-text';
+import { LazyCustomerContact } from '@/components/lazy-customer-contact';
 import { LazyPartsPanel } from '@/components/lazy-parts-panel';
 import { DismissFields } from '@/components/pm-dismiss-fields';
 import { ToneBadge } from '@/components/tone-badge';
@@ -341,6 +342,7 @@ function MachineRow({
               <SmallButton label="Dismiss" aria={`Dismiss: ${who}`} disabled={pending} onClick={() => onDismiss(s)} />
             </span>
           </div>
+          <LazyCustomerContact vantageEquipmentId={s.id} className="mb-2" />
           <LazyPartsPanel vantageEquipmentId={s.id} />
         </div>
       ) : null}

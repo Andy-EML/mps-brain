@@ -2,6 +2,7 @@ export * from './admin';
 export * from './admin-actions';
 export * from './alert-actions';
 export * from './alerts';
+export * from './alert-notes';
 export * from './customer-flags';
 export * from './other-dealer';
 export * from './pm-planner-settings';
@@ -40,4 +41,4 @@ export * from './toner-yield';
 // The counter names the UI has to ask `getCounterHistory` for, plus the latest-toner-and-meter
 // pivot the replenish-evaluate job reads directly. The rest of `./shared` is query-building
 // plumbing and stays internal.
-export { counterPivotSubquery, effectiveLevelSql, effectivePivotLevels, effectiveToner, DEFAULT_OFFLINE_HOURS, METER_NAMES, TONER_NAMES } from './shared';
+export { counterPivotSubquery, deliveryAlarmSql, effectiveLevelSql, effectivePivotLevels, effectiveToner, DEFAULT_OFFLINE_HOURS, METER_NAMES, TONER_NAMES } from './shared';

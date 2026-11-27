@@ -56,6 +56,35 @@ describe('evaluateDevice', () => {
     expect(r.suppressed).toEqual([]);
   });
 
+  describe('a Delivery at or after the alarm means the toner was changed', () => {
+    const at = (h: number) => new Date(daysAgo(1).getTime() + h * 3_600_000);
+    it('raises no alarm proposal when a Delivery for that colour is at or after the Empty / Near Empty', () => {
+      const r = evaluateDevice(
+        input({
+          alarms: [alarm('Toner Empty(C)', 'toner', at(0)), alarm('Toner Near Empty(M)', 'toner', at(0)), alarm('Waste Toner Bottle Full', 'waste', at(0))],
+          deliveries: { cyan: [at(1)], magenta: [at(0)], waste: [at(2)] },
+        }),
+      );
+      expect(r.candidates).toEqual([]);
+      expect(r.suppressed).toEqual([]);
+    });
+    it('still proposes when the Delivery is before the alarm, or for another colour', () => {
+      const r = evaluateDevice(
+        input({
+          alarms: [alarm('Toner Empty(C)', 'toner', at(2)), alarm('Toner Empty(Y)', 'toner', at(0))],
+          deliveries: { cyan: [at(1)], magenta: [at(5)] },
+        }),
+      );
+      expect(r.candidates.map((c) => [c.colour, c.trigger])).toEqual([['cyan', 'alarm'], ['yellow', 'alarm']]);
+    });
+    it('a threshold proposal is unaffected', () => {
+      const r = evaluateDevice(
+        input({ levels: { black: 5, cyan: 50, magenta: 50, yellow: 50 }, alarms: [alarm('Toner Empty(K)', 'toner', at(0))], deliveries: { black: [at(1)] } }),
+      );
+      expect(r.candidates.map((c) => [c.colour, c.trigger])).toEqual([['black', 'threshold']]);
+    });
+  });
+
   it('ignores CMY on a mono device, including CMY alarms', () => {
     const r = evaluateDevice(
       input({ isColour: false, levels: { black: 50, cyan: 0, magenta: 0, yellow: 0 }, alarms: [alarm('Toner Near Empty(C)', 'toner')] }),

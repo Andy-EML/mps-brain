@@ -12,6 +12,7 @@ import { mapAddToPlanAction, mapAskEngineerAction, mapDismissAction, mapSetPrior
 import type { MapCall, PinAction } from '@/components/planner-map-canvas';
 import { writeClipboard } from '@/components/copy-text';
 import { DismissFields } from '@/components/pm-dismiss-fields';
+import { LazyCustomerContact } from '@/components/lazy-customer-contact';
 import { LazyPartsPanel } from '@/components/lazy-parts-panel';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -252,6 +253,7 @@ export function PlannerMap({ pins, unlocated, engineers, today, tomorrow, nearMi
                 <X aria-hidden />
               </Button>
             </div>
+            <LazyCustomerContact key={`contact-${details.vantageEquipmentId}`} vantageEquipmentId={details.vantageEquipmentId} className="mt-3" />
             <LazyPartsPanel key={details.vantageEquipmentId} vantageEquipmentId={details.vantageEquipmentId} className="mt-3" />
           </section>
         ) : null}

@@ -32,6 +32,7 @@ export const QUEUE_OPTIONS: Record<QueueName, WorkerQueueOptions> = {
   [QUEUES.vantageContracts]: stately(QUEUES.vantageContracts, 3600),
   [QUEUES.vantageWork]: stately(QUEUES.vantageWork, 3600),
   [QUEUES.vantageEngineers]: stately(QUEUES.vantageEngineers, 3600),
+  [QUEUES.vantageAlertNotes]: stately(QUEUES.vantageAlertNotes, 3600),
   [QUEUES.vantageSchedule]: stately(QUEUES.vantageSchedule, 1800),
   [QUEUES.postcodeLookup]: stately(QUEUES.postcodeLookup, 3600),
   [QUEUES.replenishEvaluate]: stately(QUEUES.replenishEvaluate, 1800),

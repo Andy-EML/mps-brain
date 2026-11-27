@@ -287,5 +287,48 @@ describe('Vantage client', () => {
       expect(gets[0]!.url.searchParams.get('$filter')).toContain('deleteddate eq null');
       expect(gets[1]!.url.searchParams.get('$filter')).toContain('Id gt 2');
     });
+    it('listCustomerPeople pages customerperson by key and guards deleted rows', async () => {
+      const pages = [[{ Id: 1, CustomerId: 5 }, { Id: 2, CustomerId: 5 }], [{ Id: 3, CustomerId: 6 }]];
+      let n = 0;
+      const { client, calls } = make(({ url }) => (ok(url) ? session('t', '2026-09-17T10:30:00Z') : json({ value: pages[n++] ?? [] })));
+      const out = await client.listCustomerPeople();
+      expect(out.map((r) => r.Id)).toEqual([1, 2, 3]);
+      const gets = calls.filter((c) => c.url.pathname === '/customerperson');
+      expect(gets).toHaveLength(2);
+      expect(gets.every((c) => c.method === 'GET' && c.headers['api-version'] === '1.22')).toBe(true);
+      expect(gets[0]!.url.searchParams.get('$filter')).toContain('deleteddate eq null');
+      expect(gets[1]!.url.searchParams.get('$filter')).toContain('Id gt 2');
+    });
+    it('searchNotes pages GetNotesViaKeyword with $skip/$top, quoting the word, and drops repeats', async () => {
+      const pages = [[{ Id: 1 }, { Id: 2 }], [{ Id: 2 }, { Id: 3 }], [{ Id: 4 }]];
+      let n = 0;
+      const { client, calls } = make(({ url }) => (ok(url) ? session('t', '2026-09-17T10:30:00Z') : json({ value: pages[n++] ?? [] })));
+      const out = await client.searchNotes(" o'neil ");
+      expect(out.map((r) => r.Id)).toEqual([1, 2, 3, 4]);
+      const gets = calls.filter((c) => c.url.pathname !== '/application/loginsingle');
+      expect(gets).toHaveLength(3);
+      expect(decodeURIComponent(gets[0]!.url.pathname)).toBe("/user/GetNotesViaKeyword(search='o''neil')");
+      expect(gets.map((g) => g.url.searchParams.get('$skip'))).toEqual(['0', '2', '4']);
+      expect(gets.every((g) => g.method === 'GET' && g.url.searchParams.get('$top') === '2')).toBe(true);
+      expect(gets.every((g) => g.headers['api-version'] === '1.22')).toBe(true);
+      // A bound function result: no automatic deleted guard.
+      expect(gets[0]!.url.searchParams.get('$filter')).toBeNull();
+    });
+
+    it('searchNotes stops at a limit', async () => {
+      let n = 0;
+      const { client, calls } = make(({ url }) =>
+        ok(url) ? session('t', '2026-09-17T10:30:00Z') : json({ value: [{ Id: ++n }, { Id: ++n }] }),
+      );
+      expect((await client.searchNotes('call', { limit: 3 })).map((r) => r.Id)).toEqual([1, 2, 3]);
+      expect(calls.filter((c) => !ok(c.url))).toHaveLength(2);
+    });
+
+    it('searchNotes refuses an empty or one-letter word without calling Vantage', async () => {
+      const { client, calls } = make(() => json({ value: [] }));
+      await expect(client.searchNotes('  ')).rejects.toBeInstanceOf(ParseError);
+      await expect(client.searchNotes('a')).rejects.toBeInstanceOf(ParseError);
+      expect(calls).toHaveLength(0);
+    });
   });
 });

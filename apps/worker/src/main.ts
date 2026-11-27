@@ -49,6 +49,7 @@ async function main(): Promise<void> {
   await boss.schedule(QUEUES.vantageWork, env.WORK_CRON, {}, { tz });
   await boss.schedule(QUEUES.vantageSchedule, env.SCHEDULE_CRON, {}, { tz });
   await boss.schedule(QUEUES.vantageEngineers, env.ENGINEERS_CRON, {}, { tz });
+  await boss.schedule(QUEUES.vantageAlertNotes, env.ALERT_NOTES_CRON, {}, { tz });
   await boss.schedule(QUEUES.postcodeLookup, env.POSTCODE_CRON, {}, { tz });
   // After the 02:00 Vantage pull and its link run.
   await boss.schedule(QUEUES.drmsRegistrationScan, '30 3 * * *', {}, { tz });

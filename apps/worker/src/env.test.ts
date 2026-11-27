@@ -23,6 +23,7 @@ describe('loadEnv', () => {
       ORDERS_CRON: '20 * * * *',
       SCHEDULE_CRON: '*/30 6-19 * * *',
       ENGINEERS_CRON: '15 3 * * *',
+      ALERT_NOTES_CRON: '25 3 * * *',
       POSTCODE_CRON: '40 3 * * *',
       POSTCODES_BASE_URL: 'https://api.postcodes.io',
       OFFLINE_ALERT_HOURS: 24,

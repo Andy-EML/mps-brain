@@ -29,6 +29,7 @@ import {
 } from '@/components/pm-status';
 import { CopyText } from '@/components/copy-text';
 import { DismissFields } from '@/components/pm-dismiss-fields';
+import { LazyCustomerContact } from '@/components/lazy-customer-contact';
 import { LazyPartsPanel } from '@/components/lazy-parts-panel';
 import { ToneBadge } from '@/components/tone-badge';
 import { Button } from '@/components/ui/button';
@@ -383,10 +384,14 @@ function Panel({
         timeCapMonths={timeCapMonths}
         afterSummary={
           // The panel renders on the row's first open, so parts load then, one machine at a time.
-          <section aria-label="Parts" className="border-t border-line px-5 py-4">
-            <h3 className="mb-2 text-[13px] font-medium">Parts</h3>
-            <LazyPartsPanel vantageEquipmentId={r.vantageEquipmentId} className="max-w-3xl" />
-          </section>
+          <>
+            {/* Phone and Vantage alert notes, loaded with the parts on the row's first open. */}
+            <LazyCustomerContact vantageEquipmentId={r.vantageEquipmentId} className="border-t border-line px-5 py-4" />
+            <section aria-label="Parts" className="border-t border-line px-5 py-4">
+              <h3 className="mb-2 text-[13px] font-medium">Parts</h3>
+              <LazyPartsPanel vantageEquipmentId={r.vantageEquipmentId} className="max-w-3xl" />
+            </section>
+          </>
         }
       />
       <div className="grid gap-4 border-t border-line px-5 py-4 lg:grid-cols-2">

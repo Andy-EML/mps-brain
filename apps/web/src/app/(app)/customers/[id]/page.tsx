@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, Boxes, ChevronRight, PackageX } from 'lucide-react';
 import {
   getCustomer,
+  getCustomerContact,
   getDefaultSettings,
   getPlannerSettings,
   listCustomerDevices,
@@ -17,6 +18,7 @@ import {
 } from '@mps/db/queries';
 import { cn } from 'cn';
 import { Breadcrumb } from '@/components/breadcrumb';
+import { CustomerContact } from '@/components/customer-contact';
 import { ResetCustomerDialog } from '@/components/customer-override-dialogs';
 import { customerHref, customerStockBadge, customersBackHref } from '@/components/customers';
 import { shelfHref } from '@/components/shelf';
@@ -29,6 +31,7 @@ import { SelfManagedSwitch } from '@/components/self-managed-switch';
 import { SettingsDialog, type SettingsField, type SettingsHint } from '@/components/settings-dialog';
 import { DeleteShelfDialog, HoldingsForm, NewShelfDialog } from '@/components/shelf-forms';
 import { ToneBadge } from '@/components/tone-badge';
+import { VantageNoteSearch } from '@/components/vantage-note-search';
 import { updateCustomerAction } from '@/app/(app)/settings/replenishment/actions';
 import { requireUser } from '@/lib/auth';
 import { getDb } from '@/lib/db';
@@ -153,7 +156,7 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
   const since = new Date();
   since.setMonth(since.getMonth() - ORDER_MONTHS);
 
-  const [devices, orders, shelves, preview, settingsRows, defaults, families, planner] = await Promise.all([
+  const [devices, orders, shelves, preview, settingsRows, defaults, families, planner, contact] = await Promise.all([
     listCustomerDevices(db, ids),
     listCustomerOrders(db, ids, since),
     listCustomerShelves(db, ids),
@@ -162,6 +165,8 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
     getDefaultSettings(db),
     listFamilies(db),
     getPlannerSettings(db),
+    // Phone from the synced customer record; alert notes from the nightly vantage-alert-notes job.
+    getCustomerContact(db, id),
   ]);
   const dealerSuggestions = [...new Set(Object.values(planner.regionDealers).filter((d): d is string => !!d))];
   const settings = settingsRows.find((r) => r.vantageCustomerId === id);
@@ -266,6 +271,8 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
           </div>
         }
       />
+
+      <CustomerContact contact={contact} className="-mt-3 mb-5 max-w-3xl" />
 
       {sm.selfManaged ? (
         <div className="mb-5 flex items-start gap-3 rounded-xl border border-warn/30 bg-warn/5 px-5 py-4">
@@ -515,6 +522,8 @@ export default async function CustomerPage({ params, searchParams }: PageProps<'
             </div>
           )}
         </Card>
+
+        <VantageNoteSearch />
       </div>
     </>
   );

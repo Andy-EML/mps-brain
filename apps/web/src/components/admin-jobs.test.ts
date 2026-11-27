@@ -111,7 +111,7 @@ describe('statLines', () => {
 });
 
 describe('JOB_CARDS', () => {
-  it('covers all fifteen queues and flags the ones that call an external API', () => {
+  it('covers all sixteen queues and flags the ones that call an external API', () => {
     expect(JOB_CARDS.map((c) => c.queue)).toEqual([
       'vantage-pull',
       'drms-pull',
@@ -123,6 +123,7 @@ describe('JOB_CARDS', () => {
       'vantage-contracts',
       'vantage-work',
       'vantage-engineers',
+      'vantage-alert-notes',
       'vantage-schedule',
       'postcode-lookup',
       'replenish-evaluate',
@@ -140,6 +141,7 @@ describe('JOB_CARDS', () => {
       'vantage-pull': 'Vantage',
       'drms-pull': 'DRMS',
       'vantage-engineers': 'Vantage',
+      'vantage-alert-notes': 'Vantage',
       'vantage-schedule': 'Vantage',
       'postcode-lookup': 'postcodes.io',
       // The scan only reads Vantage; the submit job is the one that writes to DRMS.

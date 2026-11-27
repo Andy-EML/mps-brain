@@ -3,7 +3,7 @@
  * Pure — no I/O. The settings arrive already resolved (the cascade lives in SQL,
  * `effectiveSettingsSubquery`), so this never re-implements it.
  */
-import { deliveryColour } from './toner-delivery';
+import { deliveryAtOrAfter, deliveryColour } from './toner-delivery';
 
 export const REPLENISH_COLOURS = ['black', 'cyan', 'magenta', 'yellow', 'waste'] as const;
 export const TONER_COLOURS = ['black', 'cyan', 'magenta', 'yellow'] as const;
@@ -75,6 +75,11 @@ export interface DeviceReplenishInput {
   history: Partial<Record<ReplenishColour, ColourHistory>>;
   /** Consumables the device's site shelf covers; a trigger on one is held back, the shelf tops up instead. */
   siteStockCovered?: ReplenishColour[];
+  /**
+   * Delivery alarm times per colour (any DRMS status). An Empty / Near Empty alarm (waste: Full / Almost Full)
+   * with a Delivery at or after its received time is stale: the toner was changed, so it proposes nothing.
+   */
+  deliveries?: Partial<Record<ReplenishColour, Date[]>>;
   now: Date;
 }
 
@@ -103,14 +108,19 @@ function channels(isColour: boolean): ReplenishColour[] {
   return isColour ? [...REPLENISH_COLOURS] : ['black', 'waste'];
 }
 
-/** The newest ready alarm per colour inside the window. */
-function latestAlarms(alarms: ConsumableAlarm[], now: Date): Map<ReplenishColour, ConsumableAlarm> {
+/** The newest ready alarm per colour inside the window, ignoring any a later Delivery has made stale. */
+function latestAlarms(
+  alarms: ConsumableAlarm[],
+  now: Date,
+  deliveries: DeviceReplenishInput['deliveries'],
+): Map<ReplenishColour, ConsumableAlarm> {
   const since = now.getTime() - ALARM_WINDOW_DAYS * DAY_MS;
   const out = new Map<ReplenishColour, ConsumableAlarm>();
   for (const a of alarms) {
     if (a.status !== READY_FOR_ERP || a.receivedAt.getTime() < since) continue;
     const colour = alarmColour(a);
     if (!colour) continue;
+    if (deliveryAtOrAfter(deliveries?.[colour], a.receivedAt) !== null) continue; // toner already changed
     const prev = out.get(colour);
     if (!prev || a.receivedAt > prev.receivedAt) out.set(colour, a);
   }
@@ -139,7 +149,7 @@ export function evaluateDevice(input: DeviceReplenishInput): DeviceEvaluation {
   if (!input.autoReplenish) return { candidates: [], suppressed: [], skipped: 'auto_off' };
   if (input.vantageEquipmentId === null) return { candidates: [], suppressed: [], skipped: 'unlinked' };
 
-  const alarms = latestAlarms(input.alarms, input.now);
+  const alarms = latestAlarms(input.alarms, input.now, input.deliveries);
   const candidates: ProposalCandidate[] = [];
   const suppressed: DeviceEvaluation['suppressed'] = [];
 

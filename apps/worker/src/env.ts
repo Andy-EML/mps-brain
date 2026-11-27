@@ -28,6 +28,8 @@ const envSchema = z.object({
   SCHEDULE_CRON: z.string().min(1).default('*/30 6-19 * * *'),
   /** Vantage engineers (PM planner). Nightly. */
   ENGINEERS_CRON: z.string().min(1).default('15 3 * * *'),
+  /** Vantage alert notes (keyword search of the popups). Nightly, after engineers. */
+  ALERT_NOTES_CRON: z.string().min(1).default('25 3 * * *'),
   /** postcodes.io district lookups (county and centroid for the PM planner). Nightly, after engineers. */
   POSTCODE_CRON: z.string().min(1).default('40 3 * * *'),
   POSTCODES_BASE_URL: z.url().default('https://api.postcodes.io'),

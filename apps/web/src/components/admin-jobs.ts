@@ -232,6 +232,14 @@ export const JOB_CARDS: readonly JobCard[] = [
     external: true,
   },
   {
+    queue: QUEUES.vantageAlertNotes,
+    title: 'Vantage alert notes and contacts',
+    description:
+      'Copies every site contact (name, role, phone, mobile, email, primary) from Vantage, marking anyone no longer there as gone. Then searches Vantage notes for a list of words ("call", "ahead", "access"…) and keeps the alert notes (the popups) on customers and machines. The customer page, device page and PM views show both. A note not found for 7 days is hidden. Read-only.',
+    schedule: 'Daily at 03:25 (worker default; ALERT_NOTES_CRON overrides it)',
+    external: true,
+  },
+  {
     queue: QUEUES.vantageSchedule,
     title: 'Vantage schedule',
     description:
@@ -292,6 +300,7 @@ export const RUN_ALL_QUEUES: readonly QueueName[] = [
   QUEUES.vantageContracts,
   QUEUES.vantageWork,
   QUEUES.vantageEngineers,
+  QUEUES.vantageAlertNotes,
   QUEUES.vantageSchedule,
   QUEUES.postcodeLookup,
   QUEUES.drmsRegistrationScan,

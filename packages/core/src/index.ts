@@ -17,3 +17,5 @@ export * from './region';
 export * from './county';
 export * from './parts';
 export * from './toner-delivery';
+export * from './alert-notes';
+export * from './customer-people';
