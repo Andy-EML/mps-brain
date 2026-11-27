@@ -13,8 +13,10 @@ import {
 } from '@mps/core';
 import { cartridgeChanges, deviceAlarms, drmsEquipment, replenishmentProposals, type Db } from '@mps/db';
 import {
+  closeOrdersByDelivery,
   computeHolds,
   counterPivotSubquery,
+  effectiveToner,
   effectiveSettingsSubquery,
   getOrderStates,
   londonDayAsUtc,
@@ -48,6 +50,8 @@ export function orderedInVantage(state: ColourOrderState, proposalCreatedAt: Dat
 export interface ReplenishEvaluateDeps {
   db: Db;
   now?: () => Date;
+  /** Test seam: the earliest Toner Delivery that counts as a shelf use (default: DELIVERY_COUNT_FROM). */
+  deliveryFrom?: Date;
 }
 
 /**
@@ -66,8 +70,12 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   // Self-managed customers: clear their pending proposals (devices and shelves) before site stock decides
   // whether a shelf already has a live top-up, so a stale one never blocks or survives.
   const selfManagedSuperseded = (await supersedeSelfManagedProposals(db, now)).length;
+  // A Toner Delivery alarm means the cartridge was fitted: an in-progress order for that device and colour
+  // that was approved before it is closed (as a matching Vantage sales order would). Pending proposals are
+  // left to the usual rules; a Delivery by itself never creates, cancels or supersedes one.
+  const deliveryClosed = await closeOrdersByDelivery(db, now);
   // Site stock first: it raises shelf top-ups and says which colours a shelf now covers.
-  const siteStock = await evaluateSiteStock(db, now);
+  const siteStock = await evaluateSiteStock(db, now, { deliveryFrom: deps.deliveryFrom });
   const hiddenSuperseded = await supersedeHiddenProposals(db, now);
   const eff = effectiveSettingsSubquery(db);
   const pivot = counterPivotSubquery(db);
@@ -87,6 +95,11 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       cyan: pivot.cyan,
       magenta: pivot.magenta,
       yellow: pivot.yellow,
+      readAt: pivot.readAt,
+      blackDeliveryAt: pivot.blackDeliveryAt,
+      cyanDeliveryAt: pivot.cyanDeliveryAt,
+      magentaDeliveryAt: pivot.magentaDeliveryAt,
+      yellowDeliveryAt: pivot.yellowDeliveryAt,
     })
     .from(drmsEquipment)
     .innerJoin(eff, eq(eff.drmsId, drmsEquipment.drmsId))
@@ -142,7 +155,7 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
   const linkedIds = [...new Set(devices.map((d) => d.vantageEquipmentId).filter((id): id is number => id !== null))];
   const orderStates = await getOrderStates(db, linkedIds, now);
 
-  const stats = { devices: devices.length, proposed: 0, superseded: hiddenSuperseded, suppressed: 0, autoOff: 0, unlinked: 0, selfManaged: 0, selfManagedSuperseded, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps };
+  const stats = { devices: devices.length, proposed: 0, superseded: hiddenSuperseded, suppressed: 0, autoOff: 0, unlinked: 0, selfManaged: 0, selfManagedSuperseded, siteStockShelves: siteStock.stats.shelves, siteStockConsidered: siteStock.stats.considered, siteStockCounted: siteStock.stats.counted, siteStockTopUps: siteStock.stats.topUps, deliveryClosed: deliveryClosed.closed };
 
   for (const d of devices) {
     // Self-managed customers get no proposals at all (the flag beats a device-level auto-replenish override).
@@ -151,12 +164,8 @@ export async function runReplenishEvaluate(deps: ReplenishEvaluateDeps): Promise
       continue;
     }
     const thresholds: Record<TonerColour, number> = { black: Number(d.tBlack), cyan: Number(d.tCyan), magenta: Number(d.tMagenta), yellow: Number(d.tYellow) };
-    const levels: Record<TonerColour, number | null> = {
-      black: d.black === null ? null : Number(d.black),
-      cyan: d.cyan === null ? null : Number(d.cyan),
-      magenta: d.magenta === null ? null : Number(d.magenta),
-      yellow: d.yellow === null ? null : Number(d.yellow),
-    };
+    // The effective level: 100 when a Toner Delivery alarm is newer than the reading (a cartridge was fitted).
+    const levels: Record<TonerColour, number | null> = effectiveToner(d).toner;
     const coveredColours = siteStock.covered.get(d.drmsId) ?? new Set<ReplenishColour>();
     const mine = proposalRows.filter((p) => p.drmsId === d.drmsId);
     const states = d.vantageEquipmentId === null ? undefined : orderStates.get(d.vantageEquipmentId);

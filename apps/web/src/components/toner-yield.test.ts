@@ -17,6 +17,7 @@ const check = (over: Partial<YieldCheck> = {}): YieldCheck => ({
 
 const cart = (day: string, pagesDone: number | null, quantity = 1): CartridgeInterval => ({
   orderDate: new Date(`${day}T00:00:00Z`),
+  anchor: new Date(`${day}T00:00:00Z`),
   salesOrderId: Number(day.replaceAll('-', '')),
   lineId: 1,
   lineIds: [1],

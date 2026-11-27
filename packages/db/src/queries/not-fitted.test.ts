@@ -4,6 +4,7 @@ import {
   cartridgeFamilyModels,
   counterSnapshots,
   counterValues,
+  deviceAlarms,
   deviceLinks,
   drmsEquipment,
   vantageEquipment,
@@ -59,7 +60,7 @@ describe('computeHolds', () => {
     iso: string,
     completed: string | null,
     lines: { colour: string; quantity?: string | null; equipment?: number | null; returned?: boolean }[],
-    opts: { deleted?: boolean; headerEquipment?: number | null } = {},
+    opts: { deleted?: boolean; headerEquipment?: number | null; createdAt?: string } = {},
   ) {
     await t.db.insert(vantageSalesOrders).values({
       vantageId: soId,
@@ -68,7 +69,7 @@ describe('computeHolds', () => {
       completedDate: completed ? when(completed) : null,
       vantageEquipmentId: opts.headerEquipment === undefined ? 100 : opts.headerEquipment,
       deletedDate: opts.deleted ? d(iso) : null,
-      raw: {},
+      raw: opts.createdAt ? { CreatedDate: opts.createdAt } : {},
     });
     for (const l of lines) {
       await t.db.insert(vantageSalesOrderLines).values({
@@ -92,6 +93,51 @@ describe('computeHolds', () => {
     const holds = await computeHolds(t.db, [cand(1)], NOW);
     expect(holds.get(1)).toMatchObject({ reason: 'not_fitted' });
     expect(holds.get(1)!.detail).toContain('Cyan sent 1 Feb 2026 (SO-1)');
+  });
+
+  describe('Toner Delivery alarms', () => {
+    let alarmSeq = 0;
+    const delivery = (at: string, description = 'Toner Delivery(C)', status = 'EquipmentDiscovered') =>
+      t.db.insert(deviceAlarms).values({ alarmId: `h${++alarmSeq}`, drmsEquipmentId: 'col', receivedTime: when(at), description, status, category: 'toner', raw: {} });
+
+    it('releases a not_fitted hold when a Delivery arrives after the order, with no level rise seen', async () => {
+      await meter('2026-03-10', 5_000);
+      await level('2026-01-28', 10);
+      await level('2026-03-05', 8);
+      await order(1, '2026-02-01', null, [{ colour: 'cyan' }]);
+      expect((await computeHolds(t.db, [cand(1)], NOW)).get(1)).toMatchObject({ reason: 'not_fitted' });
+      await delivery('2026-02-10T09:00:00Z');
+      expect((await computeHolds(t.db, [cand(1)], NOW)).get(1)).toBeNull();
+    });
+    it('ignores a Delivery from before the order, or for another colour', async () => {
+      await meter('2026-03-10', 5_000);
+      await level('2026-01-28', 10);
+      await level('2026-03-05', 8);
+      await order(1, '2026-02-01', null, [{ colour: 'cyan' }]);
+      await delivery('2026-01-20T09:00:00Z');
+      await delivery('2026-02-10T09:00:00Z', 'Toner Delivery(K)');
+      expect((await computeHolds(t.db, [cand(1)], NOW)).get(1)).toMatchObject({ reason: 'not_fitted' });
+    });
+    it('counts Deliveries from the moment the order was created, not midnight of its date', async () => {
+      await meter('2026-03-10', 5_000);
+      await level('2026-01-28', 10);
+      await level('2026-03-05', 8);
+      await order(1, '2026-02-01', null, [{ colour: 'cyan' }], { createdAt: '2026-02-01T14:00:00Z' });
+      await delivery('2026-02-01T09:00:00Z'); // the same day, before the order existed: not its fit
+      expect((await computeHolds(t.db, [cand(1)], NOW)).get(1)).toMatchObject({ reason: 'not_fitted' });
+      await delivery('2026-02-06T16:00:00Z'); // a later one, clear of the 3-day dedupe, is its fit
+      expect((await computeHolds(t.db, [cand(1)], NOW)).get(1)).toBeNull();
+    });
+    it('a two-cartridge order with one Delivery is still held for the spare', async () => {
+      await meter('2026-03-10', 5_000);
+      await level('2026-01-28', 10);
+      await level('2026-03-05', 8);
+      await order(1, '2026-02-01', null, [{ colour: 'cyan', quantity: '2' }]);
+      await delivery('2026-02-10T09:00:00Z');
+      const h = (await computeHolds(t.db, [cand(1)], NOW)).get(1);
+      expect(h).toMatchObject({ reason: 'not_fitted' });
+      expect(h!.detail).toContain('1 fitted since');
+    });
   });
 
   it('releases once a fit is seen after the order', async () => {

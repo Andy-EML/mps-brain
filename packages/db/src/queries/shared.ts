@@ -1,4 +1,5 @@
-import { eq, max, sql, type AnyColumn, type SQL } from 'drizzle-orm';
+import { DELIVERY_LEVEL, effectiveTonerLevel, type TonerColour } from '@mps/core';
+import { eq, max, sql, type AnyColumn, type SQL, type SQLWrapper } from 'drizzle-orm';
 import type { Db } from '../client';
 import { counterSnapshots, counterValues, deviceAlarms, drmsEquipment, hiddenDevices } from '../schema';
 import type { effectiveSettingsSubquery } from './settings';
@@ -65,7 +66,44 @@ function colourPivot(name: string) {
 }
 
 /**
+ * WHERE predicate for any Toner Delivery or Waste Toner Bottle Delivery alarm. The literal is inlined (not a
+ * bound parameter) and is exactly the predicate of the partial index `device_alarms_delivery_idx`
+ * (migration 0026), so the planner can use that index. Change the two together.
+ */
+export function deliveryAlarmSql() {
+  return sql`${deviceAlarms.description} ~* ${sql.raw("'toner (bottle )?delivery'")}`;
+}
+
+/**
+ * Subquery: one row per device with the time of its newest Toner Delivery alarm per colour (any DRMS
+ * status). A Delivery is a new cartridge fitted; `counterPivotSubquery` carries these so the level it
+ * reports can be made effective (see `effectiveToner` / `effectiveLevelSql`).
+ */
+export function latestDeliverySubquery(db: Db) {
+  const at = (re: string) => sql<Date | null>`max(${deviceAlarms.receivedTime}) filter (where ${deviceAlarms.description} ~* ${re})`.mapWith(deviceAlarms.receivedTime);
+  return db
+    .select({
+      drmsId: deviceAlarms.drmsEquipmentId,
+      // `[(]` and `[)]`, not escaped brackets, so the pattern survives string escaping.
+      black: at('Toner Delivery[(](BK|K)[)]').as('delivery_black'),
+      cyan: at('Toner Delivery[(]C[)]').as('delivery_cyan'),
+      magenta: at('Toner Delivery[(]M[)]').as('delivery_magenta'),
+      yellow: at('Toner Delivery[(]Y[)]').as('delivery_yellow'),
+      waste: at('Waste Toner Bottle Delivery').as('delivery_waste'),
+    })
+    .from(deviceAlarms)
+    .where(deliveryAlarmSql())
+    .groupBy(deviceAlarms.drmsEquipmentId)
+    .as('latest_delivery');
+}
+
+/**
  * Subquery: one row per device with its latest toner + meter readings pivoted into columns.
+ *
+ * The toner columns are the raw DRMS readings. `readAt` (when that snapshot was taken) and the
+ * `*DeliveryAt` columns (newest Toner Delivery alarm per colour; colour ones null on a mono device)
+ * go with them: a Delivery newer than the reading means a new cartridge, which `effectiveToner`
+ * (rows) and `effectiveLevelSql` (WHERE/aggregates) turn into 100%.
  * `leftJoin` this on `drmsId` so devices without any snapshot still appear (all columns null).
  *
  * Joins `drms_equipment` only for `is_colour`; the join is on the snapshot's device, which is a
@@ -73,9 +111,18 @@ function colourPivot(name: string) {
  */
 export function counterPivotSubquery(db: Db) {
   const latest = latestSnapshotSubquery(db);
+  const del = latestDeliverySubquery(db);
+  // A colour Delivery only counts on a device that has that cartridge (same rule as `colourPivot`).
+  const colourDelivery = (c: SQLWrapper) => sql<Date | null>`case when ${drmsEquipment.isColour} then max(${c}) end`.mapWith(deviceAlarms.receivedTime);
   return db
     .select({
       drmsId: latest.drmsId,
+      // A snapshot with no `received_time` is read at when we fetched it, so it never looks older than a Delivery it followed.
+      readAt: sql<Date | null>`max(coalesce(${counterSnapshots.receivedTime}, ${counterSnapshots.fetchedAt}))`.mapWith(counterSnapshots.fetchedAt).as('read_at'),
+      blackDeliveryAt: sql<Date | null>`max(${del.black})`.mapWith(deviceAlarms.receivedTime).as('black_delivery_at'),
+      cyanDeliveryAt: colourDelivery(del.cyan).as('cyan_delivery_at'),
+      magentaDeliveryAt: colourDelivery(del.magenta).as('magenta_delivery_at'),
+      yellowDeliveryAt: colourDelivery(del.yellow).as('yellow_delivery_at'),
       black: pivot(TONER_NAMES.black).as('black'),
       cyan: colourPivot(TONER_NAMES.cyan).as('cyan'),
       magenta: colourPivot(TONER_NAMES.magenta).as('magenta'),
@@ -90,10 +137,62 @@ export function counterPivotSubquery(db: Db) {
     .from(latest)
     .innerJoin(drmsEquipment, eq(drmsEquipment.drmsId, latest.drmsId))
     .leftJoin(counterValues, eq(counterValues.snapshotId, latest.snapshotId))
+    .leftJoin(counterSnapshots, eq(counterSnapshots.id, latest.snapshotId))
+    .leftJoin(del, eq(del.drmsId, latest.drmsId))
     // `is_colour` is grouped, not aggregated: it is one value per device, and the colour pivots
     // above read it outside their own `max(...)`.
     .groupBy(latest.drmsId, drmsEquipment.isColour)
     .as('counter_pivot');
+}
+
+/**
+ * SQL mirror of `effectiveTonerLevel` (@mps/core), for WHERE clauses, aggregates and ORDER BY that
+ * cannot call it: a Delivery newer than the reading (or with no reading) reads as 100%. Parity with the
+ * core helper is tested (`effective-level.test.ts`); change both together.
+ */
+export function effectiveLevelSql(level: SQLWrapper, readAt: SQLWrapper, deliveryAt: SQLWrapper): SQL<number | null> {
+  return sql<number | null>`(case when ${deliveryAt} is not null and (${readAt} is null or ${deliveryAt} > ${readAt}) then ${sql.raw(String(DELIVERY_LEVEL))} else ${level} end)`;
+}
+
+/** The four effective toner levels of a pivot row, as SQL. */
+export function effectivePivotLevels(pivot: ReturnType<typeof counterPivotSubquery>) {
+  return {
+    black: effectiveLevelSql(pivot.black, pivot.readAt, pivot.blackDeliveryAt),
+    cyan: effectiveLevelSql(pivot.cyan, pivot.readAt, pivot.cyanDeliveryAt),
+    magenta: effectiveLevelSql(pivot.magenta, pivot.readAt, pivot.magentaDeliveryAt),
+    yellow: effectiveLevelSql(pivot.yellow, pivot.readAt, pivot.yellowDeliveryAt),
+  };
+}
+
+/** The pivot columns `effectiveToner` reads. */
+export interface PivotTonerRow {
+  black: unknown;
+  cyan: unknown;
+  magenta: unknown;
+  yellow: unknown;
+  readAt: Date | null;
+  blackDeliveryAt: Date | null;
+  cyanDeliveryAt: Date | null;
+  magentaDeliveryAt: Date | null;
+  yellowDeliveryAt: Date | null;
+}
+
+/**
+ * A pivot row's toner as shown and used: the effective levels (a newer Delivery reads 100%) and, for
+ * each colour a Delivery overrode, the date of the new cartridge.
+ */
+export function effectiveToner(row: PivotTonerRow): {
+  toner: Record<TonerColour, number | null>;
+  tonerNew: Partial<Record<TonerColour, Date>>;
+} {
+  const toner = {} as Record<TonerColour, number | null>;
+  const tonerNew: Partial<Record<TonerColour, Date>> = {};
+  for (const c of ['black', 'cyan', 'magenta', 'yellow'] as const) {
+    const e = effectiveTonerLevel({ level: toNumberOrNull(row[c]), readAt: row.readAt ?? null, deliveryAt: row[`${c}DeliveryAt`] ?? null });
+    toner[c] = e.level;
+    if (e.newCartridgeAt) tonerNew[c] = e.newCartridgeAt;
+  }
+  return { toner, tonerNew };
 }
 
 /**
@@ -130,7 +229,8 @@ export function belowThreshold(
   pivot: ReturnType<typeof counterPivotSubquery>,
   eff: ReturnType<typeof effectiveSettingsSubquery>,
 ): SQL {
-  return sql`(${pivot.black} < ${eff.thresholdBlack} or ${pivot.cyan} < ${eff.thresholdCyan} or ${pivot.magenta} < ${eff.thresholdMagenta} or ${pivot.yellow} < ${eff.thresholdYellow})`;
+  const l = effectivePivotLevels(pivot);
+  return sql`(${l.black} < ${eff.thresholdBlack} or ${l.cyan} < ${eff.thresholdCyan} or ${l.magenta} < ${eff.thresholdMagenta} or ${l.yellow} < ${eff.thresholdYellow})`;
 }
 
 /**

@@ -3,6 +3,7 @@
  * Pure — no I/O. The settings arrive already resolved (the cascade lives in SQL,
  * `effectiveSettingsSubquery`), so this never re-implements it.
  */
+import { deliveryColour } from './toner-delivery';
 
 export const REPLENISH_COLOURS = ['black', 'cyan', 'magenta', 'yellow', 'waste'] as const;
 export const TONER_COLOURS = ['black', 'cyan', 'magenta', 'yellow'] as const;
@@ -35,8 +36,11 @@ const BRACKET_COLOUR: Record<string, TonerColour> = { K: 'black', BK: 'black', C
  * The consumable a DRMS alarm asks for. Toner alarms name their colour in a trailing bracket —
  * "Toner Near Empty(K)", "Toner Delivery(BK)" — and waste alarms need no colour. Parts, service
  * and jam alarms never propose: a drum or imaging unit needs an engineer, not a sales order.
+ * A Delivery alarm never proposes either: it says a new cartridge went in (see `deliveryColour`).
+ * Only a site-stock shelf that holds the colour orders on a Delivery, via its top-up.
  */
 export function alarmColour(a: { category: string | null; description: string | null; fcCode?: string | null }): ReplenishColour | null {
+  if (deliveryColour(a.description) !== null) return null;
   if (a.category === 'waste') return 'waste';
   if (a.category !== 'toner') return null;
   const m = /\((BK|K|C|M|Y)\)\s*$/i.exec(a.description ?? '');

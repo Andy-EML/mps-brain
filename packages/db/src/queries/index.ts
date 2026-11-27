@@ -19,6 +19,7 @@ export * from './issues';
 export * from './order-state';
 export * from './meter-history';
 export * from './order-watch';
+export * from './delivery-close';
 export * from './pm-due';
 export * from './pm-actions';
 export * from './pm-map';
@@ -39,4 +40,4 @@ export * from './toner-yield';
 // The counter names the UI has to ask `getCounterHistory` for, plus the latest-toner-and-meter
 // pivot the replenish-evaluate job reads directly. The rest of `./shared` is query-building
 // plumbing and stays internal.
-export { counterPivotSubquery, DEFAULT_OFFLINE_HOURS, METER_NAMES, TONER_NAMES } from './shared';
+export { counterPivotSubquery, effectiveLevelSql, effectivePivotLevels, effectiveToner, DEFAULT_OFFLINE_HOURS, METER_NAMES, TONER_NAMES } from './shared';

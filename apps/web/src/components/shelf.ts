@@ -119,6 +119,9 @@ const REASONS: Record<string, string> = {
   first: 'counted, first one from this machine',
   fresh_cartridge: 'counted, a fresh cartridge went in since the last',
   level_rise: 'counted, a fresh cartridge went in',
+  delivery: 'counted, a new cartridge was delivered',
+  same_change: 'same cartridge change as the last, not counted',
+  delivery_same_change: 'same cartridge change as the last, not counted',
   after_recount_days: `counted, more than ${RECOUNT_DAYS} days since the last`,
   repeat: 'repeat, not counted',
   before_counting_start: 'before this shelf existed, not counted',
@@ -135,6 +138,9 @@ export function eventOutcome(event: { counted: boolean; reason: string }): strin
  */
 export function eventAlarmText(colour: ReplenishColour | null, reason?: string): string {
   if (reason === 'level_rise') return colour === null ? 'Toner level rise' : `Toner level rise (${colour})`;
+  if (reason === 'delivery' || reason === 'delivery_same_change') {
+    return colour === null ? 'Toner Delivery' : colour === 'waste' ? 'Waste toner bottle delivery' : `Toner Delivery (${colour})`;
+  }
   if (colour === null) return 'Alarm';
   return colour === 'waste' ? 'Waste toner bottle full' : `Toner Empty (${colour})`;
 }

@@ -82,6 +82,30 @@ describe('getDeviceParts', () => {
     expect(byDrms.isColour).toBe(true);
   });
 
+  it('shows a colour at 100% when a Toner Delivery alarm is newer than the reading', async () => {
+    const [s] = await t.db.insert(counterSnapshots).values({ drmsEquipmentId: 'dr1', counterId: 'c1', receivedTime: d('2026-11-25'), fetchedAt: d('2026-11-25'), raw: {} }).returning();
+    await t.db.insert(counterValues).values([
+      { snapshotId: s!.id, name: 'BlackTonerLevel', value: 4 },
+      { snapshotId: s!.id, name: 'CyanTonerLevel', value: 4 },
+    ]);
+    await t.db.insert(deviceAlarms).values([
+      { alarmId: 'dl1', drmsEquipmentId: 'dr1', receivedTime: d('2026-11-26'), description: 'Toner Delivery(BK)', status: 'EquipmentDiscovered', category: 'toner', raw: {} },
+      { alarmId: 'dl2', drmsEquipmentId: 'dr1', receivedTime: d('2026-11-24'), description: 'Toner Delivery(C)', status: 'EquipmentDiscovered', category: 'toner', raw: {} },
+    ]);
+    const r = await getDeviceParts(t.db, { drmsEquipmentId: 'dr1' }, NOW);
+    expect(r.toner).toMatchObject({ black: 100, cyan: 4 });
+    expect(r.toner.newCartridge).toEqual({ black: d('2026-11-26') });
+  });
+
+  it('reads a snapshot with no received_time at its fetched_at, so an older Delivery does not win', async () => {
+    const [s] = await t.db.insert(counterSnapshots).values({ drmsEquipmentId: 'dr1', counterId: 'c1', receivedTime: null, fetchedAt: d('2026-11-25'), raw: {} }).returning();
+    await t.db.insert(counterValues).values({ snapshotId: s!.id, name: 'BlackTonerLevel', value: 4 });
+    await t.db.insert(deviceAlarms).values({ alarmId: 'dl1', drmsEquipmentId: 'dr1', receivedTime: d('2026-11-24'), description: 'Toner Delivery(BK)', status: 'EquipmentDiscovered', category: 'toner', raw: {} });
+    const r = await getDeviceParts(t.db, { drmsEquipmentId: 'dr1' }, NOW);
+    expect(r.toner.black).toBe(4);
+    expect(r.toner.readAt).toEqual(d('2026-11-25'));
+  });
+
   it('gives drum rows per colour, plus belt and fuser, for a colour machine with no developer evidence', async () => {
     const r = await getDeviceParts(t.db, { vantageEquipmentId: 1 }, NOW);
     expect(r.parts.map((p) => `${p.part}${p.colour ? `:${p.colour}` : ''}`)).toEqual([

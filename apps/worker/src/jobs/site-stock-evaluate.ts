@@ -1,4 +1,4 @@
-import { MEMBER_GRACE_DAYS, REPLENISH_COLOURS, countUse, detectChanges, siteStockUse, topUpLines, type EmptyEvent, type LevelPoint, type LevelReading, type ReplenishColour, type ShelfConsumableCounts, type TonerColour } from '@mps/core';
+import { DELIVERY_COUNT_FROM, MEMBER_GRACE_DAYS, REPLENISH_COLOURS, SHELF_SAME_CHANGE_DAYS, countUse, deliveryColour, detectChanges, siteStockUse, topUpLines, type EmptyEvent, type LevelPoint, type LevelReading, type ReplenishColour, type ShelfConsumableCounts, type TonerColour } from '@mps/core';
 import {
   cartridgeFamilies,
   counterSnapshots,
@@ -58,14 +58,21 @@ function trackedColours(shelf: ShelfRow, isColour: boolean): Set<ReplenishColour
  * Counts new cartridge uses from DRMS "empty" alarms against each shelf, raises a top-up proposal
  * for any shelf that has used up a consumable, and reports which colours each device's shelf now
  * covers (so the per-device engine stops proposing them). Idempotent: an alarm is evaluated once
- * per shelf (`site_stock_events` is unique on shelf + alarm). A device counts against a shelf only
+ * per shelf (`site_stock_events` is unique on shelf + alarm). A Toner Delivery alarm (a cartridge fitted)
+ * is a use too, but only for a colour the shelf holds, and one cartridge change counts once: an Empty,
+ * a Delivery and a level rise for the same device and colour within SHELF_SAME_CHANGE_DAYS of each other are
+ * one use, with `delivery` as the preferred reason. A device counts against a shelf only
  * from when it joined it (`site_stock_members`), and a pending top-up the shelf no longer covers
- * is superseded before any new one is raised.
+ * is superseded before any new one is raised. Deliveries received before `deliveryFrom` (default
+ * DELIVERY_COUNT_FROM, the deploy day) are never counted, so the history is not backfilled; a Delivery that
+ * follows a counted Empty with nothing fitted since is that Empty's change whatever the gap.
  */
 export async function evaluateSiteStock(
   db: Db,
   now: Date,
+  opts: { deliveryFrom?: Date } = {},
 ): Promise<{ covered: Map<string, Set<ReplenishColour>>; stats: SiteStockStats }> {
+  const deliveryFrom = opts.deliveryFrom ?? DELIVERY_COUNT_FROM;
   const stats: SiteStockStats = { shelves: 0, considered: 0, counted: 0, topUps: 0 };
   const covered = new Map<string, Set<ReplenishColour>>();
 
@@ -156,13 +163,16 @@ export async function evaluateSiteStock(
       const member = shelfOf.get(a.drmsId)!;
       const shelf = shelfById.get(member.shelfId)!;
       if (a.receivedAt < member.from || seenKeys.has(`${shelf.id}:${a.alarmId}`)) continue;
-      const colour = siteStockUse(a.description);
+      const deliveryOf = deliveryColour(a.description);
+      if (deliveryOf !== null && a.receivedAt < deliveryFrom) continue;
+      const colour = siteStockUse(a.description) ?? deliveryOf;
       if (colour === null || !member.tracked.has(colour)) continue;
+      const isDelivery = deliveryOf !== null;
       stats.considered++;
 
       await db.transaction(async (tx) => {
         const [previous] = await tx
-          .select({ receivedAt: siteStockEvents.receivedAt, source: siteStockEvents.source })
+          .select({ id: siteStockEvents.id, receivedAt: siteStockEvents.receivedAt, source: siteStockEvents.source, reason: siteStockEvents.reason })
           .from(siteStockEvents)
           .where(
             and(
@@ -170,10 +180,36 @@ export async function evaluateSiteStock(
               eq(siteStockEvents.drmsEquipmentId, a.drmsId),
               eq(siteStockEvents.colour, colour),
               eq(siteStockEvents.counted, true),
+              lte(siteStockEvents.receivedAt, a.receivedAt),
             ),
           )
           .orderBy(desc(siteStockEvents.receivedAt), desc(siteStockEvents.id))
           .limit(1);
+
+        // One cartridge change counts once. A Delivery within SHELF_SAME_CHANGE_DAYS after a counted use of the
+        // colour (an Empty, a level rise or another Delivery), or an Empty within that window after a counted
+        // Delivery, is that same change: recorded, not counted. A Delivery after a counted Empty (not yet
+        // relabelled) with nothing fitted since is that Empty's change whatever the gap, like a level rise
+        // after an Empty. (No cap: RECOUNT_DAYS is 14, the same as the window, so a cap would change nothing.)
+        // The Delivery is the preferred reason, so a counted Empty it follows is relabelled `delivery`
+        // (a level rise keeps its own label).
+        const afterEmpty = isDelivery && previous?.source === 'empty_alarm' && previous.reason !== 'delivery';
+        const sameChange =
+          previous !== undefined &&
+          (afterEmpty ||
+            ((isDelivery || previous.reason === 'delivery') &&
+              a.receivedAt.getTime() - previous.receivedAt.getTime() <= SHELF_SAME_CHANGE_DAYS * 86_400_000));
+        if (sameChange) {
+          const inserted = await tx
+            .insert(siteStockEvents)
+            .values({ shelfId: shelf.id, alarmId: a.alarmId, drmsEquipmentId: a.drmsId, colour, receivedAt: a.receivedAt, counted: false, reason: isDelivery ? 'delivery_same_change' : 'same_change', createdAt: now })
+            .onConflictDoNothing()
+            .returning({ id: siteStockEvents.id });
+          if (inserted.length > 0 && isDelivery && previous.source === 'empty_alarm' && previous.reason !== 'delivery') {
+            await tx.update(siteStockEvents).set({ reason: 'delivery' }).where(eq(siteStockEvents.id, previous.id));
+          }
+          return;
+        }
 
         // Waste has no level; with no previous use nothing is compared.
         let levels: LevelPoint[] = [];
@@ -195,16 +231,13 @@ export async function evaluateSiteStock(
           levels = rows.map((r) => ({ at: r.at!, value: r.value! }));
         }
 
-        let { counted, reason } = countUse({
-          colour,
-          receivedAt: a.receivedAt,
-          countingFrom: shelf.countingFrom,
-          previous: previous ?? null,
-          levelsSincePrevious: levels,
-        });
+        // A Delivery is DRMS saying a cartridge went in: a use in its own right, whatever came before.
+        let { counted, reason } = isDelivery
+          ? { counted: true, reason: 'delivery' as string }
+          : countUse({ colour, receivedAt: a.receivedAt, countingFrom: shelf.countingFrom, previous: previous ?? null, levelsSincePrevious: levels });
         // The first Empty after a counted level rise is the new cartridge running out, even if the
         // rise only reached 50-79 (countUse would call it a repeat without a reading >= 80).
-        if (!counted && reason === 'repeat' && previous?.source === 'level' && colour !== 'waste' && a.receivedAt > previous.receivedAt) {
+        if (!isDelivery && !counted && reason === 'repeat' && previous?.source === 'level' && colour !== 'waste' && a.receivedAt > previous.receivedAt) {
           counted = true;
           reason = 'fresh_cartridge';
         }
@@ -242,7 +275,7 @@ export async function evaluateSiteStock(
       for (const colour of member.tracked) {
         if (colour === 'waste') continue;
         const [last] = await db
-          .select({ receivedAt: siteStockEvents.receivedAt, source: siteStockEvents.source })
+          .select({ receivedAt: siteStockEvents.receivedAt, source: siteStockEvents.source, reason: siteStockEvents.reason })
           .from(siteStockEvents)
           .where(
             and(
@@ -255,7 +288,9 @@ export async function evaluateSiteStock(
           .orderBy(desc(siteStockEvents.receivedAt), desc(siteStockEvents.id))
           .limit(1);
         const since = last && last.receivedAt > memberStart ? last.receivedAt : memberStart;
-        const afterEmpty = last !== undefined && last.receivedAt >= memberStart && last.source === 'empty_alarm';
+        // A Delivery is a fit, not an Empty waiting for its swap: it leaves nothing pending.
+        const afterEmpty = last !== undefined && last.receivedAt >= memberStart && last.source === 'empty_alarm' && last.reason !== 'delivery';
+        const afterDelivery = last !== undefined && last.reason === 'delivery';
 
         const rows = await db
           .select({ at: counterSnapshots.receivedTime, value: counterValues.value, snapshotId: counterSnapshots.id })
@@ -276,6 +311,8 @@ export async function evaluateSiteStock(
 
         for (const c of detectChanges({ since, afterEmpty, readings, empties })) {
           if (c.source !== 'level' || c.highSnapshotId === null) continue;
+          // A rise within SHELF_SAME_CHANGE_DAYS after a counted Delivery is that same cartridge change.
+          if (afterDelivery && c.at.getTime() - last!.receivedAt.getTime() <= SHELF_SAME_CHANGE_DAYS * 86_400_000) continue;
           stats.considered++;
           await db.transaction(async (tx) => {
             const inserted = await tx

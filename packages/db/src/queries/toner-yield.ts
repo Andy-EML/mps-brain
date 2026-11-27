@@ -1,12 +1,13 @@
-import { REPLENISH_COLOURS, type ReplenishColour } from '@mps/core';
+import { REPLENISH_COLOURS, dedupeDeliveries, deliveryColour, deliveryFitDates, type ReplenishColour } from '@mps/core';
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../client';
-import { compareBy, type SortSpec, type SortValue } from './shared';
+import { compareBy, deliveryAlarmSql, type SortSpec, type SortValue } from './shared';
 import {
   cartridgeFamilies,
   cartridgeFamilyModels,
   counterSnapshots,
   counterValues,
+  deviceAlarms,
   deviceLinks,
   drmsEquipment,
   replenishmentProposals,
@@ -79,10 +80,18 @@ export interface DeliveryEvent {
   lineId: number;
   /** Cartridges on the line; null/invalid counts as 1. */
   quantity: number | null;
+  /**
+   * When a Toner Delivery alarm says this delivery was fitted (first Delivery on or after the order date,
+   * before the next order of the colour). The meter is read from here instead of the order date; absent or
+   * null = no Delivery seen, the order date stands.
+   */
+  fitDate?: Date | null;
 }
 
 export interface CartridgeInterval {
   orderDate: Date;
+  /** Where the meter is read for this cartridge: the Delivery fit date when there is one, else the order date. */
+  anchor: Date;
   /** The first sales order / line when several were raised the same day. */
   salesOrderId: number;
   lineId: number;
@@ -247,16 +256,17 @@ export function buildCartridges(events: DeliveryEvent[], points: YieldMeterPoint
     if (last && last.orderDate.getTime() === e.orderDate.getTime()) {
       last.quantity += qty(e.quantity);
       last.lineIds.push(e.lineId);
+      if (e.fitDate && (last.anchor.getTime() === last.orderDate.getTime() || e.fitDate < last.anchor)) last.anchor = e.fitDate;
     } else {
-      groups.push({ orderDate: e.orderDate, salesOrderId: e.salesOrderId, lineId: e.lineId, lineIds: [e.lineId], quantity: qty(e.quantity) });
+      groups.push({ orderDate: e.orderDate, anchor: e.fitDate ?? e.orderDate, salesOrderId: e.salesOrderId, lineId: e.lineId, lineIds: [e.lineId], quantity: qty(e.quantity) });
     }
   }
   return groups.map((g, i) => {
     const next = groups[i + 1];
     let pagesDone: number | null = null;
     if (next) {
-      const a = meterAt(points, g.orderDate);
-      const b = meterAt(points, next.orderDate);
+      const a = meterAt(points, g.anchor);
+      const b = meterAt(points, next.anchor);
       // Same bracketing readings at both ends = no reading between the deliveries.
       if (a && b && !(a.before === b.before && a.after === b.after) && b.value >= a.value) pagesDone = b.value - a.value;
     }
@@ -339,10 +349,10 @@ export function computeColourYield(args: {
   let pagesSince: number | null = null;
   let pagesSinceEstimated = false;
   if (last) {
-    const base = meterAt(points, last.orderDate);
+    const base = meterAt(points, last.anchor);
     const current = points[points.length - 1];
-    // No reading after the order date means we can't tell how much it has printed: unknown, not 0.
-    if (base && current && current.at.getTime() > last.orderDate.getTime() && current.value >= base.value) {
+    // No reading after the fit (the order date, or the Delivery that fitted it) means we can't tell how much it has printed: unknown, not 0.
+    if (base && current && current.at.getTime() > last.anchor.getTime() && current.value >= base.value) {
       pagesSince = current.value - base.value;
       pagesSinceEstimated = base.estimated;
     }
@@ -384,6 +394,8 @@ export interface DeviceInput {
   familyName: string | null;
   rated: Record<YieldColour, number | null>;
   events: Map<YieldColour, DeliveryEvent[]>;
+  /** Toner Delivery alarm times per colour (oldest first, one per cartridge change): each is a cartridge fitted. */
+  deliveries: Map<YieldColour, Date[]>;
   /** DRMS snapshots merged with Vantage readings (or DRMS only when Vantage is switched off). */
   snapshots: MeterSnapshot[];
   /** How many of `snapshots` came from Vantage only. */
@@ -437,6 +449,7 @@ export async function loadYieldInputs(db: Db, drmsIds: string[] | null, opts: { 
       familyName: r.familyName,
       rated: { black: r.black, cyan: r.cyan, magenta: r.magenta, yellow: r.yellow, waste: r.waste },
       events: new Map(),
+      deliveries: new Map(),
       snapshots: [],
       vantageOnlySnapshots: 0,
     });
@@ -476,6 +489,28 @@ export async function loadYieldInputs(db: Db, drmsIds: string[] | null, opts: { 
       const list = dev.events.get(l.colour) ?? [];
       list.push({ orderDate: l.orderDate, salesOrderId: l.salesOrderId, lineId: l.lineId, quantity: q !== null && Number.isFinite(q) ? q : null });
       dev.events.set(l.colour, list);
+    }
+  }
+
+  // Toner Delivery alarms (any DRMS status) say a cartridge was fitted: they give each order its fit date.
+  const deliveryRows = await db
+    .select({ drmsId: deviceAlarms.drmsEquipmentId, at: deviceAlarms.receivedTime, description: deviceAlarms.description })
+    .from(deviceAlarms)
+    .where(and(inArray(deviceAlarms.drmsEquipmentId, [...out.keys()]), deliveryAlarmSql()))
+    .orderBy(asc(deviceAlarms.receivedTime));
+  for (const r of deliveryRows) {
+    const colour = deliveryColour(r.description);
+    const dev = out.get(r.drmsId);
+    if (!colour || !dev) continue;
+    dev.deliveries.set(colour, [...(dev.deliveries.get(colour) ?? []), r.at]);
+  }
+  for (const dev of out.values()) {
+    for (const [colour, times] of dev.deliveries) dev.deliveries.set(colour, dedupeDeliveries(times));
+    for (const [colour, events] of dev.events) {
+      const dates = [...new Set(events.map((e) => e.orderDate.getTime()))].sort((a, b) => a - b).map((t) => new Date(t));
+      const fits = deliveryFitDates(dates, dev.deliveries.get(colour) ?? []);
+      const fitOf = new Map(dates.map((dt, i) => [dt.getTime(), fits[i] ?? null]));
+      dev.events.set(colour, events.map((e) => ({ ...e, fitDate: fitOf.get(e.orderDate.getTime()) ?? null })));
     }
   }
 

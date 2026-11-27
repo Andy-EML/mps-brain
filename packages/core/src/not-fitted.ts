@@ -19,6 +19,8 @@ export interface HoldInput {
   pagesSinceEstimated: boolean;
   ratedYield: number | null;
   metersStale: boolean;
+  /** Toner Delivery alarms for this colour on or after the order date: each is a cartridge fitted. Absent = none known. */
+  deliveryFits?: number;
 }
 
 export interface HoldDecision {
@@ -80,7 +82,8 @@ export function decideHold(input: HoldInput): HoldDecision | null {
   const { lastOrder, colour } = input;
   if (!lastOrder) return null;
   const quantity = lastOrder.quantity;
-  const fits = countFits(input.levels, lastOrder.anchor);
+  // A Delivery alarm is DRMS saying a cartridge went in, which the level readings may have missed.
+  const fits = Math.max(countFits(input.levels, lastOrder.anchor), input.deliveryFits ?? 0);
   if (fits >= quantity) return null;
 
   const full = input.ratedYield !== null ? input.ratedYield * quantity : null;

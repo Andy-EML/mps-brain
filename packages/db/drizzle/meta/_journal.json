@@ -183,6 +183,13 @@
       "when": 1795689031644,
       "tag": "0025_parts_life",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795780971461,
+      "tag": "0026_delivery_alarm_idx",
+      "breakpoints": true
     }
   ]
 }

@@ -17,7 +17,7 @@ import {
 import { getOrderStates, type OrderRef } from './order-state';
 import { effectiveSettingsSubquery, type SettingSource } from './settings';
 import { listShelfSummariesByIds } from './site-stock';
-import { compareBy, counterPivotSubquery, drmsEquipmentName, toNumberOrNull, type SortSpec, type SortValue } from './shared';
+import { compareBy, counterPivotSubquery, drmsEquipmentName, effectiveToner, toNumberOrNull, type SortSpec, type SortValue } from './shared';
 
 /**
  * The toner-order review queue (`/orders`), its header stats and the device page's replenishment
@@ -102,10 +102,13 @@ export interface QueueDevice {
   /** `drms_equipment.is_colour`: a mono device has only a black cartridge. */
   isColour: boolean;
   /**
-   * Latest toner % for every cartridge from the counter pivot, proposed or not; null when there is
-   * no reading (always for cyan/magenta/yellow on a mono device).
+   * Effective toner % for every cartridge from the counter pivot, proposed or not (100 when a newer
+   * Toner Delivery alarm says a cartridge was fitted); null when there is no reading (always for
+   * cyan/magenta/yellow on a mono device).
    */
   tonerLevels: Record<TonerColour, number | null>;
+  /** Colours whose level is 100 because of a Delivery, with the date of the new cartridge. */
+  tonerNew?: Partial<Record<TonerColour, Date>>;
   /** Set when any of the device's proposals is a shelf top-up. */
   shelf: { id: number; siteName: string; familyName: string; machines: number } | null;
   proposals: QueueProposal[];
@@ -209,6 +212,11 @@ async function deviceContexts(db: Db, drmsIds: string[]): Promise<Map<string, De
       cyan: pivot.cyan,
       magenta: pivot.magenta,
       yellow: pivot.yellow,
+      readAt: pivot.readAt,
+      blackDeliveryAt: pivot.blackDeliveryAt,
+      cyanDeliveryAt: pivot.cyanDeliveryAt,
+      magentaDeliveryAt: pivot.magentaDeliveryAt,
+      yellowDeliveryAt: pivot.yellowDeliveryAt,
     })
     .from(drmsEquipment)
     .innerJoin(eff, eq(eff.drmsId, drmsEquipment.drmsId))
@@ -230,12 +238,7 @@ async function deviceContexts(db: Db, drmsIds: string[]): Promise<Map<string, De
         location: r.location,
         vantageEquipmentId: r.vantageEquipmentId,
         isColour: r.isColour,
-        tonerLevels: {
-          black: toNumberOrNull(r.black),
-          cyan: toNumberOrNull(r.cyan),
-          magenta: toNumberOrNull(r.magenta),
-          yellow: toNumberOrNull(r.yellow),
-        },
+        ...(({ toner, tonerNew }) => ({ tonerLevels: toner, tonerNew }))(effectiveToner(r)),
       },
       thresholds: {
         black: { value: toNumberOrNull(r.tBlack), source: r.sBlack },

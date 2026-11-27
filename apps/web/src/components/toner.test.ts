@@ -4,6 +4,7 @@ import {
   attentionRank,
   deviceStatusLabel,
   hasRecentAlarm,
+  newCartridgeNote,
   tonerChannels,
   tonerHealth,
   tonerState,
@@ -51,6 +52,14 @@ describe('tonerChannels', () => {
 
   it('gives a mono device black only', () => {
     expect(tonerChannels(monoRow()).map((c) => c.label)).toEqual(['Black']);
+  });
+});
+
+describe('newCartridgeNote', () => {
+  it('dates a Delivery-driven level, and is null when the reading stands', () => {
+    expect(newCartridgeNote(new Date('2026-11-21T09:00:00Z'))).toBe('new cartridge 21 Nov 2026');
+    expect(newCartridgeNote(undefined)).toBeNull();
+    expect(newCartridgeNote(null)).toBeNull();
   });
 });
 

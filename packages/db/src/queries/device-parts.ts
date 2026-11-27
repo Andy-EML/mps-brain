@@ -1,6 +1,8 @@
 import {
   PART_COLOURS,
   classifyPart,
+  deliveryColour,
+  effectiveTonerLevel,
   isColourModel,
   isColourPart,
   parsePartsAlarm,
@@ -10,7 +12,7 @@ import {
   type PartKind,
   type PartLives,
 } from '@mps/core';
-import { and, desc, eq, ilike, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../client';
 import {
   cartridgeFamilies,
@@ -58,6 +60,8 @@ export interface DeviceTonerLevels {
   yellow: number | null;
   /** When the latest DRMS counters were received; null when the device has none. */
   readAt: Date | null;
+  /** Colours shown at 100 because a Toner Delivery alarm is newer than the reading: the new cartridge's date. */
+  newCartridge?: Partial<Record<'black' | 'cyan' | 'magenta' | 'yellow', Date>>;
 }
 
 export interface DeviceParts {
@@ -188,7 +192,7 @@ export async function getDeviceParts(
   let drmsPagesNow: number | null = null;
   if (drmsId !== null) {
     const [snap] = await db
-      .select({ id: counterSnapshots.id, at: counterSnapshots.receivedTime })
+      .select({ id: counterSnapshots.id, at: sql<Date>`coalesce(${counterSnapshots.receivedTime}, ${counterSnapshots.fetchedAt})`.mapWith(counterSnapshots.fetchedAt) })
       .from(counterSnapshots)
       .where(eq(counterSnapshots.drmsEquipmentId, drmsId))
       .orderBy(desc(counterSnapshots.id))
@@ -213,6 +217,27 @@ export async function getDeviceParts(
       }
       const black = by.get(METER_NAMES.black) ?? null;
       if (black !== null) drmsPagesNow = black + (by.get(METER_NAMES.colour) ?? 0);
+    }
+  }
+
+  // A Toner Delivery alarm newer than the reading means a cartridge was fitted since: show it full.
+  if (drmsId !== null) {
+    const deliveries = await db
+      .select({ description: deviceAlarms.description, at: deviceAlarms.receivedTime })
+      .from(deviceAlarms)
+      .where(and(eq(deviceAlarms.drmsEquipmentId, drmsId), ilike(deviceAlarms.description, '%Toner Delivery(%')));
+    const newest = new Map<string, Date>();
+    for (const a of deliveries) {
+      const c = deliveryColour(a.description);
+      if (c && c !== 'waste' && (!newest.has(c) || a.at > newest.get(c)!)) newest.set(c, a.at);
+    }
+    for (const c of ['black', 'cyan', 'magenta', 'yellow'] as const) {
+      if (c !== 'black' && !isColour) continue;
+      const e = effectiveTonerLevel({ level: toner[c], readAt: toner.readAt, deliveryAt: newest.get(c) ?? null });
+      if (e.newCartridgeAt) {
+        toner[c] = e.level;
+        toner.newCartridge = { ...toner.newCartridge, [c]: e.newCartridgeAt };
+      }
     }
   }
 

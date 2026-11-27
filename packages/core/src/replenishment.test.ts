@@ -25,9 +25,12 @@ describe('alarmColour', () => {
   it('reads the colour from the toner alarm bracket', () => {
     expect(alarmColour({ category: 'toner', description: 'Toner Near Empty(K)' })).toBe('black');
     expect(alarmColour({ category: 'toner', description: 'Toner Empty(BK)' })).toBe('black');
-    expect(alarmColour({ category: 'toner', description: 'Toner Delivery(C)' })).toBe('cyan');
     expect(alarmColour({ category: 'toner', description: 'Toner Near Empty(M)' })).toBe('magenta');
-    expect(alarmColour({ category: 'toner', description: 'Toner Delivery(Y)' })).toBe('yellow');
+  });
+  it('is null for a Delivery alarm: a cartridge was fitted, nothing to order', () => {
+    expect(alarmColour({ category: 'toner', description: 'Toner Delivery(C)' })).toBeNull();
+    expect(alarmColour({ category: 'toner', description: 'Toner Delivery(BK)' })).toBeNull();
+    expect(alarmColour({ category: 'waste', description: 'Waste Toner Bottle Delivery' })).toBeNull();
   });
   it('maps any waste alarm to waste and never proposes parts', () => {
     expect(alarmColour({ category: 'waste', description: 'Waste Toner Bottle Almost Full' })).toBe('waste');
@@ -43,6 +46,14 @@ describe('evaluateDevice', () => {
       ['black', 'threshold', 14, 15],
       ['magenta', 'threshold', 9, 10],
     ]);
+  });
+
+  it('proposes nothing from a Delivery alarm, ready for ERP or not', () => {
+    const r = evaluateDevice(
+      input({ alarms: [alarm('Toner Delivery(K)', 'toner'), alarm('Toner Delivery(C)', 'toner'), alarm('Waste Toner Bottle Delivery', 'waste')] }),
+    );
+    expect(r.candidates).toEqual([]);
+    expect(r.suppressed).toEqual([]);
   });
 
   it('ignores CMY on a mono device, including CMY alarms', () => {

@@ -22,6 +22,8 @@ export interface TonerTileProps {
   /** Tailwind background class for the fill and the swatch, e.g. `bg-toner-cyan`. */
   fillClassName: string;
   level: number | null;
+  /** "new cartridge 21 Nov 2026" when the level is 100% because of a Toner Delivery alarm. */
+  note?: string | null;
   className?: string;
 }
 
@@ -33,7 +35,7 @@ export interface TonerTileProps {
  * this device burns toner), which arrives with the meter sync in a later sub-project, so the tile
  * keeps the line's height and says what is missing rather than inventing a number.
  */
-export function TonerTile({ label, fillClassName, level, className }: TonerTileProps) {
+export function TonerTile({ label, fillClassName, level, note, className }: TonerTileProps) {
   const state = tonerState(level);
   const known = state !== 'unknown';
   // A 1% cartridge still has to be visible, so the fill never renders narrower than a nub.
@@ -61,6 +63,7 @@ export function TonerTile({ label, fillClassName, level, className }: TonerTileP
       </div>
 
       <p className={cn('mt-2.5 text-[13px]', TONE_TEXT[tone])}>{STATE_LABEL[state]}</p>
+      {note ? <p className="mt-0.5 text-[12px] text-muted-foreground">{note}</p> : null}
       {/* Space held for the mockup's days-left forecast; see the note on this component. */}
       <p className="mt-0.5 text-[12px] text-muted-foreground/70">Days left — needs usage history</p>
     </div>

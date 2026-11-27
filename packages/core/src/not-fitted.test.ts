@@ -48,6 +48,20 @@ describe('countFits', () => {
   });
 });
 
+describe('decideHold with Delivery alarms', () => {
+  it('does not hold when a Delivery says the cartridge was fitted, even with no level rise', () => {
+    expect(decideHold(base({ deliveryFits: 1 }))).toBeNull();
+  });
+  it('still holds a multi-cartridge order that has fewer Deliveries than cartridges', () => {
+    const r = decideHold(base({ lastOrder: order('2026-09-22', { quantity: 2 }), deliveryFits: 1 }));
+    expect(r?.reason).toBe('not_fitted');
+    expect(r?.detail).toContain('1 fitted since');
+  });
+  it('behaves as before with no Delivery', () => {
+    expect(decideHold(base({ deliveryFits: 0 }))?.reason).toBe('not_fitted');
+  });
+});
+
 describe('decideHold', () => {
   it('returns null without a last order', () => {
     expect(decideHold(base({ lastOrder: null }))).toBeNull();

@@ -49,6 +49,16 @@ describe('reviewChips', () => {
     expect(chips.map((c) => c.label)).toEqual(['Black 40%', 'Cyan 1% (proposed)', 'Magenta 77%', 'Yellow no reading']);
   });
 
+  it('notes a level that reads 100% because of a Toner Delivery', () => {
+    const chips = reviewChips({
+      isColour: false,
+      tonerLevels: levels({ black: 100 }),
+      tonerNew: { black: new Date('2026-11-21T09:00:00Z') },
+      proposals: [],
+    });
+    expect(chips.map((c) => c.label)).toEqual(['Black 100% (new cartridge 21 Nov 2026)']);
+  });
+
   it('shows only black on a mono device', () => {
     const chips = reviewChips({ isColour: false, tonerLevels: levels({ black: 3 }), proposals: [proposal()] });
     expect(row(chips)).toEqual([['K', '3%', true, false]]);

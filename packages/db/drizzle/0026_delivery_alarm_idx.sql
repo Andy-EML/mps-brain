@@ -1,0 +1,1 @@
+CREATE INDEX "device_alarms_delivery_idx" ON "device_alarms" USING btree ("drms_equipment_id","received_time") WHERE description ~* 'toner (bottle )?delivery';

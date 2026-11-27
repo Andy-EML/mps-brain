@@ -1,6 +1,6 @@
-import { users, customerFlags, cartridgeChanges, cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, replenishmentSettings, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
+import { replenishmentOrders, users, customerFlags, cartridgeChanges, cartridgeFamilies, cartridgeFamilyModels, siteStockShelves, deviceAlarms, deviceLinks, drmsEquipment, replenishmentProposals, replenishmentSettings, vantageEquipment, vantageSalesOrderLines, vantageSalesOrders } from '@mps/db';
 import { createTestDb, type TestDb } from '@mps/db/testing';
-import { computeHolds, hideDevices, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
+import { approveProposals, computeHolds, hideDevices, unhideDevices, updateDeviceSettings } from '@mps/db/queries';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveSnapshot } from './drms-snapshot';
@@ -89,6 +89,78 @@ describe('runReplenishEvaluate', () => {
     const again = await runReplenishEvaluate({ db: t.db, now: () => NOW });
     expect(again.stats).toMatchObject({ proposed: 0, suppressed: 1 });
     expect(await t.db.select().from(replenishmentProposals)).toHaveLength(1);
+  });
+
+  describe('Toner Delivery alarms (a cartridge fitted)', () => {
+    let seq = 0;
+    const alarm = (drmsId: string, at: string, description: string, status = 'ReadyForErpDelivery', category = 'toner') =>
+      t.db.insert(deviceAlarms).values({ alarmId: `dl${++seq}`, drmsEquipmentId: drmsId, receivedTime: new Date(at), category, status, description, raw: {} });
+    const rows = async () => (await t.db.select().from(replenishmentProposals).orderBy(replenishmentProposals.id)).map((p) => [p.colour, p.trigger, p.status, p.note]);
+
+    it('raises no proposal from a Delivery alarm, ready for ERP or not, toner or waste', async () => {
+      await levels('colour', 'c1', 50, 50);
+      await alarm('colour', '2026-09-20T08:00:00Z', 'Toner Delivery(BK)');
+      await alarm('colour', '2026-09-20T08:00:00Z', 'Toner Delivery(C)', 'EquipmentDiscovered');
+      await alarm('colour', '2026-09-20T08:00:00Z', 'Waste Toner Bottle Delivery', 'ReadyForErpDelivery', 'waste');
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ proposed: 0 });
+      expect(await rows()).toEqual([]);
+    });
+
+    it('reads a low level as 100% when a Delivery is newer than the reading, so the threshold does not fire', async () => {
+      await levels('colour', 'c1', 8, 50); // read 09:00, black far below 15
+      await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(BK)', 'CounterDifferenceNotHighEnough');
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ proposed: 0 });
+      expect(await rows()).toEqual([]);
+    });
+
+    it('still proposes when the reading is newer than the Delivery', async () => {
+      await alarm('colour', '2026-09-21T07:00:00Z', 'Toner Delivery(BK)');
+      await levels('colour', 'c1', 8, 50);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await rows()).toEqual([['black', 'threshold', 'pending', null]]);
+    });
+
+    it('a Delivery by itself supersedes nothing: a pending alarm proposal stays, and Near Empty still proposes', async () => {
+      await levels('colour', 'c1', 50, 50);
+      await alarm('colour', '2026-09-20T08:00:00Z', 'Toner Near Empty(M)');
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(M)');
+      await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Near Empty(Y)');
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await rows()).toEqual([
+        ['magenta', 'alarm', 'pending', null],
+        ['yellow', 'alarm', 'pending', null],
+      ]);
+    });
+
+    it('existing recovery rule: a pending threshold proposal is superseded once the effective level reads 100%', async () => {
+      await levels('colour', 'c1', 8, 50);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(BK)');
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ superseded: 1, proposed: 0 });
+      expect(await rows()).toEqual([['black', 'threshold', 'superseded', 'level recovered']]);
+    });
+
+    it('closes an in-progress order for the delivered colour only, and leaves pending Review proposals alone', async () => {
+      await levels('colour', 'c1', 8, 4);
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      const [u] = await t.db.insert(users).values({ username: 'op', passwordHash: 'x' }).returning();
+      const [black] = await t.db.select().from(replenishmentProposals).where(eq(replenishmentProposals.colour, 'black'));
+      const approvedAt = new Date('2026-09-21T10:00:00Z');
+      const { orderId } = await approveProposals(t.db, { drmsId: 'colour', items: [{ proposalId: black!.id, quantity: 1 }], userId: u!.id, now: approvedAt });
+      await alarm('colour', '2026-09-21T11:00:00Z', 'Toner Delivery(BK)');
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(r.stats).toMatchObject({ deliveryClosed: 1 });
+      const [order] = await t.db.select().from(replenishmentOrders).where(eq(replenishmentOrders.id, orderId));
+      expect(order!.status).toBe('submitted');
+      expect(await rows()).toEqual([
+        ['black', 'threshold', 'ordered', 'closed by Toner Delivery alarm 2026-09-21'],
+        ['cyan', 'threshold', 'pending', null],
+      ]);
+    });
   });
 
   it('proposes waste from a ready alarm', async () => {
@@ -349,6 +421,29 @@ describe('runReplenishEvaluate', () => {
       const r = await runReplenishEvaluate({ db: t.db, now: () => NOW });
       expect(r.stats).toMatchObject({ superseded: 1, proposed: 0, siteStockShelves: 1 });
       expect(await states()).toEqual([['black', 'threshold', 'superseded', 'covered by site stock']]);
+    });
+
+    it('a Delivery for a colour the shelf holds is a shelf use and raises the top-up, with no device proposal', async () => {
+      await shelfFor(1);
+      await levels('colour', 'c1', 50, 50);
+      await t.db.insert(deviceAlarms).values({
+        alarmId: 'sd1', drmsEquipmentId: 'colour', receivedTime: new Date('2026-09-20T08:00:00Z'), category: 'toner',
+        status: 'CounterDifferenceNotHighEnough', description: 'Toner Delivery(BK)', raw: {},
+      });
+      const r = await runReplenishEvaluate({ db: t.db, now: () => NOW, deliveryFrom: new Date('2026-09-01T00:00:00Z') });
+      expect(r.stats).toMatchObject({ siteStockCounted: 1, siteStockTopUps: 1 });
+      expect(await states()).toEqual([['black', 'site_stock', 'pending', null]]);
+    });
+
+    it('a Delivery for a colour the shelf does not hold orders nothing', async () => {
+      await shelfFor(1); // holds black only
+      await levels('colour', 'c1', 50, 50);
+      await t.db.insert(deviceAlarms).values({
+        alarmId: 'sd2', drmsEquipmentId: 'colour', receivedTime: new Date('2026-09-20T08:00:00Z'), category: 'toner',
+        status: 'ReadyForErpDelivery', description: 'Toner Delivery(C)', raw: {},
+      });
+      await runReplenishEvaluate({ db: t.db, now: () => NOW });
+      expect(await states()).toEqual([]);
     });
 
     it('still proposes a colour the shelf does not hold', async () => {

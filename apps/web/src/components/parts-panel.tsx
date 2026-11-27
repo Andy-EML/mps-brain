@@ -3,7 +3,7 @@ import type { DeviceParts } from '@mps/db/queries';
 import { cn } from 'cn';
 import { TONE_TEXT } from '@/components/status-dot';
 import { ToneBadge } from '@/components/tone-badge';
-import { TONER_CHANNELS } from '@/components/toner';
+import { TONER_CHANNELS, newCartridgeNote } from '@/components/toner';
 import { TonerBar } from '@/components/toner-bar';
 import {
   lastFittedText,
@@ -68,7 +68,7 @@ export function PartsPanel({ data: d, showToner = true, className }: PartsPanelP
             <div className="grid grid-cols-4 gap-3">
               {TONER_CHANNELS.map((c) =>
                 present.has(c.key) ? (
-                  <TonerBar key={c.key} level={d.toner[c.key]} fillClassName={c.className} label={c.label} />
+                  <TonerBar key={c.key} level={d.toner[c.key]} fillClassName={c.className} label={c.label} note={newCartridgeNote(d.toner.newCartridge?.[c.key])} />
                 ) : (
                   <div key={c.key} aria-hidden />
                 ),

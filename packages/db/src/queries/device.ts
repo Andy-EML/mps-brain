@@ -14,7 +14,7 @@ import {
 } from '../schema';
 import { selfManagedSourceSql } from './customer-flags';
 import { deviceRowNames, type DeviceRow } from './devices';
-import { counterPivotSubquery, drmsEquipmentName, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
+import { counterPivotSubquery, drmsEquipmentName, effectiveToner, lastAlarmSubquery, offlineCutoff, toNumberOrNull } from './shared';
 
 export interface DeviceDetail {
   device: DeviceRow;
@@ -81,6 +81,11 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
       cyan: pivot.cyan,
       magenta: pivot.magenta,
       yellow: pivot.yellow,
+      readAt: pivot.readAt,
+      blackDeliveryAt: pivot.blackDeliveryAt,
+      cyanDeliveryAt: pivot.cyanDeliveryAt,
+      magentaDeliveryAt: pivot.magentaDeliveryAt,
+      yellowDeliveryAt: pivot.yellowDeliveryAt,
       meterBlack: pivot.meterBlack,
       meterColour: pivot.meterColour,
       meterScan: pivot.meterScan,
@@ -125,12 +130,7 @@ export async function getDevice(db: Db, drmsId: string): Promise<DeviceDetail | 
     lastCounterAt,
     offline: lastCounterAt !== null && lastCounterAt < cutoff,
     lastAlarmAt: row.lastAlarmAt ?? null,
-    toner: {
-      black: toNumberOrNull(row.black),
-      cyan: toNumberOrNull(row.cyan),
-      magenta: toNumberOrNull(row.magenta),
-      yellow: toNumberOrNull(row.yellow),
-    },
+    ...effectiveToner(row),
     meters: {
       black: toNumberOrNull(row.meterBlack),
       colour: toNumberOrNull(row.meterColour),

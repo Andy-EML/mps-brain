@@ -3,6 +3,7 @@ import type { PagesSince, QueueDevice, QueueProposal, ReviewOrderLine } from '@m
 // Relative, not `@/…`: Vitest has no `@/` alias and this module is unit-tested.
 import { formatDate, formatNumber, formatPercent } from '../lib/format';
 import { colourLabel, triggerLabel } from './replenishment';
+import { newCartridgeNote } from './toner';
 
 /**
  * Pure helpers for the collapsed rows of the `/orders` Review tab. Free of JSX so they can be
@@ -42,7 +43,7 @@ const TONERS = ['black', 'cyan', 'magenta', 'yellow'] as const;
  * current reading falls back to the level at proposal time.
  */
 export function reviewChips(
-  device: Pick<QueueDevice, 'isColour' | 'tonerLevels' | 'proposals'>,
+  device: Pick<QueueDevice, 'isColour' | 'tonerLevels' | 'proposals'> & Partial<Pick<QueueDevice, 'tonerNew'>>,
 ): ReviewChip[] {
   const byColour = new Map<ReplenishColour, QueueProposal>();
   for (const p of device.proposals) if (!byColour.has(p.colour) || p.trigger === 'alarm') byColour.set(p.colour, p);
@@ -58,7 +59,11 @@ export function reviewChips(
       const proposed = p !== undefined;
       const alarm = p?.trigger === 'alarm';
       const levelLabel = colour === 'waste' ? null : level === null ? 'no reading' : levelText;
-      const notes = [proposed ? 'proposed' : null, alarm ? 'DRMS alarm' : null].filter(Boolean);
+      const notes = [
+        proposed ? 'proposed' : null,
+        alarm ? 'DRMS alarm' : null,
+        colour === 'waste' ? null : newCartridgeNote(device.tonerNew?.[colour]),
+      ].filter(Boolean);
       const label =
         [colourLabel(colour), levelLabel].filter(Boolean).join(' ') + (notes.length ? ` (${notes.join(', ')})` : '');
       return { key: colour, colour, letter: LETTER[colour], levelText, proposed, alarm, label };

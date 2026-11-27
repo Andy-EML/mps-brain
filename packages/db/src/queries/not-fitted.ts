@@ -19,10 +19,19 @@ export interface HoldCandidate {
 
 type TonerColour = HoldCandidate['colour'];
 
+/** A Vantage timestamp string as an instant; null when absent or unparseable. */
+const parseInstant = (s: string | null): Date | null => {
+  if (!s) return null;
+  const t = new Date(/(Z|[+-]\d\d:?\d\d)$/.test(s) ? s : `${s}Z`);
+  return Number.isNaN(t.getTime()) ? null : t;
+};
+
 const colourOfLevel = (name: string): TonerColour | null => (Object.keys(TONER_NAMES) as TonerColour[]).find((c) => TONER_NAMES[c] === name) ?? null;
 
 interface OrderLine extends DeliveryEvent {
   reference: string | null;
+  /** When Vantage created the sales order (its `CreatedDate`); null when not recorded. */
+  createdAt: Date | null;
 }
 
 /** Every candidate id is a key; null = no hold (or not enough known to hold). */
@@ -50,6 +59,7 @@ export async function computeHolds(db: Db, candidates: HoldCandidate[], now: Dat
         quantity: vantageSalesOrderLines.quantity,
         reference: vantageSalesOrders.reference,
         orderDate: vantageSalesOrders.orderDate,
+        createdRaw: sql<string | null>`coalesce(${vantageSalesOrders.raw}->>'CreatedDate', ${vantageSalesOrders.raw}->>'createdDate')`,
       })
       .from(vantageSalesOrderLines)
       .innerJoin(vantageSalesOrders, eq(vantageSalesOrders.vantageId, vantageSalesOrderLines.salesOrderId))
@@ -74,6 +84,7 @@ export async function computeHolds(db: Db, candidates: HoldCandidate[], now: Dat
         lineId: r.lineId,
         quantity: q !== null && Number.isFinite(q) ? q : null,
         reference: r.reference,
+        createdAt: parseInstant(r.createdRaw),
       });
       lines.set(key, list);
     }
@@ -113,10 +124,14 @@ export async function computeHolds(db: Db, candidates: HoldCandidate[], now: Dat
     // Reuse the yield arithmetic: the group as one delivery (same date), so quantity sums and pages-since matches the yield screens.
     const points = meterPointsFor(c.colour, dev.isColour, dev.snapshots);
     const ratedYield = dev.rated[c.colour];
+    // Toner Delivery alarms from the moment the order was created (the order date is only midnight of its day, so a Delivery earlier that day
+    // would count): each says a cartridge was fitted, and the first is the fit date for the pages-since figure.
+    const createdFrom = group.reduce((m, l) => { const at = l.createdAt ?? l.orderDate; return at < m ? at : m; }, group[0]!.createdAt ?? orderDate);
+    const deliveries = (dev.deliveries.get(c.colour) ?? []).filter((t) => t >= createdFrom);
     const yieldInfo = computeColourYield({
       colour: c.colour,
       ratedYield,
-      events: group.map((l) => ({ ...l, orderDate })),
+      events: group.map((l) => ({ ...l, orderDate, fitDate: deliveries[0] ?? null })),
       points,
       stale: false,
     });
@@ -132,6 +147,7 @@ export async function computeHolds(db: Db, candidates: HoldCandidate[], now: Dat
         pagesSinceEstimated: yieldInfo.pagesSinceEstimated,
         ratedYield,
         metersStale: isStale(points[points.length - 1]?.at ?? null, now),
+        deliveryFits: deliveries.length,
       }),
     );
   }

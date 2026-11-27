@@ -1,9 +1,18 @@
 import type { DeviceRow } from '@mps/db/queries';
+import { formatDate } from '../lib/format';
 
 /**
  * Pure display helpers shared by the fleet overview and the devices list. Kept free of JSX and of
  * anything React so they can be unit-tested without a DOM.
  */
+
+/**
+ * The note for a level that reads 100% because a Toner Delivery alarm is newer than the DRMS reading
+ * ("new cartridge 21 Nov 2026"); null when the reading stands. Every place a level is shown uses this.
+ */
+export function newCartridgeNote(date: Date | null | undefined): string | null {
+  return date ? `new cartridge ${formatDate(date)}` : null;
+}
 
 export type TonerState = 'ok' | 'low' | 'critical' | 'unknown';
 

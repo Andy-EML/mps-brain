@@ -453,6 +453,8 @@ export const deviceAlarms = pgTable(
     index('device_alarms_device_received_idx').on(t.drmsEquipmentId, t.receivedTime),
     index('device_alarms_category_received_idx').on(t.category, t.receivedTime),
     index('device_alarms_status_idx').on(t.status),
+    // Toner Delivery alarms only: `deliveryAlarmSql()` (queries/shared.ts) repeats this predicate exactly.
+    index('device_alarms_delivery_idx').on(t.drmsEquipmentId, t.receivedTime).where(sql`description ~* 'toner (bottle )?delivery'`),
   ],
 );
 

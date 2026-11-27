@@ -19,6 +19,7 @@ import { createTestDb, type TestDb } from '@mps/db/testing';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { saveSnapshot } from './drms-snapshot';
+import { DELIVERY_COUNT_FROM } from '@mps/core';
 import { evaluateSiteStock } from './site-stock-evaluate';
 
 const NOW = new Date('2026-09-21T12:00:00Z');
@@ -89,6 +90,148 @@ describe('evaluateSiteStock', () => {
       ['yellow', 1, 'site_stock', shelfId, 'dA', 1, 'pending', 'Toner Empty(BK)'],
     ]);
     expect((await events()).find((e) => e.drmsEquipmentId === 'dA' && e.receivedAt.getUTCDate() === 12)?.reason).toBe('fresh_cartridge');
+  });
+
+  describe('Toner Delivery alarms (a cartridge fitted)', () => {
+    // The Delivery floor (a fixed deploy time) is later than these September fixtures, so they pass an early one.
+    const run = (at: Date) => evaluateSiteStock(t.db, at, { deliveryFrom: COUNTING_FROM });
+    const outcomes = async () => (await events()).map((e) => [e.source, e.colour, e.counted, e.reason]);
+
+    it('counts a Delivery for a colour the shelf holds as a use, whatever its DRMS status', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Delivery(BK)', 'CounterDifferenceNotHighEnough');
+      const { stats } = await run(NOW);
+      expect(stats).toMatchObject({ considered: 1, counted: 1 });
+      expect(await outcomes()).toEqual([['empty_alarm', 'black', true, 'delivery']]);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('raises the shelf top-up when Deliveries use up the held spares', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Delivery(BK)');
+      await alarm('dB', '2026-09-08 08:00:00', 'Toner Delivery(BK)');
+      await alarm('dA', '2026-09-20 08:00:00', 'Toner Delivery(BK)'); // more than 14 days after dA's first: a second use
+      const { stats } = await run(NOW);
+      expect(stats).toMatchObject({ counted: 3, topUps: 1 });
+      const rows = await t.db.select().from(replenishmentProposals);
+      expect(rows.map((p) => [p.colour, p.quantity, p.trigger, p.alarmDescription])).toEqual([['black', 3, 'site_stock', 'Toner Delivery(BK)']]);
+    });
+
+    it('ignores a Delivery for a colour the shelf does not hold (waste here), and for a device not on a shelf', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Waste Toner Bottle Delivery');
+      await t.db.insert(drmsEquipment).values({ drmsId: 'dX', modelName: 'bizhub C300i', status: 'Registered', isColour: true, raw: {} });
+      await alarm('dX', '2026-09-05 08:00:00', 'Toner Delivery(BK)');
+      const { stats } = await run(NOW);
+      expect(stats).toMatchObject({ considered: 0, counted: 0 });
+      expect(await events()).toHaveLength(0);
+    });
+
+    it('counts an Empty followed by a Delivery within the window once, with Delivery as the reason', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Empty(BK)');
+      await alarm('dA', '2026-09-06 08:00:00', 'Toner Delivery(BK)');
+      await run(NOW);
+      expect(await outcomes()).toEqual([
+        ['empty_alarm', 'black', true, 'delivery'],
+        ['empty_alarm', 'black', false, 'delivery_same_change'],
+      ]);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('counts a Delivery followed by an Empty within the window once', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Delivery(BK)');
+      await alarm('dA', '2026-09-06 08:00:00', 'Toner Empty(BK)');
+      await run(NOW);
+      expect(await outcomes()).toEqual([
+        ['empty_alarm', 'black', true, 'delivery'],
+        ['empty_alarm', 'black', false, 'same_change'],
+      ]);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('counts Empty, Delivery and the level rise that follows as one use', async () => {
+      await t.db.update(replenishmentSettings).set({ spareBlackFrom: COUNTING_FROM }).where(eq(replenishmentSettings.scope, 'default'));
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Empty(BK)');
+      await alarm('dA', '2026-09-06 08:00:00', 'Toner Delivery(BK)');
+      await reading('dA', '2026-09-06 12:00:00', 8); // the stale pre-fit reading
+      await reading('dA', '2026-09-07 02:00:00', 95);
+      await run(NOW);
+      expect((await events()).filter((e) => e.counted)).toHaveLength(1);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('counts a level rise and the Delivery that follows it as one use', async () => {
+      await t.db.update(replenishmentSettings).set({ spareBlackFrom: COUNTING_FROM }).where(eq(replenishmentSettings.scope, 'default'));
+      await reading('dA', '2026-09-05 02:00:00', 6);
+      await reading('dA', '2026-09-06 02:00:00', 91);
+      await run(NOW);
+      await alarm('dA', '2026-09-06 09:00:00', 'Toner Delivery(BK)');
+      await run(new Date('2026-09-22T12:00:00Z'));
+      expect((await events()).map((e) => [e.source, e.counted, e.reason])).toEqual([
+        ['level', true, 'level_rise'],
+        ['empty_alarm', false, 'delivery_same_change'],
+      ]);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('does not let a Delivery absorb a later genuine swap', async () => {
+      await t.db.update(replenishmentSettings).set({ spareBlackFrom: COUNTING_FROM }).where(eq(replenishmentSettings.scope, 'default'));
+      await alarm('dA', '2026-09-02 08:00:00', 'Toner Delivery(BK)');
+      await reading('dA', '2026-09-16 02:00:00', 9);
+      await reading('dA', '2026-09-17 02:00:00', 92); // more than 14 days after the Delivery
+      await run(NOW);
+      expect((await events()).filter((e) => e.counted)).toHaveLength(2);
+      expect(await shelf()).toMatchObject({ usedBlack: 2 });
+    });
+
+    it('counts an Empty and a Delivery more than 14 days later once: nothing was fitted in between', async () => {
+      await alarm('dA', '2026-09-02 08:00:00', 'Toner Empty(BK)');
+      await alarm('dA', '2026-09-20 08:00:00', 'Toner Delivery(BK)');
+      await run(NOW);
+      expect(await outcomes()).toEqual([
+        ['empty_alarm', 'black', true, 'delivery'],
+        ['empty_alarm', 'black', false, 'delivery_same_change'],
+      ]);
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
+
+    it('still counts a Delivery more than 14 days after another Delivery', async () => {
+      await alarm('dA', '2026-09-02 08:00:00', 'Toner Delivery(BK)');
+      await alarm('dA', '2026-09-20 08:00:00', 'Toner Delivery(BK)');
+      await run(NOW);
+      expect(await shelf()).toMatchObject({ usedBlack: 2 });
+    });
+
+    it('never counts a Delivery received before the Delivery floor (default: the deploy time), but still counts an Empty', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Delivery(BK)');
+      await alarm('dA', '2026-09-06 08:00:00', 'Toner Empty(C)');
+      await evaluateSiteStock(t.db, NOW); // default floor
+      expect(await outcomes()).toEqual([['empty_alarm', 'cyan', true, 'first']]);
+      expect(DELIVERY_COUNT_FROM.getTime()).toBeGreaterThan(NOW.getTime());
+    });
+
+    it('counts a Delivery at or after an explicit floor and not before it', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Delivery(BK)');
+      await alarm('dB', '2026-09-10 08:00:00', 'Toner Delivery(BK)');
+      await evaluateSiteStock(t.db, NOW, { deliveryFrom: new Date('2026-09-10T08:00:00Z') });
+      expect((await events()).map((e) => [e.drmsEquipmentId, e.counted])).toEqual([['dB', true]]);
+    });
+
+    it('compares a Delivery only with uses received at or before it', async () => {
+      await alarm('dA', '2026-09-10 08:00:00', 'Toner Empty(BK)');
+      await run(NOW);
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Delivery(BK)'); // arrives late, from before the Empty
+      await run(new Date('2026-09-22T12:00:00Z'));
+      expect((await events()).map((e) => [e.receivedAt.getUTCDate(), e.counted, e.reason])).toEqual([
+        [5, true, 'delivery'],
+        [10, true, 'first'],
+      ]);
+    });
+
+    it('is idempotent', async () => {
+      await alarm('dA', '2026-09-05 08:00:00', 'Toner Delivery(BK)');
+      await run(NOW);
+      const again = await run(new Date('2026-09-22T12:00:00Z'));
+      expect(again.stats).toMatchObject({ considered: 0, counted: 0 });
+      expect(await shelf()).toMatchObject({ usedBlack: 1 });
+    });
   });
 
   it('counts a repeated empty once when there is no reading between', async () => {

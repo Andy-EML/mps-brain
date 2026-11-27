@@ -1,6 +1,6 @@
 import { cn } from 'cn';
 import { TONE_TEXT } from '@/components/status-dot';
-import { TONER_CHANNELS, tonerChannels, type TonerState, tonerState } from '@/components/toner';
+import { TONER_CHANNELS, newCartridgeNote, tonerChannels, type TonerState, tonerState } from '@/components/toner';
 import type { DeviceRow } from '@mps/db/queries';
 
 const PCT_TEXT: Record<TonerState, string> = {
@@ -17,21 +17,23 @@ export interface TonerBarProps {
   fillClassName: string;
   /** Channel name, used for the accessible label ("Cyan 61%"). */
   label: string;
+  /** Why the level is what it is, e.g. "new cartridge 21 Nov 2026": a tooltip, and read out. */
+  note?: string | null;
   className?: string;
 }
 
 /** One cartridge: a track with a coloured fill and the percentage underneath, as in the mockup. */
-export function TonerBar({ level, fillClassName, label, className }: TonerBarProps) {
+export function TonerBar({ level, fillClassName, label, note, className }: TonerBarProps) {
   const state = tonerState(level);
   const known = state !== 'unknown';
   // A 1% cartridge still has to be visible, so the fill never renders narrower than a nub.
   const width = known ? Math.min(100, Math.max(2, level!)) : 0;
 
   return (
-    <div className={cn('min-w-0', className)}>
+    <div className={cn('min-w-0', className)} title={note ?? undefined}>
       <div
         role="img"
-        aria-label={known ? `${label} ${Math.round(level!)}%` : `${label} level unknown`}
+        aria-label={known ? `${label} ${Math.round(level!)}%${note ? `, ${note}` : ''}` : `${label} level unknown`}
         className="h-1.5 w-full overflow-hidden rounded-full bg-line"
       >
         {known ? <div className={cn('h-full rounded-full', fillClassName)} style={{ width: `${width}%` }} /> : null}
@@ -63,6 +65,7 @@ export function TonerBars({ row, className }: { row: DeviceRow; className?: stri
             level={row.toner[channel.key]}
             fillClassName={channel.className}
             label={channel.label}
+            note={newCartridgeNote(row.tonerNew?.[channel.key])}
           />
         ) : (
           <div key={channel.key} aria-hidden />

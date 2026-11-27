@@ -4,7 +4,7 @@ import type { Db } from '../client';
 import { deviceAlarms, deviceLinks, drmsEquipment, linkIssues, syncRuns, vantageEquipment } from '../schema';
 import { openIssuesCondition } from './issues';
 import { effectiveSettingsSubquery } from './settings';
-import { belowThreshold, counterPivotSubquery, notHiddenDevice, offlineCutoff } from './shared';
+import { belowThreshold, counterPivotSubquery, effectivePivotLevels, notHiddenDevice, offlineCutoff } from './shared';
 
 export interface FleetSummary {
   devices: number;
@@ -51,6 +51,7 @@ function monitoredCondition() {
 export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = {}): Promise<FleetSummary> {
   const cutoff = offlineCutoff(opts.offlineHours);
   const pivot = counterPivotSubquery(db);
+  const L = effectivePivotLevels(pivot);
   const eff = effectiveSettingsSubquery(db);
 
   const [[devicesRow], [monitoredRow], [linkedRow], [tonerRow], [offlineRow], [issuesRow], [syncRow]] = await Promise.all([
@@ -66,7 +67,7 @@ export async function getFleetSummary(db: Db, opts: { offlineHours?: number } = 
         manualLow: sql<number>`count(*) filter (where ${and(belowThreshold(pivot, eff), eq(eff.autoReplenish, false))})`,
         // Display-scale tiers (5%/20%), independent of the settings cascade — the toner health
         // card's own thresholds, not the ordering rule for "needs toner".
-        criticalToner: sql<number>`count(*) filter (where ${pivot.black} < 5 or ${pivot.cyan} < 5 or ${pivot.magenta} < 5 or ${pivot.yellow} < 5)`,
+        criticalToner: sql<number>`count(*) filter (where ${L.black} < 5 or ${L.cyan} < 5 or ${L.magenta} < 5 or ${L.yellow} < 5)`,
       })
       // Left join: every DRMS device has an effective-settings row, but a missing one should read
       // as "not needing toner" rather than dropping the device from the count.
@@ -174,37 +175,38 @@ export interface TonerHealth {
  */
 export async function getTonerHealth(db: Db): Promise<TonerHealth> {
   const pivot = counterPivotSubquery(db);
+  const L = effectivePivotLevels(pivot);
 
   const [row] = await db
     .select({
       critical: sql<number>`
-        count(*) filter (where ${pivot.black} < 5) +
-        count(*) filter (where ${pivot.cyan} < 5) +
-        count(*) filter (where ${pivot.magenta} < 5) +
-        count(*) filter (where ${pivot.yellow} < 5)
+        count(*) filter (where ${L.black} < 5) +
+        count(*) filter (where ${L.cyan} < 5) +
+        count(*) filter (where ${L.magenta} < 5) +
+        count(*) filter (where ${L.yellow} < 5)
       `,
       low: sql<number>`
-        count(*) filter (where ${pivot.black} >= 5 and ${pivot.black} < 20) +
-        count(*) filter (where ${pivot.cyan} >= 5 and ${pivot.cyan} < 20) +
-        count(*) filter (where ${pivot.magenta} >= 5 and ${pivot.magenta} < 20) +
-        count(*) filter (where ${pivot.yellow} >= 5 and ${pivot.yellow} < 20)
+        count(*) filter (where ${L.black} >= 5 and ${L.black} < 20) +
+        count(*) filter (where ${L.cyan} >= 5 and ${L.cyan} < 20) +
+        count(*) filter (where ${L.magenta} >= 5 and ${L.magenta} < 20) +
+        count(*) filter (where ${L.yellow} >= 5 and ${L.yellow} < 20)
       `,
       healthy: sql<number>`
-        count(*) filter (where ${pivot.black} >= 20) +
-        count(*) filter (where ${pivot.cyan} >= 20) +
-        count(*) filter (where ${pivot.magenta} >= 20) +
-        count(*) filter (where ${pivot.yellow} >= 20)
+        count(*) filter (where ${L.black} >= 20) +
+        count(*) filter (where ${L.cyan} >= 20) +
+        count(*) filter (where ${L.magenta} >= 20) +
+        count(*) filter (where ${L.yellow} >= 20)
       `,
       cartridges: sql<number>`
-        count(*) filter (where ${pivot.black} is not null) +
-        count(*) filter (where ${pivot.cyan} is not null) +
-        count(*) filter (where ${pivot.magenta} is not null) +
-        count(*) filter (where ${pivot.yellow} is not null)
+        count(*) filter (where ${L.black} is not null) +
+        count(*) filter (where ${L.cyan} is not null) +
+        count(*) filter (where ${L.magenta} is not null) +
+        count(*) filter (where ${L.yellow} is not null)
       `,
       devices: sql<number>`
         count(*) filter (
-          where ${pivot.black} is not null or ${pivot.cyan} is not null
-             or ${pivot.magenta} is not null or ${pivot.yellow} is not null
+          where ${L.black} is not null or ${L.cyan} is not null
+             or ${L.magenta} is not null or ${L.yellow} is not null
         )
       `,
     })

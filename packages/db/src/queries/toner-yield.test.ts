@@ -5,6 +5,7 @@ import {
   cartridgeFamilyModels,
   counterSnapshots,
   counterValues,
+  deviceAlarms,
   deviceLinks,
   drmsEquipment,
   replenishmentProposals,
@@ -144,6 +145,26 @@ describe('buildCartridges', () => {
   });
 });
 
+describe('buildCartridges with a Delivery fit date', () => {
+  const points = [pt('2026-01-01', 0), pt('2026-01-11', 1_000), pt('2026-02-01', 10_000), pt('2026-02-11', 11_000), pt('2026-03-01', 25_000)];
+  const fitted = (e: DeliveryEvent, iso: string): DeliveryEvent => ({ ...e, fitDate: d(iso) });
+  it('measures from the fit date, not the order date', () => {
+    // Order 01-01, fitted 01-11; next order 02-01, fitted 02-11: 11,000 - 1,000, not 10,000 - 0.
+    const [a] = buildCartridges([fitted(ev(1, '2026-01-01'), '2026-01-11'), fitted(ev(2, '2026-02-01'), '2026-02-11')], points);
+    expect(a).toMatchObject({ anchor: d('2026-01-11'), orderDate: d('2026-01-01'), pagesDone: 10_000 });
+  });
+  it('falls back to the order date with no Delivery', () => {
+    const [a] = buildCartridges([ev(1, '2026-01-01'), ev(2, '2026-02-01')], points);
+    expect(a).toMatchObject({ anchor: d('2026-01-01'), pagesDone: 10_000 });
+  });
+  it('pages since the last order start at its fit date', () => {
+    const c = computeColourYield({ colour: 'black', ratedYield: 20_000, events: [fitted(ev(1, '2026-02-01'), '2026-02-11')], points, stale: false });
+    expect(c).toMatchObject({ lastOrderDate: d('2026-02-01'), pagesSinceLastOrder: 14_000 });
+    const plain = computeColourYield({ colour: 'black', ratedYield: 20_000, events: [ev(1, '2026-02-01')], points, stale: false });
+    expect(plain.pagesSinceLastOrder).toBe(15_000);
+  });
+});
+
 describe('buildCartridges with interpolation', () => {
   const points = [pt('2026-03-01', 1_000), pt('2026-04-01', 4_100), pt('2026-04-30', 7_000)];
   it('is not measurable when both deliveries sit in one interpolation gap', () => {
@@ -159,6 +180,7 @@ describe('buildCartridges with interpolation', () => {
 describe('averageAchieved', () => {
   const cart = (pagesDone: number | null, quantity = 1) => ({
     orderDate: d('2026-01-01'),
+    anchor: d('2026-01-01'),
     salesOrderId: 1,
     lineId: 1,
     lineIds: [1],
@@ -359,6 +381,40 @@ describe('toner yield queries', () => {
     }
   }
   const colourOf = async (id: string, colour: string) => (await getDeviceYield(t.db, id, NOW))!.colours.find((c) => c.colour === colour)!;
+
+  describe('Toner Delivery alarms give the fit date', () => {
+    let alarmSeq = 0;
+    const delivery = (at: string, description = 'Toner Delivery(K)', status = 'EquipmentDiscovered') =>
+      t.db.insert(deviceAlarms).values({ alarmId: `dl${++alarmSeq}`, drmsEquipmentId: 'col', receivedTime: d(at), description, status, category: 'toner', raw: {} });
+
+    it('reads pages since from the Delivery, not the order date', async () => {
+      await snap('col', '2026-01-01', 0, 0);
+      await snap('col', '2026-02-01', 3000, 0);
+      await snap('col', '2026-03-10', 8000, 0);
+      await order(1, '2026-01-01', 100, [{ colour: 'black' }]);
+      await delivery('2026-02-01'); // fitted a month after ordering
+      const c = await colourOf('col', 'black');
+      expect(c).toMatchObject({ lastOrderDate: d('2026-01-01'), pagesSinceLastOrder: 5000 });
+    });
+    it('ignores a Delivery for another colour, or from before the order', async () => {
+      await snap('col', '2026-01-01', 0, 0);
+      await snap('col', '2026-03-10', 8000, 0);
+      await order(1, '2026-02-01', 100, [{ colour: 'black' }]);
+      await delivery('2026-01-15');
+      await delivery('2026-02-10', 'Toner Delivery(C)');
+      expect((await colourOf('col', 'black')).cartridges[0]!.anchor).toEqual(d('2026-02-01'));
+    });
+    it('does not cross the next order: a Delivery after order 2 is its fit, not order 1', async () => {
+      await snap('col', '2026-01-01', 0, 0);
+      await snap('col', '2026-03-10', 8000, 0);
+      await order(1, '2026-01-01', 100, [{ colour: 'black' }]);
+      await order(2, '2026-02-01', 100, [{ colour: 'black' }]);
+      await delivery('2026-02-05');
+      const cs = (await colourOf('col', 'black')).cartridges;
+      expect(cs[0]!.anchor).toEqual(d('2026-01-01'));
+      expect(cs[1]!.anchor).toEqual(d('2026-02-05'));
+    });
+  });
 
   it('returns null for an unknown device', async () => {
     expect(await getDeviceYield(t.db, 'nope', NOW)).toBeNull();

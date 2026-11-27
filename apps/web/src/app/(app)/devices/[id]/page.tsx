@@ -41,7 +41,7 @@ import { replenishmentErrorMessage } from '@/components/replenishment';
 import { SelfManagedBadge } from '@/components/self-managed-badge';
 import { ReplenishmentCard } from '@/components/replenishment-card';
 import { coveredColours, shelfHref } from '@/components/shelf';
-import { deviceStatusLabel, hasRecentAlarm, tonerChannels } from '@/components/toner';
+import { deviceStatusLabel, hasRecentAlarm, newCartridgeNote, tonerChannels } from '@/components/toner';
 import { ToneBadge } from '@/components/tone-badge';
 import { TonerTile } from '@/components/toner-tile';
 import { TonerYieldCard } from '@/components/toner-yield-card';
@@ -396,6 +396,7 @@ export default async function DeviceDetailPage({ params, searchParams }: PagePro
                     label={channel.label}
                     fillClassName={channel.className}
                     level={device.toner[channel.key]}
+                    note={newCartridgeNote(device.tonerNew?.[channel.key])}
                   />
                 ))}
               </div>

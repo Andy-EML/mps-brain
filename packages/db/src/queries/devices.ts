@@ -10,6 +10,8 @@ import {
   belowThreshold,
   counterPivotSubquery,
   drmsEquipmentName,
+  effectivePivotLevels,
+  effectiveToner,
   lastAlarmSubquery,
   notHiddenDevice,
   offlineCutoff,
@@ -63,7 +65,10 @@ export interface DeviceRow {
    * no meter reading has arrived.
    */
   lastAlarmAt: Date | null;
+  /** Effective levels: the DRMS reading, or 100 when a newer Toner Delivery alarm says a cartridge was fitted since. */
   toner: { black: number | null; cyan: number | null; magenta: number | null; yellow: number | null };
+  /** For each colour whose level is 100 because of a Delivery: when the new cartridge arrived ("new cartridge <date>"). */
+  tonerNew?: { black?: Date; cyan?: Date; magenta?: Date; yellow?: Date };
   meters: { black: number | null; colour: number | null; scan: number | null };
 }
 
@@ -137,6 +142,11 @@ export function deviceRowFields(
     cyan: pivot.cyan,
     magenta: pivot.magenta,
     yellow: pivot.yellow,
+    readAt: pivot.readAt,
+    blackDeliveryAt: pivot.blackDeliveryAt,
+    cyanDeliveryAt: pivot.cyanDeliveryAt,
+    magentaDeliveryAt: pivot.magentaDeliveryAt,
+    yellowDeliveryAt: pivot.yellowDeliveryAt,
     meterBlack: pivot.meterBlack,
     meterColour: pivot.meterColour,
     meterScan: pivot.meterScan,
@@ -165,6 +175,12 @@ export interface RawDeviceRow {
   cyan: number | null;
   magenta: number | null;
   yellow: number | null;
+  /** When the latest toner reading was taken, and the newest Toner Delivery alarm per colour. */
+  readAt: Date | null;
+  blackDeliveryAt: Date | null;
+  cyanDeliveryAt: Date | null;
+  magentaDeliveryAt: Date | null;
+  yellowDeliveryAt: Date | null;
   meterBlack: number | null;
   meterColour: number | null;
   meterScan: number | null;
@@ -211,12 +227,7 @@ export function toDeviceRow(r: RawDeviceRow, cutoff: Date): DeviceRow {
     lastCounterAt,
     offline: lastCounterAt !== null && lastCounterAt < cutoff,
     lastAlarmAt: r.lastAlarmAt ?? null,
-    toner: {
-      black: toNumberOrNull(r.black),
-      cyan: toNumberOrNull(r.cyan),
-      magenta: toNumberOrNull(r.magenta),
-      yellow: toNumberOrNull(r.yellow),
-    },
+    ...effectiveToner(r),
     meters: {
       black: toNumberOrNull(r.meterBlack),
       colour: toNumberOrNull(r.meterColour),
@@ -325,7 +336,7 @@ export function deviceSortOrder(
     serial: sql`${drmsEquipment.serial}`,
     // The lowest reading among the cartridges the device has (`least` skips nulls): the one that
     // runs out first, which is what the list's bars make the eye look for.
-    toner: sql`least(${pivot.black}, ${pivot.cyan}, ${pivot.magenta}, ${pivot.yellow})`,
+    toner: sql`least(${effectivePivotLevels(pivot).black}, ${effectivePivotLevels(pivot).cyan}, ${effectivePivotLevels(pivot).magenta}, ${effectivePivotLevels(pivot).yellow})`,
   };
   return sortOrder(map, sort, deviceListOrder, sql`${drmsEquipment.drmsId} asc`);
 }
